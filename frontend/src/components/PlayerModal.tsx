@@ -1,4 +1,3 @@
-import { X } from 'lucide-react';
 import type { Player } from '../types';
 
 interface PlayerModalProps {
@@ -9,19 +8,11 @@ interface PlayerModalProps {
 export default function PlayerModal({ player, onClose }: PlayerModalProps) {
   if (!player) return null;
 
-  const getInjuryColor = (status: string) => {
-    switch (status) {
-      case 'Out':
-        return 'bg-[#ef4444]/20 text-[#ef4444] border-[#ef4444]/30';
-      case 'Day_To_Day':
-      case 'Day-To-Day':
-      case 'Questionable':
-        return 'bg-[#f59e0b]/20 text-[#f59e0b] border-[#f59e0b]/30';
-      case 'Probable':
-        return 'bg-[#22c55e]/20 text-[#22c55e] border-[#22c55e]/30';
-      default:
-        return 'bg-[#ef4444]/20 text-[#ef4444] border-[#ef4444]/30';
-    }
+  const injuryAlertClass = (status: string) => {
+    if (status === 'Out') return 'alert alert-error';
+    if (['Day-To-Day', 'Day_To_Day', 'Questionable'].includes(status)) return 'alert alert-warning';
+    if (status === 'Probable') return 'alert alert-success';
+    return 'alert alert-error';
   };
 
   const n = (v: unknown) => Number(v) || 0;
@@ -61,78 +52,54 @@ export default function PlayerModal({ player, onClose }: PlayerModalProps) {
   ];
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <div
-        className="bg-[#1a1d29] rounded-xl border border-[#2a2d3a] w-full max-w-lg shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="modal modal-open">
+      <div className="modal-box max-w-lg">
         {/* Header */}
-        <div className="flex items-start justify-between p-5 border-b border-[#2a2d3a]">
+        <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-4">
             {player.headshot_url && (
-              <img
-                src={player.headshot_url}
-                alt={player.name}
-                className="w-16 h-16 rounded-full object-cover object-top bg-[#252836] flex-shrink-0 border-2 border-[#2a2d3a]"
-                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-              />
+              <div className="avatar">
+                <div className="w-16 rounded-full ring ring-primary ring-offset-base-100 ring-offset-2">
+                  <img
+                    src={player.headshot_url}
+                    alt={player.name}
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                  />
+                </div>
+              </div>
             )}
             <div>
-              <h2 className="text-2xl font-bold text-white">{player.name}</h2>
-              <div className="flex items-center gap-3 mt-1">
-                <span className="text-[#9ca3af] text-sm">{player.team}</span>
-                <span className="text-[#6b7280]">|</span>
-                <span className="text-[#9ca3af] text-sm">{player.position}</span>
-              </div>
+              <h3 className="font-bold text-2xl">{player.name}</h3>
+              <p className="text-sm opacity-60">{player.team} · {player.position}</p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-[#252836] transition-colors text-[#9ca3af] hover:text-white cursor-pointer"
-          >
-            <X size={20} />
-          </button>
+          <button className="btn btn-sm btn-circle btn-ghost" onClick={onClose}>✕</button>
         </div>
 
-        {/* Injury Status */}
         {player.injury_status && (
-          <div className={`mx-5 mt-4 px-3 py-2 rounded-lg border ${getInjuryColor(player.injury_status)}`}>
-            <span className="text-xs font-bold uppercase">
-              {player.injury_status.replace(/_/g, ' ')}
-            </span>
+          <div className={`${injuryAlertClass(player.injury_status)} mb-4 py-2`}>
+            <span className="text-xs font-bold uppercase">{player.injury_status.replace(/_/g, ' ')}</span>
             {player.injury_detail && (
-              <span className="text-xs ml-2 opacity-80">&mdash; {player.injury_detail}</span>
+              <span className="text-xs ml-2 opacity-80">— {player.injury_detail}</span>
             )}
           </div>
         )}
 
-        {/* Stats Grid */}
-        <div className="p-5 space-y-4">
-          {statGroups.map((group) => (
-            <div key={group.label}>
-              <h3 className="text-[11px] font-semibold text-[#6b7280] uppercase tracking-wider mb-2">
-                {group.label}
-              </h3>
-              <div className="grid grid-cols-4 gap-2">
-                {group.stats.map((stat) => (
-                  <div
-                    key={stat.label}
-                    className="bg-[#252836] rounded-lg px-3 py-2.5 text-center"
-                  >
-                    <div className="text-lg font-bold text-white">{stat.value}</div>
-                    <div className="text-[10px] text-[#9ca3af] uppercase tracking-wider mt-0.5">
-                      {stat.label}
-                    </div>
-                  </div>
-                ))}
-              </div>
+        {statGroups.map((group) => (
+          <div key={group.label} className="mb-4">
+            <p className="text-xs font-semibold opacity-40 uppercase tracking-wider mb-2">{group.label}</p>
+            <div className="stats stats-horizontal shadow w-full border border-base-300">
+              {group.stats.map((stat) => (
+                <div key={stat.label} className="stat px-4 py-3">
+                  <div className="stat-value text-lg">{stat.value}</div>
+                  <div className="stat-title text-[10px] uppercase tracking-wider">{stat.label}</div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </div>
+      <div className="modal-backdrop" onClick={onClose} />
     </div>
   );
 }
