@@ -1,0 +1,32 @@
+service: fantasy-nba-api
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  region: us-east-1
+  timeout: 30
+  environment:
+    DATABASE_URL: ${env:DATABASE_URL}
+    ANTHROPIC_API_KEY: ${env:ANTHROPIC_API_KEY}
+    FRONTEND_URL: ${env:FRONTEND_URL, ''}
+    NODE_ENV: production
+
+functions:
+  api:
+    handler: dist/lambda.handler
+    events:
+      - httpApi:
+          path: /{proxy+}
+          method: any
+      - httpApi:
+          path: /
+          method: any
+
+package:
+  patterns:
+    - '!src/**'
+    - '!*.ts'
+    - '!tsconfig.json'
+    - '!.env'
+    - 'dist/**'
+    - 'node_modules/**'
