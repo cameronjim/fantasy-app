@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS teams (
     three_pct NUMERIC(5,1) DEFAULT 0,
     ft_pct NUMERIC(5,1) DEFAULT 0,
     tov NUMERIC(4,1) DEFAULT 0,
+    def_rating NUMERIC(5,1) DEFAULT 0,
+    off_rating NUMERIC(5,1) DEFAULT 0,
+    net_rating NUMERIC(5,1) DEFAULT 0,
     logo_url VARCHAR(500),
     updated_at TIMESTAMP DEFAULT NOW()
 );
