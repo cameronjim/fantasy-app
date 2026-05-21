@@ -1,4 +1,3 @@
-import { X } from 'lucide-react';
 import type { Player } from '../types';
 
 interface CompareModalProps {
@@ -27,8 +26,7 @@ const FALLBACK_SVG =
 
 function fantasyScore(player: Player): number {
   return Object.entries(FANTASY_WEIGHTS).reduce((sum, [key, weight]) => {
-    const val = Number(player[key as keyof Player]) || 0;
-    return sum + val * (weight ?? 0);
+    return sum + (Number(player[key as keyof Player]) || 0) * (weight ?? 0);
   }, 0);
 }
 
@@ -36,42 +34,35 @@ export default function CompareModal({ players, onClose }: CompareModalProps) {
   if (players.length < 2) return null;
 
   const scores = players.map(fantasyScore);
+  const cols = players.length;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <div
-        className="bg-[#1a1d29] rounded-xl border border-[#2a2d3a] w-full max-w-3xl shadow-2xl max-h-[90vh] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="modal modal-open">
+      <div className="modal-box max-w-3xl max-h-[90vh] flex flex-col p-0">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#2a2d3a] flex-shrink-0">
-          <h2 className="text-base font-semibold text-white">Player Comparison</h2>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-[#252836] transition-colors text-[#9ca3af] hover:text-white cursor-pointer"
-          >
-            <X size={18} />
-          </button>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-base-300 flex-shrink-0">
+          <h3 className="font-semibold text-base">Player Comparison</h3>
+          <button className="btn btn-sm btn-circle btn-ghost" onClick={onClose}>✕</button>
         </div>
 
         <div className="overflow-y-auto">
           {/* Player headers */}
-          <div className="grid border-b border-[#2a2d3a]" style={{ gridTemplateColumns: `180px repeat(${players.length}, 1fr)` }}>
+          <div className="grid border-b border-base-300" style={{ gridTemplateColumns: `180px repeat(${cols}, 1fr)` }}>
             <div className="px-4 py-3" />
             {players.map((p) => (
-              <div key={p.id} className="px-4 py-3 flex flex-col items-center gap-2 border-l border-[#2a2d3a]">
-                <img
-                  src={p.headshot_url || FALLBACK_SVG}
-                  alt={p.name}
-                  className="w-12 h-12 rounded-full object-cover object-top bg-[#252836] border-2 border-[#2a2d3a]"
-                  onError={(e) => { (e.target as HTMLImageElement).src = FALLBACK_SVG; }}
-                />
+              <div key={p.id} className="px-4 py-3 flex flex-col items-center gap-2 border-l border-base-300">
+                <div className="avatar">
+                  <div className="w-12 rounded-full ring ring-base-300">
+                    <img
+                      src={p.headshot_url || FALLBACK_SVG}
+                      alt={p.name}
+                      onError={(e) => { (e.target as HTMLImageElement).src = FALLBACK_SVG; }}
+                    />
+                  </div>
+                </div>
                 <div className="text-center">
-                  <div className="text-sm font-semibold text-white leading-tight">{p.name}</div>
-                  <div className="text-xs text-[#6b7280] mt-0.5">{p.position} · {p.team}</div>
+                  <div className="text-sm font-semibold leading-tight">{p.name}</div>
+                  <div className="text-xs opacity-50 mt-0.5">{p.position} · {p.team}</div>
                 </div>
               </div>
             ))}
@@ -84,11 +75,11 @@ export default function CompareModal({ players, onClose }: CompareModalProps) {
             return (
               <div
                 key={stat.key}
-                className={`grid border-b border-[#2a2d3a] ${rowIdx % 2 === 0 ? 'bg-[#0f1117]' : 'bg-[#151822]'}`}
-                style={{ gridTemplateColumns: `180px repeat(${players.length}, 1fr)` }}
+                className={`grid border-b border-base-300 ${rowIdx % 2 === 0 ? 'bg-base-200' : 'bg-base-100'}`}
+                style={{ gridTemplateColumns: `180px repeat(${cols}, 1fr)` }}
               >
                 <div className="px-4 py-3 flex items-center">
-                  <span className="text-xs font-medium text-[#9ca3af]">{stat.label}</span>
+                  <span className="text-xs font-medium opacity-60">{stat.label}</span>
                 </div>
                 {players.map((p, pIdx) => {
                   const val = values[pIdx];
@@ -96,13 +87,11 @@ export default function CompareModal({ players, onClose }: CompareModalProps) {
                   return (
                     <div
                       key={p.id}
-                      className={`px-4 py-3 flex items-center justify-center border-l border-[#2a2d3a] ${
-                        isBest ? 'text-[#22c55e] font-bold' : 'text-[#d1d5db]'
-                      }`}
+                      className={`px-4 py-3 flex items-center justify-center border-l border-base-300 ${isBest ? 'text-success font-bold' : ''}`}
                     >
                       <span className="text-sm tabular-nums">{stat.format(val)}</span>
                       {isBest && players.length > 1 && (
-                        <span className="ml-1.5 text-[10px] text-[#22c55e] opacity-70">▲</span>
+                        <span className="ml-1 text-[10px] text-success opacity-70">▲</span>
                       )}
                     </div>
                   );
@@ -111,35 +100,28 @@ export default function CompareModal({ players, onClose }: CompareModalProps) {
             );
           })}
 
-          {/* Fantasy Score row */}
-          <div
-            className="grid bg-[#1a1d29]"
-            style={{ gridTemplateColumns: `180px repeat(${players.length}, 1fr)` }}
-          >
+          {/* Fantasy Score */}
+          <div className="grid bg-base-200" style={{ gridTemplateColumns: `180px repeat(${cols}, 1fr)` }}>
             <div className="px-4 py-3.5 flex items-center">
-              <span className="text-xs font-bold text-[#3b82f6] uppercase tracking-wider">Fantasy Score</span>
+              <span className="text-xs font-bold text-primary uppercase tracking-wider">Fantasy Score</span>
             </div>
             {players.map((p, pIdx) => {
               const score = scores[pIdx];
-              const bestScore = Math.max(...scores);
-              const isBest = score === bestScore;
+              const isBest = score === Math.max(...scores);
               return (
                 <div
                   key={p.id}
-                  className={`px-4 py-3.5 flex items-center justify-center border-l border-[#2a2d3a] ${
-                    isBest ? 'text-[#3b82f6] font-bold' : 'text-[#d1d5db]'
-                  }`}
+                  className={`px-4 py-3.5 flex items-center justify-center border-l border-base-300 ${isBest ? 'text-primary font-bold' : ''}`}
                 >
                   <span className="text-sm tabular-nums">{score.toFixed(1)}</span>
-                  {isBest && (
-                    <span className="ml-1.5 text-[10px] text-[#3b82f6] opacity-70">★</span>
-                  )}
+                  {isBest && <span className="ml-1 text-[10px] opacity-70">★</span>}
                 </div>
               );
             })}
           </div>
         </div>
       </div>
+      <div className="modal-backdrop" onClick={onClose} />
     </div>
   );
 }

@@ -57,46 +57,36 @@ export default function TeamTable({ teams }: TeamTableProps) {
   });
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-[#2a2d3a]">
-      <table className="w-full text-sm">
+    <div className="overflow-x-auto rounded-box border border-base-300">
+      <table className="table table-zebra table-sm w-full">
         <thead>
-          <tr className="bg-[#1a1d29] border-b border-[#2a2d3a]">
+          <tr>
             {columns.map((col) => (
               <th
                 key={col.key}
                 onClick={() => handleSort(col.key)}
-                className="px-3 py-2.5 text-left text-[11px] font-semibold text-[#9ca3af] uppercase tracking-wider cursor-pointer hover:text-white transition-colors select-none whitespace-nowrap"
+                className="cursor-pointer select-none whitespace-nowrap"
               >
-                <div className="flex items-center gap-1">
+                <span className="flex items-center gap-1">
                   {col.label}
                   {sortKey === col.key && (
                     sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />
                   )}
-                </div>
+                </span>
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {sorted.map((team, i) => (
-            <tr
-              key={team.id}
-              className={`border-b border-[#2a2d3a] transition-colors hover:bg-[#2a2d3a] ${
-                i % 2 === 0 ? 'bg-[#0f1117]' : 'bg-[#151822]'
-              }`}
-            >
+          {sorted.map((team) => (
+            <tr key={team.id} className="hover">
               {columns.map((col) => {
                 if (col.key === 'conference') {
-                  const conf = team.conference;
                   return (
-                    <td key={col.key} className="px-3 py-2.5 whitespace-nowrap">
-                      {conf && (
-                        <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                          conf === 'East'
-                            ? 'bg-[#1d4ed8]/20 text-[#60a5fa]'
-                            : 'bg-[#b45309]/20 text-[#fbbf24]'
-                        }`}>
-                          {conf}
+                    <td key={col.key}>
+                      {team.conference && (
+                        <span className={`badge badge-sm ${team.conference === 'East' ? 'badge-info' : 'badge-warning'}`}>
+                          {team.conference}
                         </span>
                       )}
                     </td>
@@ -105,20 +95,13 @@ export default function TeamTable({ teams }: TeamTableProps) {
                 if (col.key === 'net_rating') {
                   const val = Number(team.net_rating ?? 0);
                   return (
-                    <td key={col.key} className={`px-3 py-2.5 whitespace-nowrap font-medium ${
-                      val > 0 ? 'text-[#4ade80]' : val < 0 ? 'text-[#f87171]' : 'text-[#d1d5db]'
-                    }`}>
+                    <td key={col.key} className={`font-medium ${val > 0 ? 'text-success' : val < 0 ? 'text-error' : ''}`}>
                       {val > 0 ? '+' : ''}{val.toFixed(1)}
                     </td>
                   );
                 }
                 return (
-                  <td
-                    key={col.key}
-                    className={`px-3 py-2.5 whitespace-nowrap ${
-                      col.key === 'name' ? 'font-medium text-white' : 'text-[#d1d5db]'
-                    }`}
-                  >
+                  <td key={col.key} className={col.key === 'name' ? 'font-medium' : ''}>
                     {col.format && team[col.key] != null
                       ? col.format(team[col.key] as number)
                       : String(team[col.key] ?? '-')}
@@ -129,7 +112,7 @@ export default function TeamTable({ teams }: TeamTableProps) {
           ))}
           {sorted.length === 0 && (
             <tr>
-              <td colSpan={columns.length} className="px-4 py-12 text-center text-[#6b7280]">
+              <td colSpan={columns.length} className="text-center py-12 opacity-40">
                 No teams found
               </td>
             </tr>

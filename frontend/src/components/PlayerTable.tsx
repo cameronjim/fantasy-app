@@ -68,94 +68,87 @@ export default function PlayerTable({ players, onSelect, selectedForCompare = []
 
   const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
   const paginated = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-
   const compareIds = new Set(selectedForCompare.map((p) => p.id));
   const compareMaxed = selectedForCompare.length >= 3;
 
-  const getInjuryBadge = (player: Player) => {
-    if (!player.injury_status) return null;
-    const colors: Record<string, string> = {
-      Out: 'bg-[#ef4444]/20 text-[#ef4444]',
-      Day_To_Day: 'bg-[#f59e0b]/20 text-[#f59e0b]',
-      'Day-To-Day': 'bg-[#f59e0b]/20 text-[#f59e0b]',
-      Questionable: 'bg-[#f59e0b]/20 text-[#f59e0b]',
-      Probable: 'bg-[#22c55e]/20 text-[#22c55e]',
-    };
-    const colorClass = colors[player.injury_status] || 'bg-[#ef4444]/20 text-[#ef4444]';
-    return (
-      <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${colorClass}`}>
-        {player.injury_status.replace(/_/g, ' ')}
-      </span>
-    );
+  const injuryBadgeClass = (status: string) => {
+    if (status === 'Out') return 'badge badge-error badge-xs';
+    if (['Day-To-Day', 'Day_To_Day', 'Questionable'].includes(status)) return 'badge badge-warning badge-xs';
+    if (status === 'Probable') return 'badge badge-success badge-xs';
+    return 'badge badge-error badge-xs';
   };
+
+  const pageItems = Array.from({ length: totalPages }, (_, i) => i)
+    .filter((i) => i === 0 || i === totalPages - 1 || Math.abs(i - page) <= 2)
+    .reduce<(number | 'ellipsis')[]>((acc, i, idx, arr) => {
+      if (idx > 0 && arr[idx - 1] !== i - 1) acc.push('ellipsis');
+      acc.push(i);
+      return acc;
+    }, []);
 
   return (
     <div>
-      <div className="overflow-x-auto rounded-lg border border-[#2a2d3a]">
-        <table className="w-full text-sm">
+      <div className="overflow-x-auto rounded-box border border-base-300">
+        <table className="table table-zebra table-sm w-full">
           <thead>
-            <tr className="bg-[#1a1d29] border-b border-[#2a2d3a]">
-              {onToggleCompare && (
-                <th className="px-3 py-2.5 w-8" />
-              )}
+            <tr>
+              {onToggleCompare && <th className="w-8" />}
               {columns.map((col) => (
                 <th
                   key={col.key}
                   onClick={() => handleSort(col.key)}
-                  className="px-3 py-2.5 text-left text-[11px] font-semibold text-[#9ca3af] uppercase tracking-wider cursor-pointer hover:text-white transition-colors select-none whitespace-nowrap"
+                  className="cursor-pointer select-none whitespace-nowrap"
                 >
-                  <div className="flex items-center gap-1">
+                  <span className="flex items-center gap-1">
                     {col.label}
                     {sortKey === col.key && (
                       sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />
                     )}
-                  </div>
+                  </span>
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {paginated.map((player, i) => {
+            {paginated.map((player) => {
               const isSelected = compareIds.has(player.id);
               const isDisabled = onToggleCompare && compareMaxed && !isSelected;
               return (
                 <tr
                   key={player.id}
                   onClick={() => onSelect(player)}
-                  className={`border-b border-[#2a2d3a] cursor-pointer transition-colors hover:bg-[#2a2d3a] ${
-                    isSelected ? 'bg-[#1e2d45]' : i % 2 === 0 ? 'bg-[#0f1117]' : 'bg-[#151822]'
-                  }`}
+                  className={`cursor-pointer hover ${isSelected ? 'bg-primary/10' : ''}`}
                 >
                   {onToggleCompare && (
-                    <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
+                    <td onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
                         checked={isSelected}
                         disabled={!!isDisabled}
                         onChange={() => onToggleCompare(player)}
-                        className="w-3.5 h-3.5 rounded accent-[#3b82f6] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                        className="checkbox checkbox-primary checkbox-xs"
                       />
                     </td>
                   )}
                   {columns.map((col) => (
-                    <td
-                      key={col.key}
-                      className={`px-3 py-2.5 whitespace-nowrap ${
-                        col.key === 'name' ? 'font-medium text-white' : 'text-[#d1d5db]'
-                      }`}
-                    >
+                    <td key={col.key} className="whitespace-nowrap">
                       {col.key === 'name' ? (
-                        <span className="flex items-center gap-2.5">
-                          <img
-                            src={player.headshot_url || FALLBACK_SVG}
-                            alt=""
-                            className="w-7 h-7 rounded-full object-cover object-top bg-[#252836] flex-shrink-0"
-                            onError={(e) => { (e.target as HTMLImageElement).src = FALLBACK_SVG; }}
-                          />
-                          <span className="flex items-center">
-                            {player.name}
-                            {getInjuryBadge(player)}
-                          </span>
+                        <span className="flex items-center gap-2">
+                          <div className="avatar">
+                            <div className="w-7 rounded-full">
+                              <img
+                                src={player.headshot_url || FALLBACK_SVG}
+                                alt=""
+                                onError={(e) => { (e.target as HTMLImageElement).src = FALLBACK_SVG; }}
+                              />
+                            </div>
+                          </div>
+                          <span className="font-medium">{player.name}</span>
+                          {player.injury_status && (
+                            <span className={injuryBadgeClass(player.injury_status)}>
+                              {player.injury_status.replace(/_/g, ' ')}
+                            </span>
+                          )}
                         </span>
                       ) : col.format && player[col.key] != null ? (
                         col.format(player[col.key] as number)
@@ -169,7 +162,7 @@ export default function PlayerTable({ players, onSelect, selectedForCompare = []
             })}
             {paginated.length === 0 && (
               <tr>
-                <td colSpan={columns.length + (onToggleCompare ? 1 : 0)} className="px-4 py-12 text-center text-[#6b7280]">
+                <td colSpan={columns.length + (onToggleCompare ? 1 : 0)} className="text-center py-12 opacity-40">
                   No players found
                 </td>
               </tr>
@@ -178,48 +171,36 @@ export default function PlayerTable({ players, onSelect, selectedForCompare = []
         </table>
       </div>
 
-      {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex items-center justify-between mt-3 px-1">
-          <span className="text-xs text-[#6b7280]">
-            Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, sorted.length)} of {sorted.length}
+          <span className="text-xs opacity-40">
+            {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, sorted.length)} of {sorted.length}
           </span>
-          <div className="flex items-center gap-1">
+          <div className="join">
             <button
-              onClick={() => setPage(p => Math.max(0, p - 1))}
+              className="join-item btn btn-xs"
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
               disabled={page === 0}
-              className="p-1.5 rounded-md bg-[#1a1d29] border border-[#2a2d3a] text-[#9ca3af] hover:text-white hover:border-[#3b82f6] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
             >
               <ChevronLeft size={14} />
             </button>
-            {Array.from({ length: totalPages }, (_, i) => i)
-              .filter(i => i === 0 || i === totalPages - 1 || Math.abs(i - page) <= 2)
-              .reduce<(number | 'ellipsis')[]>((acc, i, idx, arr) => {
-                if (idx > 0 && arr[idx - 1] !== i - 1) acc.push('ellipsis');
-                acc.push(i);
-                return acc;
-              }, [])
-              .map((item, idx) =>
-                item === 'ellipsis' ? (
-                  <span key={`e${idx}`} className="px-1 text-[#6b7280] text-xs">...</span>
-                ) : (
-                  <button
-                    key={item}
-                    onClick={() => setPage(item)}
-                    className={`min-w-[28px] h-7 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                      page === item
-                        ? 'bg-[#3b82f6] text-white'
-                        : 'bg-[#1a1d29] border border-[#2a2d3a] text-[#9ca3af] hover:text-white hover:border-[#3b82f6]'
-                    }`}
-                  >
-                    {item + 1}
-                  </button>
-                )
-              )}
+            {pageItems.map((item, idx) =>
+              item === 'ellipsis' ? (
+                <button key={`e${idx}`} className="join-item btn btn-xs btn-disabled">…</button>
+              ) : (
+                <button
+                  key={item}
+                  onClick={() => setPage(item)}
+                  className={`join-item btn btn-xs ${page === item ? 'btn-primary' : ''}`}
+                >
+                  {item + 1}
+                </button>
+              )
+            )}
             <button
-              onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+              className="join-item btn btn-xs"
+              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
               disabled={page >= totalPages - 1}
-              className="p-1.5 rounded-md bg-[#1a1d29] border border-[#2a2d3a] text-[#9ca3af] hover:text-white hover:border-[#3b82f6] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
             >
               <ChevronRight size={14} />
             </button>
