@@ -135,6 +135,12 @@ export default function FantasyPage() {
             {searchResults.map((player) => (
               <div key={player.id} className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-[#252836] transition-colors">
                 <div className="flex items-center gap-3">
+                  <img
+                    src={player.headshot_url || ''}
+                    alt=""
+                    className="w-7 h-7 rounded-full object-cover object-top bg-[#252836] flex-shrink-0"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                  />
                   <span className="text-sm font-medium text-white">{player.name}</span>
                   <span className="text-xs text-[#6b7280]">{player.position} - {player.team}</span>
                   <span className="text-xs text-[#9ca3af]">{n(player.ppg).toFixed(1)} PPG</span>
@@ -180,7 +186,15 @@ export default function FantasyPage() {
                 {roster.map((p, i) => (
                   <tr key={p.id} className={`border-b border-[#2a2d3a] last:border-b-0 hover:bg-[#2a2d3a] transition-colors ${i % 2 === 0 ? 'bg-[#0f1117]' : 'bg-[#151822]'}`}>
                     <td className="px-3 py-2.5 font-medium text-white whitespace-nowrap">
-                      {p.name}{injuryBadge(p.injury_status)}
+                      <span className="flex items-center gap-2">
+                        <img
+                          src={p.headshot_url || ''}
+                          alt=""
+                          className="w-6 h-6 rounded-full object-cover object-top bg-[#252836] flex-shrink-0"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                        />
+                        {p.name}{injuryBadge(p.injury_status)}
+                      </span>
                     </td>
                     <td className="px-3 py-2.5 text-[#9ca3af]">{p.position}</td>
                     <td className="px-3 py-2.5 text-[#9ca3af]">{p.team}</td>

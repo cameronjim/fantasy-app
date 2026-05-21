@@ -34,7 +34,7 @@ router.get('/', async (req: Request, res: Response) => {
 
     const result = await query(
       `SELECT id, nba_id, name, team, position, ppg, rpg, apg, spg, bpg,
-              fg_pct, three_pct, ft_pct, tov, mpg, gp,
+              fg_pct, three_pct, ft_pct, three_pm, tov, mpg, gp,
               injury_status, injury_detail, headshot_url, updated_at
        FROM players ${whereClause}
        ORDER BY ppg DESC`,
@@ -55,7 +55,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 
     const result = await query(
       `SELECT id, nba_id, name, team, position, ppg, rpg, apg, spg, bpg,
-              fg_pct, three_pct, ft_pct, tov, mpg, gp,
+              fg_pct, three_pct, ft_pct, three_pm, tov, mpg, gp,
               injury_status, injury_detail, headshot_url, updated_at
        FROM players
        WHERE id = $1`,

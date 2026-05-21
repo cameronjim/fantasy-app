@@ -5,12 +5,14 @@ import type { Player } from '../types';
 interface PlayerTableProps {
   players: Player[];
   onSelect: (player: Player) => void;
+  selectedForCompare?: Player[];
+  onToggleCompare?: (player: Player) => void;
 }
 
 type SortKey = keyof Player;
 
 const columns: { key: SortKey; label: string; format?: (v: number) => string }[] = [
-  { key: 'name', label: 'Name' },
+  { key: 'name', label: 'Player' },
   { key: 'team', label: 'Team' },
   { key: 'position', label: 'Pos' },
   { key: 'ppg', label: 'PPG', format: (v) => Number(v).toFixed(1) },
@@ -28,12 +30,14 @@ const columns: { key: SortKey; label: string; format?: (v: number) => string }[]
 
 const PAGE_SIZE = 25;
 
-export default function PlayerTable({ players, onSelect }: PlayerTableProps) {
+const FALLBACK_SVG =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%23252836'/%3E%3Ccircle cx='20' cy='15' r='7' fill='%234b5563'/%3E%3Cellipse cx='20' cy='35' rx='12' ry='8' fill='%234b5563'/%3E%3C/svg%3E";
+
+export default function PlayerTable({ players, onSelect, selectedForCompare = [], onToggleCompare }: PlayerTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>('ppg');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(0);
 
-  // Reset to page 0 when players list changes (filters)
   useEffect(() => { setPage(0); }, [players.length]);
 
   const handleSort = (key: SortKey) => {
@@ -65,6 +69,9 @@ export default function PlayerTable({ players, onSelect }: PlayerTableProps) {
   const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
   const paginated = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
+  const compareIds = new Set(selectedForCompare.map((p) => p.id));
+  const compareMaxed = selectedForCompare.length >= 3;
+
   const getInjuryBadge = (player: Player) => {
     if (!player.injury_status) return null;
     const colors: Record<string, string> = {
@@ -88,6 +95,9 @@ export default function PlayerTable({ players, onSelect }: PlayerTableProps) {
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-[#1a1d29] border-b border-[#2a2d3a]">
+              {onToggleCompare && (
+                <th className="px-3 py-2.5 w-8" />
+              )}
               {columns.map((col) => (
                 <th
                   key={col.key}
@@ -105,38 +115,61 @@ export default function PlayerTable({ players, onSelect }: PlayerTableProps) {
             </tr>
           </thead>
           <tbody>
-            {paginated.map((player, i) => (
-              <tr
-                key={player.id}
-                onClick={() => onSelect(player)}
-                className={`border-b border-[#2a2d3a] cursor-pointer transition-colors hover:bg-[#2a2d3a] ${
-                  i % 2 === 0 ? 'bg-[#0f1117]' : 'bg-[#151822]'
-                }`}
-              >
-                {columns.map((col) => (
-                  <td
-                    key={col.key}
-                    className={`px-3 py-2.5 whitespace-nowrap ${
-                      col.key === 'name' ? 'font-medium text-white' : 'text-[#d1d5db]'
-                    }`}
-                  >
-                    {col.key === 'name' ? (
-                      <span className="flex items-center">
-                        {player.name}
-                        {getInjuryBadge(player)}
-                      </span>
-                    ) : col.format && player[col.key] != null ? (
-                      col.format(player[col.key] as number)
-                    ) : (
-                      String(player[col.key] ?? '-')
-                    )}
-                  </td>
-                ))}
-              </tr>
-            ))}
+            {paginated.map((player, i) => {
+              const isSelected = compareIds.has(player.id);
+              const isDisabled = onToggleCompare && compareMaxed && !isSelected;
+              return (
+                <tr
+                  key={player.id}
+                  onClick={() => onSelect(player)}
+                  className={`border-b border-[#2a2d3a] cursor-pointer transition-colors hover:bg-[#2a2d3a] ${
+                    isSelected ? 'bg-[#1e2d45]' : i % 2 === 0 ? 'bg-[#0f1117]' : 'bg-[#151822]'
+                  }`}
+                >
+                  {onToggleCompare && (
+                    <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        disabled={!!isDisabled}
+                        onChange={() => onToggleCompare(player)}
+                        className="w-3.5 h-3.5 rounded accent-[#3b82f6] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                      />
+                    </td>
+                  )}
+                  {columns.map((col) => (
+                    <td
+                      key={col.key}
+                      className={`px-3 py-2.5 whitespace-nowrap ${
+                        col.key === 'name' ? 'font-medium text-white' : 'text-[#d1d5db]'
+                      }`}
+                    >
+                      {col.key === 'name' ? (
+                        <span className="flex items-center gap-2.5">
+                          <img
+                            src={player.headshot_url || FALLBACK_SVG}
+                            alt=""
+                            className="w-7 h-7 rounded-full object-cover object-top bg-[#252836] flex-shrink-0"
+                            onError={(e) => { (e.target as HTMLImageElement).src = FALLBACK_SVG; }}
+                          />
+                          <span className="flex items-center">
+                            {player.name}
+                            {getInjuryBadge(player)}
+                          </span>
+                        </span>
+                      ) : col.format && player[col.key] != null ? (
+                        col.format(player[col.key] as number)
+                      ) : (
+                        String(player[col.key] ?? '-')
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
             {paginated.length === 0 && (
               <tr>
-                <td colSpan={columns.length} className="px-4 py-12 text-center text-[#6b7280]">
+                <td colSpan={columns.length + (onToggleCompare ? 1 : 0)} className="px-4 py-12 text-center text-[#6b7280]">
                   No players found
                 </td>
               </tr>

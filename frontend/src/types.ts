@@ -17,6 +17,7 @@ export interface Player {
   gp: number;
   injury_status: string | null;
   injury_detail: string | null;
+  headshot_url?: string;
 }
 
 export interface Team {
@@ -45,6 +46,8 @@ export interface Game {
   away_score: number | null;
   status: string;
   game_date: string;
+  period?: number;
+  game_clock?: string;
 }
 
 export interface RosterPlayer extends Player {

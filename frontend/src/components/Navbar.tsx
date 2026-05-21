@@ -1,5 +1,6 @@
 import { BarChart3, Users, TrendingUp } from 'lucide-react';
 
+
 interface NavbarProps {
   activeTab: string;
   onTabChange: (tab: string) => void;
@@ -16,10 +17,8 @@ export default function Navbar({ activeTab, onTabChange }: NavbarProps) {
     <nav className="bg-[#1a1d29] border-b border-[#2a2d3a] sticky top-0 z-50">
       <div className="max-w-[1400px] mx-auto px-4">
         <div className="flex items-center justify-between h-14">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-[#3b82f6] rounded-lg flex items-center justify-center">
-              <BarChart3 size={18} className="text-white" />
-            </div>
+          <div className="flex items-center gap-2.5">
+            <span className="text-2xl leading-none select-none">🏀</span>
             <span className="text-xl font-bold text-white tracking-tight">
               Fantasy <span className="text-[#3b82f6]">NBA</span>
             </span>
