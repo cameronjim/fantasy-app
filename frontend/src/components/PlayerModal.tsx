@@ -71,12 +71,22 @@ export default function PlayerModal({ player, onClose }: PlayerModalProps) {
       >
         {/* Header */}
         <div className="flex items-start justify-between p-5 border-b border-[#2a2d3a]">
-          <div>
-            <h2 className="text-2xl font-bold text-white">{player.name}</h2>
-            <div className="flex items-center gap-3 mt-1">
-              <span className="text-[#9ca3af] text-sm">{player.team}</span>
-              <span className="text-[#6b7280]">|</span>
-              <span className="text-[#9ca3af] text-sm">{player.position}</span>
+          <div className="flex items-center gap-4">
+            {player.headshot_url && (
+              <img
+                src={player.headshot_url}
+                alt={player.name}
+                className="w-16 h-16 rounded-full object-cover object-top bg-[#252836] flex-shrink-0 border-2 border-[#2a2d3a]"
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+              />
+            )}
+            <div>
+              <h2 className="text-2xl font-bold text-white">{player.name}</h2>
+              <div className="flex items-center gap-3 mt-1">
+                <span className="text-[#9ca3af] text-sm">{player.team}</span>
+                <span className="text-[#6b7280]">|</span>
+                <span className="text-[#9ca3af] text-sm">{player.position}</span>
+              </div>
             </div>
           </div>
           <button

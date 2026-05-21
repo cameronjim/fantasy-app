@@ -1,7 +1,11 @@
 import axios from 'axios';
 import type { Player, Team, Game, RosterPlayer, ChatMessage, TeamAnalysis } from '../types';
 
-const api = axios.create({ baseURL: '/api', timeout: 120000 });
+const baseURL = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api`
+  : '/api';
+
+const api = axios.create({ baseURL, timeout: 120000 });
 
 // Players
 export async function getPlayers(params?: { search?: string; team?: string; position?: string }): Promise<Player[]> {

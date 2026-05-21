@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Search, Filter } from 'lucide-react';
+import { Search, Filter, GitCompare, X } from 'lucide-react';
 import ScoreboardStrip from '../components/ScoreboardStrip';
 import PlayerTable from '../components/PlayerTable';
 import TeamTable from '../components/TeamTable';
 import PlayerModal from '../components/PlayerModal';
+import CompareModal from '../components/CompareModal';
 import { getPlayers, getTeams } from '../api/client';
 import type { Player, Team } from '../types';
 
@@ -19,6 +20,8 @@ export default function StatsPage() {
   const [posFilter, setPosFilter] = useState('All');
   const [loadingPlayers, setLoadingPlayers] = useState(false);
   const [loadingTeams, setLoadingTeams] = useState(false);
+  const [comparePlayers, setComparePlayers] = useState<Player[]>([]);
+  const [showCompare, setShowCompare] = useState(false);
 
   useEffect(() => {
     setLoadingPlayers(true);
@@ -34,20 +37,26 @@ export default function StatsPage() {
       .finally(() => setLoadingTeams(false));
   }, []);
 
-  // Get unique team names for the filter dropdown
   const teamNames = [...new Set(players.map((p) => p.team))].sort();
 
-  // Filter players
   const filteredPlayers = players.filter((p) => {
-    const matchesSearch =
-      !search || p.name.toLowerCase().includes(search.toLowerCase());
+    const matchesSearch = !search || p.name.toLowerCase().includes(search.toLowerCase());
     const matchesTeam = !teamFilter || p.team === teamFilter;
     const matchesPos = posFilter === 'All' || p.position === posFilter;
     return matchesSearch && matchesTeam && matchesPos;
   });
 
+  const handleToggleCompare = (player: Player) => {
+    setComparePlayers((prev) => {
+      const exists = prev.find((p) => p.id === player.id);
+      if (exists) return prev.filter((p) => p.id !== player.id);
+      if (prev.length >= 3) return prev;
+      return [...prev, player];
+    });
+  };
+
   return (
-    <div>
+    <div className="pb-20">
       <ScoreboardStrip />
 
       <div className="max-w-[1400px] mx-auto px-4 py-6">
@@ -144,6 +153,8 @@ export default function StatsPage() {
             <PlayerTable
               players={filteredPlayers}
               onSelect={(p) => setSelectedPlayer(p)}
+              selectedForCompare={comparePlayers}
+              onToggleCompare={handleToggleCompare}
             />
           )
         ) : loadingTeams ? (
@@ -155,11 +166,63 @@ export default function StatsPage() {
         )}
       </div>
 
-      {/* Player Modal */}
+      {/* Sticky compare bar */}
+      {comparePlayers.length >= 1 && (
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-[#1a1d29] border-t border-[#2a2d3a] px-4 py-3 flex items-center justify-between shadow-2xl">
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-[#9ca3af]">
+              {comparePlayers.length}/3 selected
+            </span>
+            <div className="flex items-center gap-2">
+              {comparePlayers.map((p) => (
+                <div key={p.id} className="flex items-center gap-1.5 bg-[#252836] rounded-full pl-1 pr-2.5 py-1">
+                  <img
+                    src={p.headshot_url || ''}
+                    alt=""
+                    className="w-5 h-5 rounded-full object-cover object-top bg-[#2a2d3a]"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                  />
+                  <span className="text-xs text-white">{p.name.split(' ').pop()}</span>
+                  <button
+                    onClick={() => handleToggleCompare(p)}
+                    className="ml-0.5 text-[#6b7280] hover:text-white cursor-pointer"
+                  >
+                    <X size={10} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setComparePlayers([])}
+              className="px-3 py-1.5 text-xs text-[#9ca3af] hover:text-white transition-colors cursor-pointer"
+            >
+              Clear
+            </button>
+            <button
+              onClick={() => setShowCompare(true)}
+              disabled={comparePlayers.length < 2}
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-medium bg-[#3b82f6] text-white hover:bg-[#2563eb] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+            >
+              <GitCompare size={14} />
+              Compare {comparePlayers.length >= 2 ? comparePlayers.length : ''} Players
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modals */}
       <PlayerModal
         player={selectedPlayer}
         onClose={() => setSelectedPlayer(null)}
       />
+      {showCompare && (
+        <CompareModal
+          players={comparePlayers}
+          onClose={() => setShowCompare(false)}
+        />
+      )}
     </div>
   );
 }
