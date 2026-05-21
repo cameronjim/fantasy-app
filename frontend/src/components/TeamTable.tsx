@@ -8,30 +8,32 @@ interface TeamTableProps {
 
 type SortKey = keyof Team;
 
-const columns: { key: SortKey; label: string; format?: (v: number) => string }[] = [
+const COLUMNS: { key: SortKey; label: string; format?: (v: number) => string }[] = [
   { key: 'name', label: 'Team' },
   { key: 'conference', label: 'Conf' },
   { key: 'wins', label: 'W' },
   { key: 'losses', label: 'L' },
-  { key: 'ppg', label: 'PPG', format: (v) => Number(v).toFixed(1) },
-  { key: 'rpg', label: 'RPG', format: (v) => Number(v).toFixed(1) },
-  { key: 'apg', label: 'APG', format: (v) => Number(v).toFixed(1) },
-  { key: 'spg', label: 'SPG', format: (v) => Number(v).toFixed(1) },
-  { key: 'bpg', label: 'BPG', format: (v) => Number(v).toFixed(1) },
-  { key: 'fg_pct', label: 'FG%', format: (v) => Number(v).toFixed(1) },
-  { key: 'three_pct', label: '3P%', format: (v) => Number(v).toFixed(1) },
-  { key: 'ft_pct', label: 'FT%', format: (v) => Number(v).toFixed(1) },
-  { key: 'tov', label: 'TOV', format: (v) => Number(v).toFixed(1) },
-  { key: 'off_rating', label: 'OFF RTG', format: (v) => Number(v).toFixed(1) },
-  { key: 'def_rating', label: 'DEF RTG', format: (v) => Number(v).toFixed(1) },
+  { key: 'points_per_game', label: 'PPG', format: (v) => Number(v).toFixed(1) },
+  { key: 'rebounds_per_game', label: 'RPG', format: (v) => Number(v).toFixed(1) },
+  { key: 'assists_per_game', label: 'APG', format: (v) => Number(v).toFixed(1) },
+  { key: 'steals_per_game', label: 'SPG', format: (v) => Number(v).toFixed(1) },
+  { key: 'blocks_per_game', label: 'BPG', format: (v) => Number(v).toFixed(1) },
+  { key: 'field_goal_percentage', label: 'FG%', format: (v) => Number(v).toFixed(1) },
+  { key: 'three_point_percentage', label: '3P%', format: (v) => Number(v).toFixed(1) },
+  { key: 'free_throw_percentage', label: 'FT%', format: (v) => Number(v).toFixed(1) },
+  { key: 'turnovers_per_game', label: 'TOV', format: (v) => Number(v).toFixed(1) },
+  { key: 'offensive_rating', label: 'OFF RTG', format: (v) => Number(v).toFixed(1) },
+  { key: 'defensive_rating', label: 'DEF RTG', format: (v) => Number(v).toFixed(1) },
   { key: 'net_rating', label: 'NET RTG', format: (v) => Number(v).toFixed(1) },
 ];
 
-export default function TeamTable({ teams }: TeamTableProps) {
+const NUMERIC_KEYS = new Set(['wins','losses','points_per_game','rebounds_per_game','assists_per_game','steals_per_game','blocks_per_game','field_goal_percentage','three_point_percentage','free_throw_percentage','turnovers_per_game','defensive_rating','offensive_rating','net_rating']);
+
+export const TeamTable = ({ teams }: TeamTableProps) => {
   const [sortKey, setSortKey] = useState<SortKey>('wins');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
-  const handleSort = (key: SortKey) => {
+  const handleSort = (key: SortKey): void => {
     if (sortKey === key) {
       setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
     } else {
@@ -40,14 +42,12 @@ export default function TeamTable({ teams }: TeamTableProps) {
     }
   };
 
-  const numericKeys = new Set(['wins','losses','ppg','rpg','apg','spg','bpg','fg_pct','three_pct','ft_pct','tov','def_rating','off_rating','net_rating']);
-
   const sorted = [...teams].sort((a, b) => {
     const aVal = a[sortKey];
     const bVal = b[sortKey];
     if (aVal == null) return 1;
     if (bVal == null) return -1;
-    if (numericKeys.has(sortKey)) {
+    if (NUMERIC_KEYS.has(sortKey)) {
       const diff = Number(aVal) - Number(bVal);
       return sortDir === 'asc' ? diff : -diff;
     }
@@ -61,7 +61,7 @@ export default function TeamTable({ teams }: TeamTableProps) {
       <table className="table table-zebra table-sm w-full">
         <thead>
           <tr>
-            {columns.map((col) => (
+            {COLUMNS.map((col) => (
               <th
                 key={col.key}
                 onClick={() => handleSort(col.key)}
@@ -80,7 +80,7 @@ export default function TeamTable({ teams }: TeamTableProps) {
         <tbody>
           {sorted.map((team) => (
             <tr key={team.id} className="hover">
-              {columns.map((col) => {
+              {COLUMNS.map((col) => {
                 if (col.key === 'conference') {
                   return (
                     <td key={col.key}>
@@ -94,6 +94,7 @@ export default function TeamTable({ teams }: TeamTableProps) {
                 }
                 if (col.key === 'net_rating') {
                   const val = Number(team.net_rating ?? 0);
+
                   return (
                     <td key={col.key} className={`font-medium ${val > 0 ? 'text-success' : val < 0 ? 'text-error' : ''}`}>
                       {val > 0 ? '+' : ''}{val.toFixed(1)}
@@ -112,7 +113,7 @@ export default function TeamTable({ teams }: TeamTableProps) {
           ))}
           {sorted.length === 0 && (
             <tr>
-              <td colSpan={columns.length} className="text-center py-12 opacity-40">
+              <td colSpan={COLUMNS.length} className="text-center py-12 opacity-40">
                 No teams found
               </td>
             </tr>
@@ -121,4 +122,4 @@ export default function TeamTable({ teams }: TeamTableProps) {
       </table>
     </div>
   );
-}
+};

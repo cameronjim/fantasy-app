@@ -1,16 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Search, Filter, GitCompare, X } from 'lucide-react';
-import ScoreboardStrip from '../components/ScoreboardStrip';
-import PlayerTable from '../components/PlayerTable';
-import TeamTable from '../components/TeamTable';
-import PlayerModal from '../components/PlayerModal';
-import CompareModal from '../components/CompareModal';
+import { ScoreboardStrip } from '../components/ScoreboardStrip';
+import { PlayerTable } from '../components/PlayerTable';
+import { TeamTable } from '../components/TeamTable';
+import { PlayerModal } from '../components/PlayerModal';
+import { CompareModal } from '../components/CompareModal';
 import { getPlayers, getTeams } from '../api/client';
 import type { Player, Team } from '../types';
 
 const POSITIONS = ['All', 'PG', 'SG', 'SF', 'PF', 'C'];
 
-export default function StatsPage() {
+export const StatsPage = () => {
   const [view, setView] = useState<'players' | 'teams'>('players');
   const [players, setPlayers] = useState<Player[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -47,7 +47,7 @@ export default function StatsPage() {
     return matchesSearch && matchesTeam && matchesPos;
   });
 
-  const handleToggleCompare = (player: Player) => {
+  const handleToggleCompare = (player: Player): void => {
     setComparePlayers((prev) => {
       const exists = prev.find((p) => p.id === player.id);
       if (exists) return prev.filter((p) => p.id !== player.id);
@@ -61,7 +61,6 @@ export default function StatsPage() {
       <ScoreboardStrip />
 
       <div className="max-w-[1400px] mx-auto px-4 py-6">
-        {/* View Toggle */}
         <div className="flex items-center gap-4 mb-5">
           <div className="tabs tabs-boxed">
             <button
@@ -103,7 +102,6 @@ export default function StatsPage() {
           )}
         </div>
 
-        {/* Player Filters */}
         {view === 'players' && (
           <div className="flex flex-wrap items-center gap-3 mb-5">
             <label className="input input-bordered input-sm flex items-center gap-2 flex-1 min-w-[200px] max-w-[360px]">
@@ -145,7 +143,6 @@ export default function StatsPage() {
           </div>
         )}
 
-        {/* Tables */}
         {view === 'players' ? (
           loadingPlayers ? (
             <div className="flex items-center justify-center py-20">
@@ -165,12 +162,11 @@ export default function StatsPage() {
           </div>
         ) : (
           <TeamTable
-            teams={confFilter === 'All' ? teams : teams.filter((t) => t.conference === confFilter)}
+            teams={confFilter === 'All' ? teams : teams.filter((t) => t.conference?.toLowerCase().startsWith(confFilter.toLowerCase()))}
           />
         )}
       </div>
 
-      {/* Sticky compare bar */}
       {comparePlayers.length >= 1 && (
         <div className="fixed bottom-0 left-0 right-0 z-40 bg-base-200 border-t border-base-300 px-4 py-3 flex items-center justify-between shadow-2xl">
           <div className="flex items-center gap-3">
@@ -217,4 +213,4 @@ export default function StatsPage() {
       )}
     </div>
   );
-}
+};

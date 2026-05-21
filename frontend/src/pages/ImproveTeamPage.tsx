@@ -1,28 +1,29 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Loader2, Sparkles, Target, TrendingUp, RefreshCw } from 'lucide-react';
+import { Sparkles, Target, TrendingUp, RefreshCw } from 'lucide-react';
 import { getWaiverSuggestions } from '../api/client';
-import ChatBox from '../components/ChatBox';
+import { ChatBox } from '../components/ChatBox';
 
 interface Suggestion {
   name: string;
   reasoning: string;
 }
 
-export default function ImproveTeamPage() {
+interface ImproveTeamPageProps {
+  isLoggedIn: boolean;
+}
+
+export const ImproveTeamPage = ({ isLoggedIn }: ImproveTeamPageProps) => {
   const [tradeTargets, setTradeTargets] = useState<Suggestion[]>([]);
   const [waiverPickups, setWaiverPickups] = useState<Suggestion[]>([]);
   const [summary, setSummary] = useState('');
   const [cachedAt, setCachedAt] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
 
-  const loadSuggestions = useCallback(async (refresh = false) => {
-    if (refresh) {
-      setRefreshing(true);
-    } else {
-      setLoading(true);
-    }
+  const loadSuggestions = useCallback(async (refresh = false): Promise<void> => {
+    if (refresh) setRefreshing(true);
+    else setLoading(true);
     setError('');
     try {
       const data = await getWaiverSuggestions(refresh);
@@ -32,9 +33,6 @@ export default function ImproveTeamPage() {
       setCachedAt(data.cached_at || null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load suggestions');
-      setTradeTargets([]);
-      setWaiverPickups([]);
-      setSummary('');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -42,118 +40,115 @@ export default function ImproveTeamPage() {
   }, []);
 
   useEffect(() => {
-    loadSuggestions();
-  }, [loadSuggestions]);
+    if (isLoggedIn) loadSuggestions();
+  }, [isLoggedIn, loadSuggestions]);
 
-  const formatCacheTime = (iso: string) => {
+  const formatCacheTime = (iso: string): string => {
     const d = new Date(iso);
     return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   };
 
-  if (loading) {
-    return (
-      <div className="max-w-[1400px] mx-auto px-4 py-6">
-        <div className="bg-[#1a1d29] rounded-xl border border-[#2a2d3a] p-16 flex flex-col items-center">
-          <Loader2 size={32} className="text-[#3b82f6] animate-spin mb-4" />
-          <p className="text-[#9ca3af] text-sm">AI is analyzing your roster and finding improvements...</p>
-          <p className="text-[#4b5063] text-xs mt-1">This may take a moment</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="max-w-[1400px] mx-auto px-4 py-6">
-        <div className="bg-[#1a1d29] rounded-xl border border-[#2a2d3a] p-16 flex flex-col items-center">
-          <p className="text-[#ef4444] text-sm mb-4">{error}</p>
-          <button
-            onClick={() => loadSuggestions()}
-            className="px-4 py-2 rounded-lg text-sm font-medium bg-[#3b82f6] text-white hover:bg-[#2563eb] transition-colors cursor-pointer"
-          >
-            Try Again
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="max-w-[1400px] mx-auto px-4 py-6 space-y-6">
-      {/* Header with refresh */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          {cachedAt && (
-            <span className="text-xs text-[#4b5063]">
-              Last updated {formatCacheTime(cachedAt)}
-            </span>
-          )}
-        </div>
-        <button
-          onClick={() => loadSuggestions(true)}
-          disabled={refreshing}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-[#252836] border border-[#2a2d3a] text-[#9ca3af] hover:text-white hover:border-[#3b82f6] transition-colors cursor-pointer disabled:opacity-50"
-        >
-          <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
-          {refreshing ? 'Refreshing...' : 'Refresh Suggestions'}
-        </button>
-      </div>
-
-      {/* Summary */}
-      {summary && (
-        <div className="bg-[#1a1d29] rounded-xl border border-[#2a2d3a] p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Sparkles size={16} className="text-[#f59e0b]" />
-            <span className="text-sm font-semibold text-white">Strategy Summary</span>
+    <div className="max-w-[1400px] mx-auto px-4 py-6 space-y-5">
+      {isLoggedIn ? (
+        <>
+          <div className="flex items-center justify-between">
+            <div>
+              {cachedAt && (
+                <span className="text-xs opacity-40">Last updated {formatCacheTime(cachedAt)}</span>
+              )}
+            </div>
+            <button
+              onClick={() => loadSuggestions(true)}
+              disabled={refreshing || loading}
+              className="btn btn-ghost btn-xs gap-1.5"
+            >
+              <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
+              {refreshing ? 'Refreshing...' : 'Refresh Suggestions'}
+            </button>
           </div>
-          <p className="text-sm text-[#d1d5db] leading-relaxed">{summary}</p>
+
+          {loading ? (
+            <div className="card bg-base-200">
+              <div className="card-body flex flex-col items-center py-16 gap-3">
+                <span className="loading loading-spinner loading-lg" />
+                <p className="text-sm opacity-50">AI is analyzing your roster and finding improvements...</p>
+                <p className="text-xs opacity-30">This may take a moment</p>
+              </div>
+            </div>
+          ) : error ? (
+            <div className="card bg-base-200">
+              <div className="card-body flex flex-col items-center py-16 gap-4">
+                <p className="text-error text-sm">{error}</p>
+                <button onClick={() => loadSuggestions()} className="btn btn-primary btn-sm">Try Again</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              {summary && (
+                <div className="card bg-base-200">
+                  <div className="card-body p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Sparkles size={16} className="text-warning" />
+                      <span className="text-sm font-semibold">Strategy Summary</span>
+                    </div>
+                    <p className="text-sm opacity-80 leading-relaxed">{summary}</p>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                <div className="card bg-base-200 overflow-hidden">
+                  <div className="px-4 py-3 border-b border-base-300 flex items-center gap-2">
+                    <Target size={16} className="text-primary" />
+                    <h2 className="text-sm font-semibold">Trade Targets</h2>
+                  </div>
+                  <div className="p-4 space-y-3">
+                    {tradeTargets.length === 0 ? (
+                      <p className="text-sm opacity-40 text-center py-4">No trade targets found. Add players to your roster first.</p>
+                    ) : (
+                      tradeTargets.map((t, i) => (
+                        <div key={i} className="bg-base-300 rounded-lg p-3">
+                          <div className="font-medium text-sm mb-1">{t.name}</div>
+                          <p className="text-xs opacity-60 leading-relaxed">{t.reasoning}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="card bg-base-200 overflow-hidden">
+                  <div className="px-4 py-3 border-b border-base-300 flex items-center gap-2">
+                    <TrendingUp size={16} className="text-success" />
+                    <h2 className="text-sm font-semibold">Waiver Wire Pickups</h2>
+                  </div>
+                  <div className="p-4 space-y-3">
+                    {waiverPickups.length === 0 ? (
+                      <p className="text-sm opacity-40 text-center py-4">No waiver suggestions found. Add players to your roster first.</p>
+                    ) : (
+                      waiverPickups.map((w, i) => (
+                        <div key={i} className="bg-base-300 rounded-lg p-3">
+                          <div className="font-medium text-sm mb-1">{w.name}</div>
+                          <p className="text-xs opacity-60 leading-relaxed">{w.reasoning}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </>
+      ) : (
+        <div className="card bg-base-200">
+          <div className="card-body flex flex-col items-center py-16 gap-2 text-center">
+            <p className="font-semibold">Sign in to unlock AI suggestions</p>
+            <p className="text-sm opacity-50">Use the Sign In button in the top right to get trade targets, waiver pickups, and AI chat.</p>
+          </div>
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Trade Targets */}
-        <div className="bg-[#1a1d29] rounded-xl border border-[#2a2d3a] overflow-hidden">
-          <div className="px-4 py-3 border-b border-[#2a2d3a] flex items-center gap-2">
-            <Target size={16} className="text-[#3b82f6]" />
-            <h2 className="text-sm font-semibold text-white">Trade Targets</h2>
-          </div>
-          <div className="p-4 space-y-3">
-            {tradeTargets.length === 0 ? (
-              <p className="text-sm text-[#6b7280] text-center py-4">No trade targets found. Add players to your roster first.</p>
-            ) : (
-              tradeTargets.map((t, i) => (
-                <div key={i} className="bg-[#252836] rounded-lg p-3">
-                  <div className="font-medium text-white text-sm mb-1">{t.name}</div>
-                  <p className="text-xs text-[#9ca3af] leading-relaxed">{t.reasoning}</p>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Waiver Pickups */}
-        <div className="bg-[#1a1d29] rounded-xl border border-[#2a2d3a] overflow-hidden">
-          <div className="px-4 py-3 border-b border-[#2a2d3a] flex items-center gap-2">
-            <TrendingUp size={16} className="text-[#22c55e]" />
-            <h2 className="text-sm font-semibold text-white">Waiver Wire Pickups</h2>
-          </div>
-          <div className="p-4 space-y-3">
-            {waiverPickups.length === 0 ? (
-              <p className="text-sm text-[#6b7280] text-center py-4">No waiver suggestions found. Add players to your roster first.</p>
-            ) : (
-              waiverPickups.map((w, i) => (
-                <div key={i} className="bg-[#252836] rounded-lg p-3">
-                  <div className="font-medium text-white text-sm mb-1">{w.name}</div>
-                  <p className="text-xs text-[#9ca3af] leading-relaxed">{w.reasoning}</p>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* AI Chat */}
-      <ChatBox contextType="waiver" />
+      <ChatBox contextType="waiver" isLoggedIn={isLoggedIn} />
     </div>
   );
-}
+};

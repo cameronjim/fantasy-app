@@ -3,22 +3,22 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { getGames, getLiveGames } from '../api/client';
 import type { Game } from '../types';
 
-// Module-level cache — persists across component remounts so navigating back is instant
-let _gamesCache: Game[] = [];
-let _cacheFetchedAt = 0;
+// persists across remounts so navigating back is instant
+let gamesCache: Game[] = [];
+let cacheFetchedAt = 0;
 
 function periodLabel(period: number): string {
   if (period <= 4) return `Q${period}`;
   return `OT${period - 4 > 1 ? period - 4 : ''}`;
 }
 
-export default function ScoreboardStrip() {
-  const [games, setGames] = useState<Game[]>(_gamesCache);
+export const ScoreboardStrip = () => {
+  const [games, setGames] = useState<Game[]>(gamesCache);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [secAgo, setSecAgo] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fetchGames = useCallback(async () => {
+  const fetchGames = useCallback(async (): Promise<void> => {
     try {
       const [liveGames, allGames] = await Promise.all([
         getLiveGames().catch(() => [] as Game[]),
@@ -29,8 +29,8 @@ export default function ScoreboardStrip() {
         ...liveGames,
         ...allGames.filter((g) => !liveIds.has(g.nba_game_id ?? g.id)),
       ];
-      _gamesCache = merged;
-      _cacheFetchedAt = Date.now();
+      gamesCache = merged;
+      cacheFetchedAt = Date.now();
       setGames(merged);
       setLastUpdated(new Date());
       setSecAgo(0);
@@ -40,8 +40,8 @@ export default function ScoreboardStrip() {
   }, []);
 
   useEffect(() => {
-    // Skip fetch if cache is fresh (< 15s old) — avoids re-fetching on navigation back
-    if (Date.now() - _cacheFetchedAt > 15_000) {
+    // skip fetch if cache is fresh (< 15s old)
+    if (Date.now() - cacheFetchedAt > 15_000) {
       fetchGames();
     }
     const pollInterval = setInterval(fetchGames, 30_000);
@@ -52,13 +52,13 @@ export default function ScoreboardStrip() {
     };
   }, [fetchGames]);
 
-  const scroll = (direction: 'left' | 'right') => {
+  const scroll = (direction: 'left' | 'right'): void => {
     const container = document.getElementById('scoreboard-scroll');
     if (!container) return;
     container.scrollBy({ left: direction === 'left' ? -280 : 280, behavior: 'smooth' });
   };
 
-  const formatDate = (dateStr: string) => {
+  const formatDate = (dateStr: string): string => {
     const d = new Date(dateStr + 'T12:00:00');
     const today = new Date();
     today.setHours(12, 0, 0, 0);
@@ -168,4 +168,4 @@ export default function ScoreboardStrip() {
       )}
     </div>
   );
-}
+};

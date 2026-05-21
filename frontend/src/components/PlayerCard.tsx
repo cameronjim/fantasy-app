@@ -7,13 +7,13 @@ interface PlayerCardProps {
   actionColor?: 'blue' | 'red';
 }
 
-export default function PlayerCard({
+export const PlayerCard = ({
   player,
   actionLabel,
   onAction,
   actionColor = 'blue',
-}: PlayerCardProps) {
-  const getInjuryBadge = () => {
+}: PlayerCardProps) => {
+  const getInjuryBadge = (): JSX.Element | null => {
     if (!player.injury_status) return null;
     const colors: Record<string, string> = {
       Out: 'bg-[#ef4444]/20 text-[#ef4444]',
@@ -49,19 +49,19 @@ export default function PlayerCard({
           </div>
           <div className="flex items-center gap-3 mt-2">
             <div className="text-center">
-              <div className="text-xs font-bold text-white">{Number(player.ppg).toFixed(1)}</div>
+              <div className="text-xs font-bold text-white">{Number(player.points_per_game).toFixed(1)}</div>
               <div className="text-[10px] text-[#6b7280]">PPG</div>
             </div>
             <div className="text-center">
-              <div className="text-xs font-bold text-white">{Number(player.rpg).toFixed(1)}</div>
+              <div className="text-xs font-bold text-white">{Number(player.rebounds_per_game).toFixed(1)}</div>
               <div className="text-[10px] text-[#6b7280]">RPG</div>
             </div>
             <div className="text-center">
-              <div className="text-xs font-bold text-white">{Number(player.apg).toFixed(1)}</div>
+              <div className="text-xs font-bold text-white">{Number(player.assists_per_game).toFixed(1)}</div>
               <div className="text-[10px] text-[#6b7280]">APG</div>
             </div>
             <div className="text-center">
-              <div className="text-xs font-bold text-white">{(Number(player.fg_pct) * 100).toFixed(1)}</div>
+              <div className="text-xs font-bold text-white">{Number(player.field_goal_percentage).toFixed(1)}</div>
               <div className="text-[10px] text-[#6b7280]">FG%</div>
             </div>
           </div>
@@ -75,4 +75,4 @@ export default function PlayerCard({
       </div>
     </div>
   );
-}
+};
