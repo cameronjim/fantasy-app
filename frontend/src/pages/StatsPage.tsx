@@ -22,6 +22,7 @@ export default function StatsPage() {
   const [loadingTeams, setLoadingTeams] = useState(false);
   const [comparePlayers, setComparePlayers] = useState<Player[]>([]);
   const [showCompare, setShowCompare] = useState(false);
+  const [confFilter, setConfFilter] = useState<'All' | 'East' | 'West'>('All');
 
   useEffect(() => {
     setLoadingPlayers(true);
@@ -42,7 +43,7 @@ export default function StatsPage() {
   const filteredPlayers = players.filter((p) => {
     const matchesSearch = !search || p.name.toLowerCase().includes(search.toLowerCase());
     const matchesTeam = !teamFilter || p.team === teamFilter;
-    const matchesPos = posFilter === 'All' || p.position === posFilter;
+    const matchesPos = posFilter === 'All' || p.position.split(',').includes(posFilter);
     return matchesSearch && matchesTeam && matchesPos;
   });
 
@@ -89,6 +90,28 @@ export default function StatsPage() {
             <span className="text-xs text-[#6b7280]">
               {filteredPlayers.length} player{filteredPlayers.length !== 1 ? 's' : ''}
             </span>
+          )}
+
+          {view === 'teams' && (
+            <div className="flex rounded-lg bg-[#1a1d29] border border-[#2a2d3a] overflow-hidden">
+              {(['All', 'East', 'West'] as const).map((conf) => (
+                <button
+                  key={conf}
+                  onClick={() => setConfFilter(conf)}
+                  className={`px-4 py-2 text-xs font-medium transition-colors cursor-pointer ${
+                    confFilter === conf
+                      ? conf === 'East'
+                        ? 'bg-[#1d4ed8] text-white'
+                        : conf === 'West'
+                        ? 'bg-[#b45309] text-white'
+                        : 'bg-[#3b82f6] text-white'
+                      : 'text-[#9ca3af] hover:text-white hover:bg-[#252836]'
+                  }`}
+                >
+                  {conf}
+                </button>
+              ))}
+            </div>
           )}
         </div>
 
@@ -162,7 +185,9 @@ export default function StatsPage() {
             <div className="w-8 h-8 border-2 border-[#3b82f6] border-t-transparent rounded-full animate-spin" />
           </div>
         ) : (
-          <TeamTable teams={teams} />
+          <TeamTable
+            teams={confFilter === 'All' ? teams : teams.filter((t) => t.conference === confFilter)}
+          />
         )}
       </div>
 
