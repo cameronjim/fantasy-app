@@ -1,22 +1,26 @@
-import os
 import logging
+import os
+from typing import Any
+
 import psycopg2
 import psycopg2.extras
+import scrapy
 from dotenv import load_dotenv
-from nba_scraper.items import PlayerItem, TeamItem, GameItem, InjuryItem
+
+from nba_scraper.items import GameItem, InjuryItem, PlayerItem, TeamItem
 
 logger = logging.getLogger(__name__)
 
 
 class PostgresPipeline:
-    """Upserts scraped items into the PostgreSQL database."""
+    """upserts scraped items into the PostgreSQL database."""
 
-    def __init__(self):
-        self.conn = None
-        self.cur = None
+    def __init__(self) -> None:
+        self.conn: psycopg2.extensions.connection | None = None
+        self.cur: psycopg2.extensions.cursor | None = None
 
-    def open_spider(self, spider):
-        # Load .env from the project root (two levels up from scraper/)
+    def open_spider(self, spider: scrapy.Spider) -> None:
+        # load .env from the project root (two levels up from scraper/)
         env_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
             ".env",
@@ -34,14 +38,14 @@ class PostgresPipeline:
         self.cur = self.conn.cursor()
         logger.info("PostgresPipeline: connected to database")
 
-    def close_spider(self, spider):
+    def close_spider(self, spider: scrapy.Spider) -> None:
         if self.cur:
             self.cur.close()
         if self.conn:
             self.conn.close()
         logger.info("PostgresPipeline: database connection closed")
 
-    def process_item(self, item, spider):
+    def process_item(self, item: Any, spider: scrapy.Spider) -> Any:
         try:
             if isinstance(item, PlayerItem):
                 self._upsert_player(item)
@@ -52,102 +56,97 @@ class PostgresPipeline:
             elif isinstance(item, InjuryItem):
                 self._update_injury(item)
             else:
-                logger.warning("Unknown item type: %s", type(item).__name__)
+                logger.warning("unknown item type: %s", type(item).__name__)
                 return item
 
             self.conn.commit()
         except Exception as e:
             self.conn.rollback()
-            logger.error("Error processing %s: %s", type(item).__name__, e)
+            logger.error("error processing %s: %s", type(item).__name__, e)
 
         return item
 
-    # ------------------------------------------------------------------
-    # Player UPSERT
-    # ------------------------------------------------------------------
-    def _upsert_player(self, item):
+    def _upsert_player(self, item: PlayerItem) -> None:
         self.cur.execute(
             """
             INSERT INTO players (
                 nba_id, name, team, position,
-                ppg, rpg, apg, spg, bpg,
-                fg_pct, three_pct, ft_pct,
-                tov, mpg, gp, headshot_url,
+                points_per_game, rebounds_per_game, assists_per_game,
+                steals_per_game, blocks_per_game,
+                field_goal_percentage, three_point_percentage, free_throw_percentage,
+                turnovers_per_game, minutes_per_game, games_played, headshot_url,
                 updated_at
             ) VALUES (
                 %(nba_id)s, %(name)s, %(team)s, %(position)s,
-                %(ppg)s, %(rpg)s, %(apg)s, %(spg)s, %(bpg)s,
-                %(fg_pct)s, %(three_pct)s, %(ft_pct)s,
-                %(tov)s, %(mpg)s, %(gp)s, %(headshot_url)s,
+                %(points_per_game)s, %(rebounds_per_game)s, %(assists_per_game)s,
+                %(steals_per_game)s, %(blocks_per_game)s,
+                %(field_goal_percentage)s, %(three_point_percentage)s, %(free_throw_percentage)s,
+                %(turnovers_per_game)s, %(minutes_per_game)s, %(games_played)s, %(headshot_url)s,
                 NOW()
             )
             ON CONFLICT (nba_id) DO UPDATE SET
-                name         = EXCLUDED.name,
-                team         = EXCLUDED.team,
-                position     = EXCLUDED.position,
-                ppg          = EXCLUDED.ppg,
-                rpg          = EXCLUDED.rpg,
-                apg          = EXCLUDED.apg,
-                spg          = EXCLUDED.spg,
-                bpg          = EXCLUDED.bpg,
-                fg_pct       = EXCLUDED.fg_pct,
-                three_pct    = EXCLUDED.three_pct,
-                ft_pct       = EXCLUDED.ft_pct,
-                tov          = EXCLUDED.tov,
-                mpg          = EXCLUDED.mpg,
-                gp           = EXCLUDED.gp,
-                headshot_url = EXCLUDED.headshot_url,
-                updated_at   = NOW()
+                name                  = EXCLUDED.name,
+                team                  = EXCLUDED.team,
+                position              = EXCLUDED.position,
+                points_per_game       = EXCLUDED.points_per_game,
+                rebounds_per_game     = EXCLUDED.rebounds_per_game,
+                assists_per_game      = EXCLUDED.assists_per_game,
+                steals_per_game       = EXCLUDED.steals_per_game,
+                blocks_per_game       = EXCLUDED.blocks_per_game,
+                field_goal_percentage = EXCLUDED.field_goal_percentage,
+                three_point_percentage = EXCLUDED.three_point_percentage,
+                free_throw_percentage = EXCLUDED.free_throw_percentage,
+                turnovers_per_game    = EXCLUDED.turnovers_per_game,
+                minutes_per_game      = EXCLUDED.minutes_per_game,
+                games_played          = EXCLUDED.games_played,
+                headshot_url          = EXCLUDED.headshot_url,
+                updated_at            = NOW()
             """,
             dict(item),
         )
 
-    # ------------------------------------------------------------------
-    # Team UPSERT
-    # ------------------------------------------------------------------
-    def _upsert_team(self, item):
+    def _upsert_team(self, item: TeamItem) -> None:
         self.cur.execute(
             """
             INSERT INTO teams (
                 nba_id, name, abbreviation, conference, division,
                 wins, losses,
-                ppg, rpg, apg, spg, bpg,
-                fg_pct, three_pct, ft_pct,
-                tov, logo_url, updated_at
+                points_per_game, rebounds_per_game, assists_per_game,
+                steals_per_game, blocks_per_game,
+                field_goal_percentage, three_point_percentage, free_throw_percentage,
+                turnovers_per_game, logo_url, updated_at
             ) VALUES (
                 %(nba_id)s, %(name)s, %(abbreviation)s,
                 %(conference)s, %(division)s,
                 %(wins)s, %(losses)s,
-                %(ppg)s, %(rpg)s, %(apg)s, %(spg)s, %(bpg)s,
-                %(fg_pct)s, %(three_pct)s, %(ft_pct)s,
-                %(tov)s, %(logo_url)s, NOW()
+                %(points_per_game)s, %(rebounds_per_game)s, %(assists_per_game)s,
+                %(steals_per_game)s, %(blocks_per_game)s,
+                %(field_goal_percentage)s, %(three_point_percentage)s, %(free_throw_percentage)s,
+                %(turnovers_per_game)s, %(logo_url)s, NOW()
             )
             ON CONFLICT (nba_id) DO UPDATE SET
-                name          = EXCLUDED.name,
-                abbreviation  = EXCLUDED.abbreviation,
-                conference    = EXCLUDED.conference,
-                division      = EXCLUDED.division,
-                wins          = EXCLUDED.wins,
-                losses        = EXCLUDED.losses,
-                ppg           = EXCLUDED.ppg,
-                rpg           = EXCLUDED.rpg,
-                apg           = EXCLUDED.apg,
-                spg           = EXCLUDED.spg,
-                bpg           = EXCLUDED.bpg,
-                fg_pct        = EXCLUDED.fg_pct,
-                three_pct     = EXCLUDED.three_pct,
-                ft_pct        = EXCLUDED.ft_pct,
-                tov           = EXCLUDED.tov,
-                logo_url      = EXCLUDED.logo_url,
-                updated_at    = NOW()
+                name                   = EXCLUDED.name,
+                abbreviation           = EXCLUDED.abbreviation,
+                conference             = EXCLUDED.conference,
+                division               = EXCLUDED.division,
+                wins                   = EXCLUDED.wins,
+                losses                 = EXCLUDED.losses,
+                points_per_game        = EXCLUDED.points_per_game,
+                rebounds_per_game      = EXCLUDED.rebounds_per_game,
+                assists_per_game       = EXCLUDED.assists_per_game,
+                steals_per_game        = EXCLUDED.steals_per_game,
+                blocks_per_game        = EXCLUDED.blocks_per_game,
+                field_goal_percentage  = EXCLUDED.field_goal_percentage,
+                three_point_percentage = EXCLUDED.three_point_percentage,
+                free_throw_percentage  = EXCLUDED.free_throw_percentage,
+                turnovers_per_game     = EXCLUDED.turnovers_per_game,
+                logo_url               = EXCLUDED.logo_url,
+                updated_at             = NOW()
             """,
             dict(item),
         )
 
-    # ------------------------------------------------------------------
-    # Game UPSERT
-    # ------------------------------------------------------------------
-    def _upsert_game(self, item):
+    def _upsert_game(self, item: GameItem) -> None:
         self.cur.execute(
             """
             INSERT INTO games (
@@ -172,10 +171,7 @@ class PostgresPipeline:
             dict(item),
         )
 
-    # ------------------------------------------------------------------
-    # Injury UPDATE
-    # ------------------------------------------------------------------
-    def _update_injury(self, item):
+    def _update_injury(self, item: InjuryItem) -> None:
         self.cur.execute(
             """
             UPDATE players

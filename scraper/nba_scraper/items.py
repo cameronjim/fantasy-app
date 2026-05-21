@@ -2,27 +2,29 @@ import scrapy
 
 
 class PlayerItem(scrapy.Item):
-    """Matches the players table schema."""
+    """matches the players table schema."""
+
     nba_id = scrapy.Field()
     name = scrapy.Field()
     team = scrapy.Field()
     position = scrapy.Field()
-    ppg = scrapy.Field()
-    rpg = scrapy.Field()
-    apg = scrapy.Field()
-    spg = scrapy.Field()
-    bpg = scrapy.Field()
-    fg_pct = scrapy.Field()
-    three_pct = scrapy.Field()
-    ft_pct = scrapy.Field()
-    tov = scrapy.Field()
-    mpg = scrapy.Field()
-    gp = scrapy.Field()
+    points_per_game = scrapy.Field()
+    rebounds_per_game = scrapy.Field()
+    assists_per_game = scrapy.Field()
+    steals_per_game = scrapy.Field()
+    blocks_per_game = scrapy.Field()
+    field_goal_percentage = scrapy.Field()
+    three_point_percentage = scrapy.Field()
+    free_throw_percentage = scrapy.Field()
+    turnovers_per_game = scrapy.Field()
+    minutes_per_game = scrapy.Field()
+    games_played = scrapy.Field()
     headshot_url = scrapy.Field()
 
 
 class TeamItem(scrapy.Item):
-    """Matches the teams table schema."""
+    """matches the teams table schema."""
+
     nba_id = scrapy.Field()
     name = scrapy.Field()
     abbreviation = scrapy.Field()
@@ -30,20 +32,21 @@ class TeamItem(scrapy.Item):
     division = scrapy.Field()
     wins = scrapy.Field()
     losses = scrapy.Field()
-    ppg = scrapy.Field()
-    rpg = scrapy.Field()
-    apg = scrapy.Field()
-    spg = scrapy.Field()
-    bpg = scrapy.Field()
-    fg_pct = scrapy.Field()
-    three_pct = scrapy.Field()
-    ft_pct = scrapy.Field()
-    tov = scrapy.Field()
+    points_per_game = scrapy.Field()
+    rebounds_per_game = scrapy.Field()
+    assists_per_game = scrapy.Field()
+    steals_per_game = scrapy.Field()
+    blocks_per_game = scrapy.Field()
+    field_goal_percentage = scrapy.Field()
+    three_point_percentage = scrapy.Field()
+    free_throw_percentage = scrapy.Field()
+    turnovers_per_game = scrapy.Field()
     logo_url = scrapy.Field()
 
 
 class GameItem(scrapy.Item):
-    """Matches the games table schema."""
+    """matches the games table schema."""
+
     nba_game_id = scrapy.Field()
     home_team = scrapy.Field()
     away_team = scrapy.Field()
@@ -55,7 +58,8 @@ class GameItem(scrapy.Item):
 
 
 class InjuryItem(scrapy.Item):
-    """Used to update injury_status and injury_detail on the players table."""
+    """used to update injury_status and injury_detail on the players table."""
+
     name = scrapy.Field()
     team = scrapy.Field()
     injury_status = scrapy.Field()

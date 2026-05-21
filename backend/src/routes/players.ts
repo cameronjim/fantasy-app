@@ -3,8 +3,7 @@ import { query } from '../db.js';
 
 const router = Router();
 
-// GET / — list players with optional filters: search, team, position
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', async (req: Request, res: Response): Promise<void> => {
   try {
     const { search, team, position } = req.query;
 
@@ -33,29 +32,31 @@ router.get('/', async (req: Request, res: Response) => {
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const result = await query(
-      `SELECT id, nba_id, name, team, position, ppg, rpg, apg, spg, bpg,
-              fg_pct, three_pct, ft_pct, three_pm, tov, mpg, gp,
+      `SELECT id, nba_id, name, team, position,
+              points_per_game, rebounds_per_game, assists_per_game, steals_per_game, blocks_per_game,
+              field_goal_percentage, three_point_percentage, free_throw_percentage, three_pointers_made,
+              turnovers_per_game, minutes_per_game, games_played,
               injury_status, injury_detail, headshot_url, updated_at
        FROM players ${whereClause}
-       ORDER BY ppg DESC`,
+       ORDER BY points_per_game DESC`,
       params
     );
 
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching players:', error);
     res.status(500).json({ error: 'Failed to fetch players' });
   }
 });
 
-// GET /:id — single player by id
-router.get('/:id', async (req: Request, res: Response) => {
+router.get('/:id', async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
 
     const result = await query(
-      `SELECT id, nba_id, name, team, position, ppg, rpg, apg, spg, bpg,
-              fg_pct, three_pct, ft_pct, three_pm, tov, mpg, gp,
+      `SELECT id, nba_id, name, team, position,
+              points_per_game, rebounds_per_game, assists_per_game, steals_per_game, blocks_per_game,
+              field_goal_percentage, three_point_percentage, free_throw_percentage, three_pointers_made,
+              turnovers_per_game, minutes_per_game, games_played,
               injury_status, injury_detail, headshot_url, updated_at
        FROM players
        WHERE id = $1`,
@@ -69,9 +70,8 @@ router.get('/:id', async (req: Request, res: Response) => {
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error fetching player:', error);
     res.status(500).json({ error: 'Failed to fetch player' });
   }
 });
 
-export default router;
+export { router as playersRouter };

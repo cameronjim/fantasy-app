@@ -15,8 +15,7 @@ const NBA_API_HEADERS: Record<string, string> = {
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
 };
 
-// GET / — games, default sorted by date desc, limit 30. Support ?date=YYYY-MM-DD filter.
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', async (req: Request, res: Response): Promise<void> => {
   try {
     const { date } = req.query;
 
@@ -41,13 +40,11 @@ router.get('/', async (req: Request, res: Response) => {
     const result = await query(sql, params);
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching games:', error);
     res.status(500).json({ error: 'Failed to fetch games' });
   }
 });
 
-// GET /live — fetch today's scoreboard directly from the NBA API for live scores
-router.get('/live', async (_req: Request, res: Response) => {
+router.get('/live', async (_req: Request, res: Response): Promise<void> => {
   try {
     const today = new Date();
     const mm = String(today.getMonth() + 1).padStart(2, '0');
@@ -59,7 +56,6 @@ router.get('/live', async (_req: Request, res: Response) => {
     const resp = await fetch(url, { headers: NBA_API_HEADERS });
 
     if (!resp.ok) {
-      console.error('NBA API returned', resp.status);
       res.status(502).json({ error: 'NBA API unavailable' });
       return;
     }
@@ -78,7 +74,7 @@ router.get('/live', async (_req: Request, res: Response) => {
       return;
     }
 
-    const toDict = (rs: { headers: string[]; rowSet: unknown[][] }) =>
+    const toDict = (rs: { headers: string[]; rowSet: unknown[][] }): Record<string, unknown>[] =>
       rs.rowSet.map((row) =>
         Object.fromEntries(rs.headers.map((h, i) => [h, row[i]]))
       );
@@ -86,7 +82,7 @@ router.get('/live', async (_req: Request, res: Response) => {
     const games = toDict(gameHeader);
     const scores = lineScore ? toDict(lineScore) : [];
 
-    // Build lookups from LineScore: scores and team names by GAME_ID + TEAM_ID
+    // build score/name lookups keyed by game+team id to avoid multiple passes
     const scoreMap: Record<string, Record<string, number | null>> = {};
     const teamNameMap: Record<string, Record<string, string>> = {};
     for (const s of scores) {
@@ -118,7 +114,7 @@ router.get('/live', async (_req: Request, res: Response) => {
 
       const period = g.LIVE_PERIOD != null ? Number(g.LIVE_PERIOD) : undefined;
       const rawClock = g.LIVE_PC_TIME != null ? String(g.LIVE_PC_TIME).trim() : undefined;
-      const game_clock = rawClock && rawClock !== '' && rawClock !== '0:00' ? rawClock : undefined;
+      const gameClock = rawClock && rawClock !== '' && rawClock !== '0:00' ? rawClock : undefined;
 
       return {
         id: gameId,
@@ -130,11 +126,10 @@ router.get('/live', async (_req: Request, res: Response) => {
         away_score: gameScores[awayTeamId] ?? null,
         status,
         ...(period ? { period } : {}),
-        ...(game_clock ? { game_clock } : {}),
+        ...(gameClock ? { game_clock: gameClock } : {}),
       };
     });
 
-    // Also persist updated scores to the database
     for (const g of result) {
       try {
         await query(
@@ -147,17 +142,15 @@ router.get('/live', async (_req: Request, res: Response) => {
              updated_at = NOW()`,
           [g.nba_game_id, g.home_team, g.away_team, g.game_date, g.home_score, g.away_score, g.status]
         );
-      } catch (dbErr) {
-        // Non-fatal: log but continue
-        console.error('Failed to persist live score:', dbErr);
+      } catch {
+        // non-fatal db write — continue returning live data
       }
     }
 
     res.json(result);
   } catch (error) {
-    console.error('Error fetching live scoreboard:', error);
     res.status(500).json({ error: 'Failed to fetch live scores' });
   }
 });
 
-export default router;
+export { router as gamesRouter };

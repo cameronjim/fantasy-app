@@ -1,23 +1,21 @@
--- Fantasy NBA Database Schema
-
 CREATE TABLE IF NOT EXISTS players (
     id SERIAL PRIMARY KEY,
     nba_id VARCHAR(20) UNIQUE,
     name VARCHAR(100) NOT NULL,
     team VARCHAR(50),
     position VARCHAR(20),
-    ppg NUMERIC(5,1) DEFAULT 0,
-    rpg NUMERIC(5,1) DEFAULT 0,
-    apg NUMERIC(5,1) DEFAULT 0,
-    spg NUMERIC(4,1) DEFAULT 0,
-    bpg NUMERIC(4,1) DEFAULT 0,
-    fg_pct NUMERIC(5,1) DEFAULT 0,
-    three_pct NUMERIC(5,1) DEFAULT 0,
-    ft_pct NUMERIC(5,1) DEFAULT 0,
-    three_pm NUMERIC(4,1) DEFAULT 0,
-    tov NUMERIC(4,1) DEFAULT 0,
-    mpg NUMERIC(5,1) DEFAULT 0,
-    gp INTEGER DEFAULT 0,
+    points_per_game NUMERIC(5,1) DEFAULT 0,
+    rebounds_per_game NUMERIC(5,1) DEFAULT 0,
+    assists_per_game NUMERIC(5,1) DEFAULT 0,
+    steals_per_game NUMERIC(4,1) DEFAULT 0,
+    blocks_per_game NUMERIC(4,1) DEFAULT 0,
+    field_goal_percentage NUMERIC(5,1) DEFAULT 0,
+    three_point_percentage NUMERIC(5,1) DEFAULT 0,
+    free_throw_percentage NUMERIC(5,1) DEFAULT 0,
+    three_pointers_made NUMERIC(4,1) DEFAULT 0,
+    turnovers_per_game NUMERIC(4,1) DEFAULT 0,
+    minutes_per_game NUMERIC(5,1) DEFAULT 0,
+    games_played INTEGER DEFAULT 0,
     injury_status VARCHAR(50),
     injury_detail VARCHAR(255),
     headshot_url VARCHAR(500),
@@ -33,17 +31,17 @@ CREATE TABLE IF NOT EXISTS teams (
     division VARCHAR(20),
     wins INTEGER DEFAULT 0,
     losses INTEGER DEFAULT 0,
-    ppg NUMERIC(5,1) DEFAULT 0,
-    rpg NUMERIC(5,1) DEFAULT 0,
-    apg NUMERIC(5,1) DEFAULT 0,
-    spg NUMERIC(4,1) DEFAULT 0,
-    bpg NUMERIC(4,1) DEFAULT 0,
-    fg_pct NUMERIC(5,1) DEFAULT 0,
-    three_pct NUMERIC(5,1) DEFAULT 0,
-    ft_pct NUMERIC(5,1) DEFAULT 0,
-    tov NUMERIC(4,1) DEFAULT 0,
-    def_rating NUMERIC(5,1) DEFAULT 0,
-    off_rating NUMERIC(5,1) DEFAULT 0,
+    points_per_game NUMERIC(5,1) DEFAULT 0,
+    rebounds_per_game NUMERIC(5,1) DEFAULT 0,
+    assists_per_game NUMERIC(5,1) DEFAULT 0,
+    steals_per_game NUMERIC(4,1) DEFAULT 0,
+    blocks_per_game NUMERIC(4,1) DEFAULT 0,
+    field_goal_percentage NUMERIC(5,1) DEFAULT 0,
+    three_point_percentage NUMERIC(5,1) DEFAULT 0,
+    free_throw_percentage NUMERIC(5,1) DEFAULT 0,
+    turnovers_per_game NUMERIC(4,1) DEFAULT 0,
+    defensive_rating NUMERIC(5,1) DEFAULT 0,
+    offensive_rating NUMERIC(5,1) DEFAULT 0,
     net_rating NUMERIC(5,1) DEFAULT 0,
     logo_url VARCHAR(500),
     updated_at TIMESTAMP DEFAULT NOW()
@@ -62,21 +60,30 @@ CREATE TABLE IF NOT EXISTS games (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS my_roster (
     id SERIAL PRIMARY KEY,
-    player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE UNIQUE,
-    added_at TIMESTAMP DEFAULT NOW()
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    added_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE (user_id, player_id)
 );
 
 CREATE TABLE IF NOT EXISTS analysis_cache (
-    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     roster_hash VARCHAR(64) NOT NULL,
     analysis JSONB NOT NULL,
     created_at TIMESTAMP DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS waiver_cache (
-    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     roster_hash VARCHAR(64) NOT NULL,
     suggestions JSONB NOT NULL,
     created_at TIMESTAMP DEFAULT NOW()

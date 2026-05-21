@@ -7,7 +7,7 @@ interface TeamAnalysisCardProps {
   onRefresh?: () => void;
 }
 
-export default function TeamAnalysisCard({ analysis, loading, onRefresh }: TeamAnalysisCardProps) {
+export const TeamAnalysisCard = ({ analysis, loading, onRefresh }: TeamAnalysisCardProps) => {
   if (loading) {
     return (
       <div className="bg-[#1a1d29] rounded-xl border border-[#2a2d3a] p-8 flex flex-col items-center justify-center">
@@ -30,22 +30,22 @@ export default function TeamAnalysisCard({ analysis, loading, onRefresh }: TeamA
       title: 'Strengths',
       items: analysis.strengths,
       icon: TrendingUp,
-      color: '#22c55e',
-      bgColor: '#22c55e',
+      colorClass: 'text-[#22c55e]',
+      dotClass: 'bg-[#22c55e]',
     },
     {
       title: 'Weaknesses',
       items: analysis.weaknesses,
       icon: TrendingDown,
-      color: '#ef4444',
-      bgColor: '#ef4444',
+      colorClass: 'text-[#ef4444]',
+      dotClass: 'bg-[#ef4444]',
     },
     {
       title: 'Suggestions',
       items: analysis.suggestions,
       icon: Lightbulb,
-      color: '#3b82f6',
-      bgColor: '#3b82f6',
+      colorClass: 'text-[#3b82f6]',
+      dotClass: 'bg-[#3b82f6]',
     },
   ];
 
@@ -68,11 +68,8 @@ export default function TeamAnalysisCard({ analysis, loading, onRefresh }: TeamA
           return (
             <div key={section.title} className="space-y-2">
               <div className="flex items-center gap-2">
-                <Icon size={14} style={{ color: section.color }} />
-                <span
-                  className="text-xs font-semibold uppercase tracking-wider"
-                  style={{ color: section.color }}
-                >
+                <Icon size={14} className={section.colorClass} />
+                <span className={`text-xs font-semibold uppercase tracking-wider ${section.colorClass}`}>
                   {section.title}
                 </span>
               </div>
@@ -82,10 +79,7 @@ export default function TeamAnalysisCard({ analysis, loading, onRefresh }: TeamA
                     key={i}
                     className="flex items-start gap-2 px-3 py-2 rounded-lg bg-[#252836]"
                   >
-                    <span
-                      className="w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0"
-                      style={{ backgroundColor: section.bgColor }}
-                    />
+                    <span className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${section.dotClass}`} />
                     <span className="text-xs text-[#d1d5db] leading-relaxed">{item}</span>
                   </div>
                 ))}
@@ -99,4 +93,4 @@ export default function TeamAnalysisCard({ analysis, loading, onRefresh }: TeamA
       </div>
     </div>
   );
-}
+};

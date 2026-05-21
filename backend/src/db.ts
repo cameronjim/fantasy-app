@@ -15,9 +15,9 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
-export async function query(text: string, params?: unknown[]) {
+export async function query(text: string, params?: unknown[]): Promise<pg.QueryResult> {
   const result = await pool.query(text, params);
   return result;
 }
 
-export default pool;
+export { pool };

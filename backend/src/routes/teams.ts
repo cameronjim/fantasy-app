@@ -3,14 +3,14 @@ import { query } from '../db.js';
 
 const router = Router();
 
-// GET / — all teams with stats
-router.get('/', async (_req: Request, res: Response) => {
+router.get('/', async (_req: Request, res: Response): Promise<void> => {
   try {
     const result = await query(
       `SELECT id, nba_id, name, abbreviation, conference, division,
-              wins, losses, ppg, rpg, apg, spg, bpg,
-              fg_pct, three_pct, ft_pct, tov,
-              def_rating, off_rating, net_rating,
+              wins, losses,
+              points_per_game, rebounds_per_game, assists_per_game, steals_per_game, blocks_per_game,
+              field_goal_percentage, three_point_percentage, free_throw_percentage, turnovers_per_game,
+              defensive_rating, offensive_rating, net_rating,
               logo_url, updated_at
        FROM teams
        ORDER BY wins DESC`
@@ -18,21 +18,20 @@ router.get('/', async (_req: Request, res: Response) => {
 
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching teams:', error);
     res.status(500).json({ error: 'Failed to fetch teams' });
   }
 });
 
-// GET /:id — single team by id
-router.get('/:id', async (req: Request, res: Response) => {
+router.get('/:id', async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
 
     const result = await query(
       `SELECT id, nba_id, name, abbreviation, conference, division,
-              wins, losses, ppg, rpg, apg, spg, bpg,
-              fg_pct, three_pct, ft_pct, tov,
-              def_rating, off_rating, net_rating,
+              wins, losses,
+              points_per_game, rebounds_per_game, assists_per_game, steals_per_game, blocks_per_game,
+              field_goal_percentage, three_point_percentage, free_throw_percentage, turnovers_per_game,
+              defensive_rating, offensive_rating, net_rating,
               logo_url, updated_at
        FROM teams
        WHERE id = $1`,
@@ -46,9 +45,8 @@ router.get('/:id', async (req: Request, res: Response) => {
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error fetching team:', error);
     res.status(500).json({ error: 'Failed to fetch team' });
   }
 });
 
-export default router;
+export { router as teamsRouter };

@@ -5,48 +5,48 @@ interface PlayerModalProps {
   onClose: () => void;
 }
 
-export default function PlayerModal({ player, onClose }: PlayerModalProps) {
+export const PlayerModal = ({ player, onClose }: PlayerModalProps) => {
   if (!player) return null;
 
-  const injuryAlertClass = (status: string) => {
+  const injuryAlertClass = (status: string): string => {
     if (status === 'Out') return 'alert alert-error';
     if (['Day-To-Day', 'Day_To_Day', 'Questionable'].includes(status)) return 'alert alert-warning';
     if (status === 'Probable') return 'alert alert-success';
     return 'alert alert-error';
   };
 
-  const n = (v: unknown) => Number(v) || 0;
+  const n = (v: unknown): number => Number(v) || 0;
 
   const statGroups = [
     {
       label: 'Scoring',
       stats: [
-        { label: 'PPG', value: n(player.ppg).toFixed(1) },
-        { label: 'FG%', value: n(player.fg_pct).toFixed(1) + '%' },
-        { label: '3P%', value: n(player.three_pct).toFixed(1) + '%' },
-        { label: 'FT%', value: n(player.ft_pct).toFixed(1) + '%' },
+        { label: 'PPG', value: n(player.points_per_game).toFixed(1) },
+        { label: 'FG%', value: n(player.field_goal_percentage).toFixed(1) + '%' },
+        { label: '3P%', value: n(player.three_point_percentage).toFixed(1) + '%' },
+        { label: 'FT%', value: n(player.free_throw_percentage).toFixed(1) + '%' },
       ],
     },
     {
       label: 'Rebounds & Assists',
       stats: [
-        { label: 'RPG', value: n(player.rpg).toFixed(1) },
-        { label: 'APG', value: n(player.apg).toFixed(1) },
+        { label: 'RPG', value: n(player.rebounds_per_game).toFixed(1) },
+        { label: 'APG', value: n(player.assists_per_game).toFixed(1) },
       ],
     },
     {
       label: 'Defense',
       stats: [
-        { label: 'SPG', value: n(player.spg).toFixed(1) },
-        { label: 'BPG', value: n(player.bpg).toFixed(1) },
+        { label: 'SPG', value: n(player.steals_per_game).toFixed(1) },
+        { label: 'BPG', value: n(player.blocks_per_game).toFixed(1) },
       ],
     },
     {
       label: 'Other',
       stats: [
-        { label: 'TOV', value: n(player.tov).toFixed(1) },
-        { label: 'MIN', value: n(player.mpg).toFixed(1) },
-        { label: 'GP', value: String(player.gp) },
+        { label: 'TOV', value: n(player.turnovers_per_game).toFixed(1) },
+        { label: 'MIN', value: n(player.minutes_per_game).toFixed(1) },
+        { label: 'GP', value: String(player.games_played) },
       ],
     },
   ];
@@ -54,7 +54,6 @@ export default function PlayerModal({ player, onClose }: PlayerModalProps) {
   return (
     <div className="modal modal-open">
       <div className="modal-box max-w-lg">
-        {/* Header */}
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-4">
             {player.headshot_url && (
@@ -102,4 +101,4 @@ export default function PlayerModal({ player, onClose }: PlayerModalProps) {
       <div className="modal-backdrop" onClick={onClose} />
     </div>
   );
-}
+};
