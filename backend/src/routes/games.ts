@@ -3,9 +3,9 @@ import { query } from '../db.js';
 
 const router = Router();
 
-// In-memory cache so the NBA API isn't hammered on every page load
+// In-memory cache — avoids hammering the NBA API on every page load
 let liveCache: { data: object[]; fetchedAt: number } = { data: [], fetchedAt: 0 };
-const LIVE_CACHE_TTL = 90_000; // 90 seconds
+const LIVE_CACHE_TTL = 3 * 60_000; // 3 minutes
 
 const NBA_API_HEADERS: Record<string, string> = {
   Host: 'stats.nba.com',
@@ -49,30 +49,47 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
 });
 
 router.get('/live', async (_req: Request, res: Response): Promise<void> => {
-  // Serve from cache if fresh — avoids slow NBA API call on every request
+  // Serve cached data if fresh
   if (Date.now() - liveCache.fetchedAt < LIVE_CACHE_TTL && liveCache.data.length > 0) {
     res.json(liveCache.data);
     return;
   }
 
+  // Use Eastern Time for the game date — NBA schedules are ET-based.
+  // After midnight UTC (8 PM ET) a UTC-based date would fetch tomorrow's games.
+  const gameDate = new Date().toLocaleDateString('en-US', {
+    timeZone: 'America/New_York',
+    month: '2-digit',
+    day: '2-digit',
+    year: 'numeric',
+  }); // e.g. "05/21/2026"
+
+  // Derive ISO date from the ET date we're querying — don't rely on GAME_DATE_EST
+  // from the API response, which can have ambiguous timezone encoding.
+  const [mm, dd, yyyy] = gameDate.split('/');
+  const isoDate = `${yyyy}-${mm}-${dd}`; // "2026-05-21"
+
   try {
-    // NBA schedules are in Eastern Time — using UTC here causes wrong-date fetches after 8 PM ET
-    const gameDate = new Date().toLocaleDateString('en-US', {
-      timeZone: 'America/New_York',
-      month: '2-digit',
-      day: '2-digit',
-      year: 'numeric',
-    }); // e.g. "05/21/2026"
-
     const url = `https://stats.nba.com/stats/scoreboardv2?DayOffset=0&GameDate=${gameDate}&LeagueID=00`;
-    const resp = await fetch(url, { headers: NBA_API_HEADERS });
 
-    if (!resp.ok) {
+    // Hard 10-second timeout — if NBA API is down we fail fast instead of
+    // holding the Lambda connection open for 30 seconds
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10_000);
+
+    let resp: Response;
+    try {
+      resp = await fetch(url, { headers: NBA_API_HEADERS, signal: controller.signal }) as unknown as Response;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!(resp as unknown as globalThis.Response).ok) {
       res.status(502).json({ error: 'NBA API unavailable' });
       return;
     }
 
-    const data = await resp.json();
+    const data = await (resp as unknown as globalThis.Response).json();
     const resultSets: Record<string, { headers: string[]; rowSet: unknown[][] }> = {};
     for (const rs of data.resultSets || []) {
       resultSets[rs.name] = rs;
@@ -94,7 +111,6 @@ router.get('/live', async (_req: Request, res: Response): Promise<void> => {
     const games = toDict(gameHeader);
     const scores = lineScore ? toDict(lineScore) : [];
 
-    // build score/name lookups keyed by game+team id to avoid multiple passes
     const scoreMap: Record<string, Record<string, number | null>> = {};
     const teamNameMap: Record<string, Record<string, string>> = {};
     for (const s of scores) {
@@ -122,8 +138,6 @@ router.get('/live', async (_req: Request, res: Response): Promise<void> => {
       else if (statusId === 2) status = 'In Progress';
       else status = 'Final';
 
-      const dateStr = String(g.GAME_DATE_EST ?? '').slice(0, 10);
-
       const period = g.LIVE_PERIOD != null ? Number(g.LIVE_PERIOD) : undefined;
       const rawClock = g.LIVE_PC_TIME != null ? String(g.LIVE_PC_TIME).trim() : undefined;
       const gameClock = rawClock && rawClock !== '' && rawClock !== '0:00' ? rawClock : undefined;
@@ -133,7 +147,7 @@ router.get('/live', async (_req: Request, res: Response): Promise<void> => {
         nba_game_id: gameId,
         home_team: gameTeams[homeTeamId] || 'Unknown',
         away_team: gameTeams[awayTeamId] || 'Unknown',
-        game_date: dateStr,
+        game_date: isoDate, // use our ET query date — avoids GAME_DATE_EST timezone ambiguity
         home_score: gameScores[homeTeamId] ?? null,
         away_score: gameScores[awayTeamId] ?? null,
         status,
@@ -142,6 +156,7 @@ router.get('/live', async (_req: Request, res: Response): Promise<void> => {
       };
     });
 
+    // Write back to DB (scores + status only — don't touch game_date)
     for (const g of result) {
       try {
         await query(
@@ -155,14 +170,17 @@ router.get('/live', async (_req: Request, res: Response): Promise<void> => {
           [g.nba_game_id, g.home_team, g.away_team, g.game_date, g.home_score, g.away_score, g.status]
         );
       } catch {
-        // non-fatal db write — continue returning live data
+        // non-fatal — continue returning live data even if DB write fails
       }
     }
 
     liveCache = { data: result, fetchedAt: Date.now() };
     res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch live scores' });
+  } catch (err) {
+    const isAbort = err instanceof Error && err.name === 'AbortError';
+    res.status(isAbort ? 504 : 500).json({
+      error: isAbort ? 'NBA API timed out' : 'Failed to fetch live scores',
+    });
   }
 });
 

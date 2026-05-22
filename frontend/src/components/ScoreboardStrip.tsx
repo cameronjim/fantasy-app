@@ -20,21 +20,29 @@ export const ScoreboardStrip = () => {
 
   const fetchGames = useCallback(async (): Promise<void> => {
     try {
-      // getLiveGames is fast — server caches the NBA API response for 90s
-      const [liveGames, allGames] = await Promise.all([
-        getLiveGames().catch(() => [] as Game[]),
-        getGames().catch(() => [] as Game[]),
-      ]);
-      const liveIds = new Set(liveGames.map((g) => g.nba_game_id ?? g.id));
-      const merged = [
-        ...liveGames,
-        ...allGames.filter((g) => !liveIds.has(g.nba_game_id ?? g.id)),
-      ];
-      gamesCache = merged;
-      cacheFetchedAt = Date.now();
-      setGames(merged);
+      // Step 1: Show DB data immediately — always fast (~100ms)
+      const dbGames = await getGames();
+      setGames(dbGames);
       setLastUpdated(new Date());
       setSecAgo(0);
+      gamesCache = dbGames;
+      cacheFetchedAt = Date.now();
+
+      // Step 2: Overlay live scores silently in the background.
+      // Server caches the NBA API response for 3 min, so this is usually fast.
+      // If the NBA API is down it just fails quietly — DB data stays visible.
+      getLiveGames().then((liveGames) => {
+        if (!liveGames.length) return;
+        const liveIds = new Set(liveGames.map((g) => g.nba_game_id ?? g.id));
+        setGames((prev) => {
+          const merged = [
+            ...liveGames,
+            ...prev.filter((g) => !liveIds.has(g.nba_game_id ?? g.id)),
+          ];
+          gamesCache = merged;
+          return merged;
+        });
+      }).catch(() => { /* live overlay failed — DB data already showing */ });
     } catch {
       setGames([]);
     }
