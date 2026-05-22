@@ -109,14 +109,19 @@ class NbaStatsSpider(scrapy.Spider):
             meta={"endpoint": "team_stats"},
         )
 
-        # ESPN scoreboard — accessible from servers (unlike stats.nba.com/cdn.nba.com
-        # which block non-browser requests). Returns today's games with live scores.
-        yield scrapy.Request(
-            url="https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard",
-            callback=self.parse_scoreboard,
-            errback=self.handle_error,
-            meta={"endpoint": "scoreboard"},
-        )
+        # Fetch today AND yesterday from ESPN — catches games that finished after
+        # the previous scraper run, and fixes any stale records from old bad data.
+        from datetime import timedelta
+        et = ZoneInfo("America/New_York")
+        for days_ago in [0, 1]:
+            day = datetime.now(et) - timedelta(days=days_ago)
+            date_str = day.strftime("%Y%m%d")
+            yield scrapy.Request(
+                url=f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={date_str}",
+                callback=self.parse_scoreboard,
+                errback=self.handle_error,
+                meta={"endpoint": f"scoreboard_{date_str}"},
+            )
 
         # CBS Sports injury data is more reliable than NBA.com
         yield scrapy.Request(
