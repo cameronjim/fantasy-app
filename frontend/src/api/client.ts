@@ -34,6 +34,10 @@ export async function register(username: string, password: string): Promise<void
   setAuthToken(data.token);
 }
 
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  await api.patch('/auth/change-password', { currentPassword, newPassword });
+}
+
 export async function getPlayers(params?: { search?: string; team?: string; position?: string }): Promise<Player[]> {
   const { data } = await api.get('/players', { params });
   return data;
