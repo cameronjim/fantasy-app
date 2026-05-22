@@ -109,12 +109,13 @@ class NbaStatsSpider(scrapy.Spider):
             meta={"endpoint": "team_stats"},
         )
 
-        # Fetch today AND yesterday from ESPN — catches games that finished after
-        # the previous scraper run, and fixes any stale records from old bad data.
+        # Fetch a rolling window: 2 days back (catch recently finished games)
+        # through 7 days ahead (populate upcoming scheduled games for the scoreboard).
         from datetime import timedelta
         et = ZoneInfo("America/New_York")
-        for days_ago in [0, 1, 2]:
-            day = datetime.now(et) - timedelta(days=days_ago)
+        today = datetime.now(et)
+        for offset in range(-2, 8):  # -2 = 2 days ago, 0 = today, 7 = 7 days from now
+            day = today + timedelta(days=offset)
             date_str = day.strftime("%Y%m%d")
             yield scrapy.Request(
                 url=f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={date_str}",
