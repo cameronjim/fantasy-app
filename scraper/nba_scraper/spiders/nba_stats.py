@@ -113,7 +113,7 @@ class NbaStatsSpider(scrapy.Spider):
         # the previous scraper run, and fixes any stale records from old bad data.
         from datetime import timedelta
         et = ZoneInfo("America/New_York")
-        for days_ago in [0, 1]:
+        for days_ago in [0, 1, 2]:
             day = datetime.now(et) - timedelta(days=days_ago)
             date_str = day.strftime("%Y%m%d")
             yield scrapy.Request(
