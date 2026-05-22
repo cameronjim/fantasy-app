@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { BarChart3, Users, TrendingUp, LogOut, LogIn } from 'lucide-react';
-import { login } from '../api/client';
+import { login, register } from '../api/client';
 
 interface NavbarProps {
   activeTab: string;
@@ -10,44 +10,73 @@ interface NavbarProps {
   onLoginSuccess: () => void;
 }
 
-const TABS: { id: string; label: string; icon: typeof BarChart3 }[] = [
+const tabs = [
   { id: 'stats', label: 'Stats', icon: BarChart3 },
   { id: 'fantasy', label: 'My Team', icon: Users },
-  { id: 'improve', label: 'Improve', icon: TrendingUp },
+  { id: 'improve', label: 'Improve Team', icon: TrendingUp },
 ];
 
-export const Navbar = ({ activeTab, onTabChange, isLoggedIn, onLogout, onLoginSuccess }: NavbarProps) => {
-  const [showLogin, setShowLogin] = useState(false);
+export default function Navbar({ activeTab, onTabChange, isLoggedIn, onLogout, onLoginSuccess }: NavbarProps) {
+  const [showModal, setShowModal] = useState(false);
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = async (e: React.FormEvent): Promise<void> => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+
+    if (mode === 'register') {
+      if (password !== confirmPassword) { setError('Passwords do not match'); return; }
+      if (password.length < 6) { setError('Password must be at least 6 characters'); return; }
+    }
+
     setLoading(true);
     try {
-      await login(password);
-      setShowLogin(false);
-      setPassword('');
+      if (mode === 'login') {
+        await login(username, password);
+      } else {
+        await register(username, password);
+      }
       onLoginSuccess();
-    } catch {
-      setError('Incorrect password');
+      closeModal();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      setError(msg || 'Something went wrong');
     } finally {
       setLoading(false);
     }
+  };
+
+  const closeModal = () => {
+    setShowModal(false);
+    setUsername('');
+    setPassword('');
+    setConfirmPassword('');
+    setError('');
+  };
+
+  const switchMode = (m: 'login' | 'register') => {
+    setMode(m);
+    setUsername('');
+    setPassword('');
+    setConfirmPassword('');
+    setError('');
   };
 
   return (
     <>
       <div className="navbar bg-base-200 border-b border-base-300 sticky top-0 z-50 px-4">
         <div className="flex-1">
-          <span className="text-xl font-bold">
-            Fantasy<span className="text-primary ml-[4px]">NBA</span>
+          <span className="text-xl font-bold tracking-tight">
+            Fantasy<span className="text-primary">NBA</span>
           </span>
         </div>
         <div className="flex-none gap-1">
-          {TABS.map((tab) => {
+          {tabs.map((tab) => {
             const Icon = tab.icon;
             return (
               <button
@@ -65,7 +94,7 @@ export const Navbar = ({ activeTab, onTabChange, isLoggedIn, onLogout, onLoginSu
               <LogOut size={16} />
             </button>
           ) : (
-            <button onClick={() => setShowLogin(true)} className="btn btn-ghost btn-sm ml-1">
+            <button onClick={() => { setMode('login'); setShowModal(true); }} className="btn btn-primary btn-sm ml-1 gap-1">
               <LogIn size={16} />
               <span className="hidden sm:inline">Sign In</span>
             </button>
@@ -73,33 +102,64 @@ export const Navbar = ({ activeTab, onTabChange, isLoggedIn, onLogout, onLoginSu
         </div>
       </div>
 
-      {showLogin && (
+      {showModal && (
         <div className="modal modal-open">
           <div className="modal-box max-w-sm">
-            <h3 className="font-bold text-lg mb-4">Sign In</h3>
-            <form onSubmit={handleLogin} className="space-y-4">
+            <div className="tabs tabs-boxed mb-5">
+              <button className={`tab flex-1 ${mode === 'login' ? 'tab-active' : ''}`} onClick={() => switchMode('login')}>
+                Sign In
+              </button>
+              <button className={`tab flex-1 ${mode === 'register' ? 'tab-active' : ''}`} onClick={() => switchMode('register')}>
+                Create Account
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-3">
+              <input
+                type="text"
+                placeholder="Username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className={`input input-bordered w-full ${error ? 'input-error' : ''}`}
+                autoFocus
+                autoComplete="username"
+              />
               <input
                 type="password"
                 placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="input input-bordered w-full"
-                autoFocus
+                className={`input input-bordered w-full ${error ? 'input-error' : ''}`}
+                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
               />
+              {mode === 'register' && (
+                <input
+                  type="password"
+                  placeholder="Confirm password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className={`input input-bordered w-full ${error ? 'input-error' : ''}`}
+                  autoComplete="new-password"
+                />
+              )}
               {error && <p className="text-error text-sm">{error}</p>}
-              <div className="modal-action mt-4">
-                <button type="button" onClick={() => { setShowLogin(false); setPassword(''); setError(''); }} className="btn btn-ghost">
-                  Cancel
-                </button>
-                <button type="submit" disabled={loading || !password} className="btn btn-primary">
-                  {loading ? <span className="loading loading-spinner loading-sm" /> : 'Sign In'}
+              <div className="modal-action mt-2">
+                <button type="button" onClick={closeModal} className="btn btn-ghost">Cancel</button>
+                <button
+                  type="submit"
+                  disabled={loading || !username || !password || (mode === 'register' && !confirmPassword)}
+                  className="btn btn-primary"
+                >
+                  {loading
+                    ? <span className="loading loading-spinner loading-sm" />
+                    : mode === 'login' ? 'Sign In' : 'Create Account'}
                 </button>
               </div>
             </form>
           </div>
-          <div className="modal-backdrop" onClick={() => { setShowLogin(false); setPassword(''); setError(''); }} />
+          <div className="modal-backdrop" onClick={closeModal} />
         </div>
       )}
     </>
   );
-};
+}
