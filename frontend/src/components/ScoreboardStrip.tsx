@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { getGames } from '../api/client';
+import { getGames, getLiveGames } from '../api/client';
 import type { Game } from '../types';
 
 // persists across remounts so navigating back is instant
@@ -20,10 +20,19 @@ export const ScoreboardStrip = () => {
 
   const fetchGames = useCallback(async (): Promise<void> => {
     try {
-      const games = await getGames();
-      gamesCache = games;
+      // getLiveGames is fast — server caches the NBA API response for 90s
+      const [liveGames, allGames] = await Promise.all([
+        getLiveGames().catch(() => [] as Game[]),
+        getGames().catch(() => [] as Game[]),
+      ]);
+      const liveIds = new Set(liveGames.map((g) => g.nba_game_id ?? g.id));
+      const merged = [
+        ...liveGames,
+        ...allGames.filter((g) => !liveIds.has(g.nba_game_id ?? g.id)),
+      ];
+      gamesCache = merged;
       cacheFetchedAt = Date.now();
-      setGames(games);
+      setGames(merged);
       setLastUpdated(new Date());
       setSecAgo(0);
     } catch {
@@ -32,11 +41,11 @@ export const ScoreboardStrip = () => {
   }, []);
 
   useEffect(() => {
-    // skip fetch if cache is fresh (< 5 min old)
-    if (Date.now() - cacheFetchedAt > 5 * 60_000) {
+    // skip fetch if cache is fresh (< 2 min old, matching server-side cache TTL)
+    if (Date.now() - cacheFetchedAt > 2 * 60_000) {
       fetchGames();
     }
-    const pollInterval = setInterval(fetchGames, 5 * 60_000);
+    const pollInterval = setInterval(fetchGames, 2 * 60_000);
     timerRef.current = setInterval(() => setSecAgo((s) => s + 1), 1000);
     return () => {
       clearInterval(pollInterval);

@@ -108,7 +108,8 @@ class NbaStatsSpider(scrapy.Spider):
             meta={"endpoint": "team_stats"},
         )
 
-        today = datetime.now().strftime("%m/%d/%Y")
+        from zoneinfo import ZoneInfo
+        today = datetime.now(ZoneInfo("America/New_York")).strftime("%m/%d/%Y")
         yield scrapy.Request(
             url=(
                 "https://stats.nba.com/stats/scoreboardv2"
