@@ -1,7 +1,8 @@
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Generator
+from zoneinfo import ZoneInfo
 
 import scrapy
 from scrapy.http import Request, Response
@@ -63,7 +64,7 @@ NBA_API_HEADERS = {
 
 class NbaStatsSpider(scrapy.Spider):
     name = "nba_stats"
-    allowed_domains = ["stats.nba.com", "www.cbssports.com"]
+    allowed_domains = ["stats.nba.com", "site.api.espn.com", "www.cbssports.com"]
 
     SEASON = "2025-26"
 
@@ -108,14 +109,10 @@ class NbaStatsSpider(scrapy.Spider):
             meta={"endpoint": "team_stats"},
         )
 
-        from zoneinfo import ZoneInfo
-        today = datetime.now(ZoneInfo("America/New_York")).strftime("%m/%d/%Y")
+        # ESPN scoreboard — accessible from servers (unlike stats.nba.com/cdn.nba.com
+        # which block non-browser requests). Returns today's games with live scores.
         yield scrapy.Request(
-            url=(
-                "https://stats.nba.com/stats/scoreboardv2"
-                f"?DayOffset=0&GameDate={today}&LeagueID=00"
-            ),
-            headers=NBA_API_HEADERS,
+            url="https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard",
             callback=self.parse_scoreboard,
             errback=self.handle_error,
             meta={"endpoint": "scoreboard"},
@@ -253,62 +250,61 @@ class NbaStatsSpider(scrapy.Spider):
     def parse_scoreboard(
         self, response: Response
     ) -> Generator[GameItem, None, None]:
+        """Parse today's scoreboard from ESPN.
+
+        ESPN stores dates as UTC midnight. Convert to Eastern Time to get the
+        correct game date (e.g. "2026-05-22T00:00Z" = 8 PM ET May 21 → May 21).
+        """
         data = json.loads(response.text)
-        result_sets = {rs["name"]: rs for rs in data.get("resultSets", [])}
+        events = data.get("events", [])
 
-        game_header = result_sets.get("GameHeader")
-        line_score = result_sets.get("LineScore")
-
-        if not game_header:
-            logger.info("no games on today's scoreboard")
+        if not events:
+            logger.info("no games on today's ESPN scoreboard")
             return
 
-        games = self._result_set_to_dicts(game_header)
-        scores = self._result_set_to_dicts(line_score) if line_score else []
+        logger.info("parsing %d games from ESPN scoreboard", len(events))
 
-        # build GAME_ID -> {team_id: points} for quick score lookup
-        score_map: dict[str, dict[str, object]] = {}
-        for s in scores:
-            gid = str(s.get("GAME_ID", ""))
-            tid = str(s.get("TEAM_ID", ""))
-            pts = s.get("PTS")
-            if gid not in score_map:
-                score_map[gid] = {}
-            score_map[gid][tid] = pts
+        for event in events:
+            game_id = str(event.get("id", ""))
+            status_obj = event.get("status", {})
+            status_type = status_obj.get("type", {})
+            status_name = status_type.get("name", "")
 
-        logger.info("parsing %d games from scoreboard", len(games))
-
-        for g in games:
-            game_id = str(g.get("GAME_ID", ""))
-            home_team_id = str(g.get("HOME_TEAM_ID", ""))
-            away_team_id = str(g.get("VISITOR_TEAM_ID", ""))
-            game_scores = score_map.get(game_id, {})
-
-            status_id = g.get("GAME_STATUS_ID", 1)
-            if status_id == 1:
-                status = "Scheduled"
-            elif status_id == 2:
+            if status_name == "STATUS_FINAL":
+                status = "Final"
+            elif status_name == "STATUS_IN_PROGRESS":
                 status = "In Progress"
             else:
-                status = "Final"
+                status = status_type.get("detail", "Scheduled").strip() or "Scheduled"
 
-            game_date_str = g.get("GAME_DATE_EST", "")
+            # ESPN date is UTC midnight — convert to ET for canonical game date
+            date_str = event.get("date", "")
             try:
-                game_date = datetime.strptime(
-                    game_date_str[:10], "%Y-%m-%d"
-                ).strftime("%Y-%m-%d")
+                date_utc = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+                game_date = date_utc.astimezone(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
             except (ValueError, TypeError):
-                game_date = datetime.now().strftime("%Y-%m-%d")
+                game_date = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+
+            competition = (event.get("competitions") or [{}])[0]
+            competitors = competition.get("competitors", [])
+            home = next((c for c in competitors if c.get("homeAway") == "home"), {})
+            away = next((c for c in competitors if c.get("homeAway") == "away"), {})
+
+            is_pre_game = status_name not in ("STATUS_FINAL", "STATUS_IN_PROGRESS")
+            home_score = self._safe_int(home.get("score")) if not is_pre_game else None
+            away_score = self._safe_int(away.get("score")) if not is_pre_game else None
+
+            arena = (competition.get("venue") or {}).get("fullName", "")
 
             yield GameItem(
                 nba_game_id=game_id,
-                home_team=g.get("HOME_TEAM_NAME", "Unknown"),
-                away_team=g.get("VISITOR_TEAM_NAME", "Unknown"),
+                home_team=(home.get("team") or {}).get("displayName", "Unknown"),
+                away_team=(away.get("team") or {}).get("displayName", "Unknown"),
                 game_date=game_date,
-                home_score=self._safe_int(game_scores.get(home_team_id)),
-                away_score=self._safe_int(game_scores.get(away_team_id)),
+                home_score=home_score,
+                away_score=away_score,
                 status=status,
-                arena=g.get("ARENA_NAME", ""),
+                arena=arena,
             )
 
     def parse_injuries(
