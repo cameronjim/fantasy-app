@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Search, Filter, GitCompare, X } from 'lucide-react';
+import { Search, GitCompare, X } from 'lucide-react';
 import { ScoreboardStrip } from '../components/ScoreboardStrip';
 import { PlayerTable } from '../components/PlayerTable';
 import { TeamTable } from '../components/TeamTable';
@@ -89,11 +89,7 @@ export const StatsPage = () => {
                 <button
                   key={conf}
                   onClick={() => setConfFilter(conf)}
-                  className={`btn btn-sm join-item ${
-                    confFilter === conf
-                      ? conf === 'East' ? 'btn-info' : conf === 'West' ? 'btn-warning' : 'btn-primary'
-                      : ''
-                  }`}
+                  className={`btn btn-sm join-item ${confFilter === conf ? 'btn-primary' : ''}`}
                 >
                   {conf}
                 </button>
@@ -115,26 +111,24 @@ export const StatsPage = () => {
               />
             </label>
 
-            <label className="input input-bordered input-sm flex items-center gap-2">
-              <Filter size={14} className="opacity-50" />
-              <select
-                value={teamFilter}
-                onChange={(e) => setTeamFilter(e.target.value)}
-                className="select select-ghost select-sm p-0 focus:outline-none"
-              >
-                <option value="">All Teams</option>
-                {teamNames.map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
-            </label>
+            <select
+              value={teamFilter}
+              onChange={(e) => setTeamFilter(e.target.value)}
+              className="select select-bordered select-sm w-[160px]"
+              aria-label="Filter by team"
+            >
+              <option value="">All Teams</option>
+              {teamNames.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
 
             <div className="join">
               {POSITIONS.map((pos) => (
                 <button
                   key={pos}
                   onClick={() => setPosFilter(pos)}
-                  className={`btn btn-xs join-item ${posFilter === pos ? 'btn-primary' : ''}`}
+                  className={`btn btn-sm join-item ${posFilter === pos ? 'btn-primary' : ''}`}
                 >
                   {pos}
                 </button>
