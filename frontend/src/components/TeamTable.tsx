@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ChevronUp, ChevronDown } from 'lucide-react';
 import type { Team } from '../types';
+import { getTeamLogoUrl } from '../utils/teamLogos';
 
 interface TeamTableProps {
   teams: Team[];
@@ -101,8 +102,26 @@ export const TeamTable = ({ teams }: TeamTableProps) => {
                     </td>
                   );
                 }
+                if (col.key === 'name') {
+                  const logo = getTeamLogoUrl(team.abbreviation);
+                  return (
+                    <td key={col.key} className="font-medium whitespace-nowrap">
+                      <span className="flex items-center gap-2">
+                        {logo && (
+                          <img
+                            src={logo}
+                            alt=""
+                            className="w-6 h-6 object-contain"
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                          />
+                        )}
+                        <span>{team.name}</span>
+                      </span>
+                    </td>
+                  );
+                }
                 return (
-                  <td key={col.key} className={col.key === 'name' ? 'font-medium' : ''}>
+                  <td key={col.key}>
                     {col.format && team[col.key] != null
                       ? col.format(team[col.key] as number)
                       : String(team[col.key] ?? '-')}

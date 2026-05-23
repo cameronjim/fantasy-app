@@ -198,6 +198,10 @@ router.post('/forgot-password', async (req: Request, res: Response): Promise<voi
       [email]
     );
 
+    if (userResult.rows.length === 0) {
+      console.log(`forgot-password: no user found with email ${email}`);
+    }
+
     if (userResult.rows.length > 0) {
       const { id: userId, username } = userResult.rows[0];
 
