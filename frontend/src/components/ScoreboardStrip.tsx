@@ -33,11 +33,12 @@ export const ScoreboardStrip = () => {
       // Merge by date+team so old NBA game IDs and new ESPN IDs don't create duplicates.
       getLiveGames().then((liveGames) => {
         if (!liveGames.length) return;
-        // Deduplicate by both ID and matchup so stale DB records with wrong dates
-        // don't create ghost duplicates alongside the correct live record.
+        // Deduplicate by ID and by (date + matchup). The date matters: in a playoff
+        // series the same two teams play multiple games, so a live OKC@SAS today must
+        // not filter out a scheduled OKC@SAS two days from now.
         const liveIds = new Set(liveGames.map((g) => g.nba_game_id ?? g.id));
         const liveMatchup = (g: Game) =>
-          `${(g.home_team ?? '').toLowerCase()}||${(g.away_team ?? '').toLowerCase()}`;
+          `${g.game_date}||${(g.home_team ?? '').toLowerCase()}||${(g.away_team ?? '').toLowerCase()}`;
         const liveMatchups = new Set(liveGames.map(liveMatchup));
         setGames((prev) => {
           const merged = [
