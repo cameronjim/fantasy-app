@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Search, Plus, Trash2, RefreshCw } from 'lucide-react';
 import { getMyRoster, getPlayers, addToRoster, dropFromRoster, getTeamAnalysis } from '../api/client';
 import type { Player, RosterPlayer, TeamAnalysis } from '../types';
+import { getTeamLogoUrl } from '../utils/teamLogos';
 
 const CAT_COLORS: Record<string, string> = {
   strong: 'badge-success',
@@ -187,7 +188,22 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
                         </span>
                       </td>
                       <td className="opacity-60">{p.position}</td>
-                      <td className="opacity-60">{p.team}</td>
+                      <td className="opacity-60">
+                        <span className="flex items-center gap-1.5">
+                          {(() => {
+                            const logo = getTeamLogoUrl(p.team);
+                            return logo ? (
+                              <img
+                                src={logo}
+                                alt=""
+                                className="w-4 h-4 object-contain"
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                              />
+                            ) : null;
+                          })()}
+                          {p.team}
+                        </span>
+                      </td>
                       <td>{n(p.points_per_game).toFixed(1)}</td>
                       <td>{n(p.rebounds_per_game).toFixed(1)}</td>
                       <td>{n(p.assists_per_game).toFixed(1)}</td>
