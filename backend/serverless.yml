@@ -9,9 +9,17 @@ provider:
     DATABASE_URL: ${env:DATABASE_URL}
     ANTHROPIC_API_KEY: ${env:ANTHROPIC_API_KEY}
     FRONTEND_URL: ${env:FRONTEND_URL, ''}
-
+    FROM_EMAIL: ${env:FROM_EMAIL, ''}
     AUTH_SECRET: ${env:AUTH_SECRET}
     NODE_ENV: production
+  iam:
+    role:
+      statements:
+        # Allow Lambda to send password-reset emails through SES.
+        - Effect: Allow
+          Action:
+            - ses:SendEmail
+          Resource: '*'
 
 functions:
   api:
