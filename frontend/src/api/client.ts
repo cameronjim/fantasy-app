@@ -79,6 +79,7 @@ export interface AIPreferences {
   player_age_pref?: 'veterans' | 'balanced' | 'young_upside';
   opportunity_chase?: 'yes' | 'no';
   league_format?: 'h2h_categories' | 'h2h_points' | 'roto' | 'points';
+  league_size?: number;
   punt_categories?: string[];
   priority_categories?: string[];
   roster_strategy?: 'stars_scrubs' | 'balanced' | 'streaming';

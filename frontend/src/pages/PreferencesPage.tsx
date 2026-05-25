@@ -177,6 +177,46 @@ export const PreferencesPage = () => {
           onChange={(v) => setPrefs({ ...prefs, league_format: v })}
         />
 
+        <div>
+          <label className="text-sm font-semibold block mb-2">
+            How many teams in your league?
+            <span className="text-xs opacity-50 font-normal ml-2">
+              (helps us calibrate waiver-wire suggestions)
+            </span>
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {[8, 10, 12, 14, 16].map((size) => {
+              const selected = prefs.league_size === size;
+              return (
+                <button
+                  key={size}
+                  type="button"
+                  onClick={() => setPrefs({ ...prefs, league_size: size })}
+                  className={`btn btn-sm ${selected ? 'btn-primary' : 'btn-ghost border border-base-300'}`}
+                >
+                  {size} teams
+                </button>
+              );
+            })}
+            <input
+              type="number"
+              min={4}
+              max={20}
+              value={prefs.league_size && ![8, 10, 12, 14, 16].includes(prefs.league_size) ? prefs.league_size : ''}
+              onChange={(e) => {
+                const n = parseInt(e.target.value, 10);
+                if (Number.isNaN(n)) {
+                  setPrefs({ ...prefs, league_size: undefined });
+                } else {
+                  setPrefs({ ...prefs, league_size: Math.max(4, Math.min(20, n)) });
+                }
+              }}
+              placeholder="Other"
+              className="input input-bordered input-sm w-24"
+            />
+          </div>
+        </div>
+
         <Question
           label="Roster construction strategy?"
           choices={ROSTER_CHOICES}
