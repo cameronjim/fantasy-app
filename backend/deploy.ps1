@@ -1,3 +1,13 @@
+# Legacy hand-deploy script. Prefer GitHub Actions:
+#   - merge PR to main         -> auto-deploys to prod
+#   - push to any PR branch    -> auto-deploys to dev (preview)
+# This script remains for emergency manual deploys (e.g. GitHub Actions outage,
+# or testing an uncommitted local change against real AWS). Note: running it
+# against the `dev` stage will fight the workflow over Lambda env vars, since
+# this reads .env and the workflow reads GitHub Secrets — use `--stage scratch`
+# (or any unused stage) if you really need to hand-deploy without disrupting
+# the PR-preview environment.
+#
 # Loads env vars from the repo-root .env file, compiles TypeScript, and deploys.
 #
 # Usage:
