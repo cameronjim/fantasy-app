@@ -9,6 +9,7 @@ import { RegisterPage } from './pages/RegisterPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { ChangePasswordPage } from './pages/ChangePasswordPage';
+import { PreferencesPage } from './pages/PreferencesPage';
 import { getAuthToken, setAuthToken } from './api/client';
 
 export const App = () => {
@@ -37,6 +38,7 @@ export const App = () => {
             <Route path="/forgot-password" element={<ForgotPasswordPage />} />
             <Route path="/reset-password" element={<ResetPasswordPage />} />
             <Route path="/change-password" element={<ChangePasswordPage />} />
+            <Route path="/preferences" element={<PreferencesPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
