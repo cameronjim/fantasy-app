@@ -11,7 +11,7 @@ const router = Router();
 // Bump when the team-analysis or waiver-suggestions system prompt changes
 // meaningfully — old cache entries hashed without this won't collide so they
 // get re-prompted on next request.
-const PROMPT_VERSION = 'v3-dynamic-benchmarks';
+const PROMPT_VERSION = 'v4-zscore-waivers';
 
 function extractJSON(text: string): string {
   const fenced = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
@@ -39,12 +39,12 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    let context = '';
-    if (context_type === 'myteam') context = await buildTeamContext(userId);
-    else if (context_type === 'waiver') context = await buildWaiverContext(userId);
-
     const prefs = await getUserPreferences(userId);
     const prefsBlock = buildPreferencesPromptBlock(prefs);
+
+    let context = '';
+    if (context_type === 'myteam') context = await buildTeamContext(userId);
+    else if (context_type === 'waiver') context = await buildWaiverContext(userId, prefs.league_size);
 
     const systemPrompt = `You are an expert fantasy basketball assistant for 9-category leagues (PTS, REB, AST, STL, BLK, FG%, FT%, 3PM, TO). You help users analyze their roster and make strategic decisions.${prefsBlock}\n\n${context ? `Current context:\n\n${context}` : 'No roster context.'}\n\nProvide concise, actionable advice. Reference specific player stats. Be direct.`;
 
@@ -203,7 +203,7 @@ router.get('/waiver-suggestions', async (req: Request, res: Response): Promise<v
       }
     }
 
-    const context = await buildWaiverContext(userId);
+    const context = await buildWaiverContext(userId, prefs.league_size);
 
     const systemPrompt = `You are an expert fantasy basketball analyst for 9-category leagues (PTS, REB, AST, STL, BLK, FG%, FT%, 3PM, TO). Given the user's roster and the provided candidate lists, suggest improvements that address the team's weakest categories.${prefsBlock}
 

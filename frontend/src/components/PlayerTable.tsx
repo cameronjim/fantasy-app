@@ -19,6 +19,9 @@ const COLUMNS: { key: SortKey; label: string; format?: (v: number) => string; w:
   { key: 'name',                   label: 'Player', w: 'w-[220px]' },
   { key: 'team',                   label: 'Team',   w: 'w-[78px]' },
   { key: 'position',               label: 'Pos',    w: 'w-[60px]' },
+  // Fantasy column lives right after the basics so users can sort by it
+  // immediately without scrolling. Higher = better, hence default desc.
+  { key: 'fantasy_score',          label: 'FS',     w: 'w-[68px]', format: (v) => Number(v).toFixed(1) },
   { key: 'points_per_game',        label: 'PPG',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
   { key: 'rebounds_per_game',      label: 'RPG',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
   { key: 'assists_per_game',       label: 'APG',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
@@ -33,9 +36,7 @@ const COLUMNS: { key: SortKey; label: string; format?: (v: number) => string; w:
 ];
 
 // Sum of all column widths + ~40px for the optional compare checkbox.
-// Used as the table's min-width so it horizontally scrolls on narrow screens
-// instead of squishing columns.
-const TABLE_MIN_WIDTH = '1130px';
+const TABLE_MIN_WIDTH = '1200px';
 
 // How many rows to render initially, and how many more to add each time
 // the user scrolls within INFINITE_THRESHOLD pixels of the bottom.
@@ -50,6 +51,7 @@ const NUMERIC_KEYS = new Set([
   'points_per_game', 'rebounds_per_game', 'assists_per_game', 'steals_per_game',
   'blocks_per_game', 'field_goal_percentage', 'three_point_percentage',
   'free_throw_percentage', 'turnovers_per_game', 'minutes_per_game', 'games_played',
+  'fantasy_score',
 ]);
 
 export const PlayerTable = ({ players, onSelect, selectedForCompare = [], onToggleCompare }: PlayerTableProps) => {

@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { query } from '../db.js';
+import { getScoresById } from '../services/fantasyScore.js';
 
 const router = Router();
 
@@ -31,18 +32,31 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const result = await query(
-      `SELECT id, nba_id, name, team, position,
-              points_per_game, rebounds_per_game, assists_per_game, steals_per_game, blocks_per_game,
-              field_goal_percentage, three_point_percentage, free_throw_percentage, three_pointers_made,
-              turnovers_per_game, minutes_per_game, games_played,
-              injury_status, injury_detail, headshot_url, updated_at
-       FROM players ${whereClause}
-       ORDER BY points_per_game DESC`,
-      params
-    );
+    const [dbResult, scores] = await Promise.all([
+      query(
+        `SELECT id, nba_id, name, team, position,
+                points_per_game, rebounds_per_game, assists_per_game, steals_per_game, blocks_per_game,
+                field_goal_percentage, three_point_percentage, free_throw_percentage, three_pointers_made,
+                turnovers_per_game, minutes_per_game, games_played,
+                injury_status, injury_detail, headshot_url, updated_at
+         FROM players ${whereClause}
+         ORDER BY points_per_game DESC`,
+        params
+      ),
+      getScoresById(),
+    ]);
 
-    res.json(result.rows);
+    // Overlay fantasy_score + fantasy_rank from the in-memory ranking service.
+    const enriched = dbResult.rows.map((p) => {
+      const s = scores.get(p.id);
+      return {
+        ...p,
+        fantasy_score: s?.fantasy_score ?? null,
+        fantasy_rank: s?.fantasy_rank ?? null,
+      };
+    });
+
+    res.json(enriched);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch players' });
   }
