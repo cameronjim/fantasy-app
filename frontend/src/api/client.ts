@@ -39,6 +39,13 @@ export async function googleSignIn(credential: string): Promise<void> {
   setAuthToken(data.token);
 }
 
+/** Same backend endpoint, but using the access_token flow that supports
+ *  forcing the Google account picker via prompt: 'select_account'. */
+export async function googleSignInWithToken(accessToken: string): Promise<void> {
+  const { data } = await api.post('/auth/google', { access_token: accessToken });
+  setAuthToken(data.token);
+}
+
 export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
   await api.patch('/auth/change-password', { currentPassword, newPassword });
 }
