@@ -1,19 +1,34 @@
 import { query } from '../db.js';
 
 /**
- * 9-category fantasy ranking.
+ * Fantasy points per game, using the industry-standard NBA weighting:
  *
- * For each cat, we compute the mean + stddev across "rotation players"
- * (>=30 games, >=20 minutes per game) and then a player's z-score per cat.
- * Total fantasy score = sum of z-scores across all 9 cats (TO is inverted
- * since fewer turnovers is better).
+ *   FP = PTS + 1.2·REB + 1.5·AST + 3·STL + 3·BLK + 1·3PM − 1·TOV
  *
- * This is the same method most fantasy-rank sites use (hashtag basketball etc).
- * It naturally handles the scale differences between PPG (15ish) and BLK (0.7).
+ * This is the same formula used by NBA.com (NBA_FANTASY_PTS), FanDuel,
+ * and most "fantasy rank" articles. Values are interpretable directly —
+ * a player putting up 50 FP/g is a top-tier producer, 25-30 is a typical
+ * fantasy starter, etc.
  *
- * Cached for an hour. Refresh aligns with the scraper's 6-hour cadence
- * without re-running the aggregate on every player request.
+ * Note: this formula doesn't directly reward FG%/FT% — those matter in
+ * category leagues but not in points-style scoring. For category-league
+ * users we can revisit with a z-score variant later if needed; for now
+ * matching what other sites publish was the priority.
+ *
+ * Cached for an hour to amortize the recompute across many requests.
  */
+
+function fantasyPoints(p: { points_per_game: number; rebounds_per_game: number; assists_per_game: number; steals_per_game: number; blocks_per_game: number; three_pointers_made: number; turnovers_per_game: number }): number {
+  return (
+    p.points_per_game +
+    1.2 * p.rebounds_per_game +
+    1.5 * p.assists_per_game +
+    3 * p.steals_per_game +
+    3 * p.blocks_per_game +
+    1 * p.three_pointers_made -
+    1 * p.turnovers_per_game
+  );
+}
 
 export interface PlayerWithScore {
   id: number;
@@ -49,27 +64,13 @@ interface CacheEntry {
 let cache: CacheEntry | null = null;
 const TTL_MS = 60 * 60 * 1000;
 
-const CATEGORIES = [
-  { key: 'points_per_game',         lowerBetter: false },
-  { key: 'rebounds_per_game',       lowerBetter: false },
-  { key: 'assists_per_game',        lowerBetter: false },
-  { key: 'steals_per_game',         lowerBetter: false },
-  { key: 'blocks_per_game',         lowerBetter: false },
-  { key: 'field_goal_percentage',   lowerBetter: false },
-  { key: 'free_throw_percentage',   lowerBetter: false },
-  { key: 'three_pointers_made',     lowerBetter: false },
-  { key: 'turnovers_per_game',      lowerBetter: true },
-] as const;
-
-// Below this threshold a player is essentially out of the league pool — we
-// surface no rank for them so the column doesn't claim e.g. "rank #487"
-// for a guy who played 4 minutes once.
+// Minimum volume to receive a meaningful rank. Below this a player has played
+// too little to compare against rotation regulars — their score is null so the
+// FS column shows "-" instead of a misleading "47.8" from a tiny sample.
 const MIN_GAMES_FOR_RANK = 15;
 const MIN_MIN_FOR_RANK = 12;
 
 async function compute(): Promise<{ ranked: PlayerWithScore[]; byId: Map<number, PlayerWithScore> }> {
-  // The pool we use to derive mean/stddev is rotation-player only — same
-  // cohort as the benchmarks service.
   const all = await query(`
     SELECT id, nba_id, name, team, position,
            points_per_game::float    AS points_per_game,
@@ -90,39 +91,23 @@ async function compute(): Promise<{ ranked: PlayerWithScore[]; byId: Map<number,
 
   const rows = all.rows as Array<Record<string, unknown>>;
 
-  // Build the rotation pool for stats.
-  const pool = rows.filter((p) =>
-    Number(p.games_played) >= 30 && Number(p.minutes_per_game) >= 20
-  );
-
-  // mean + stddev per category from the rotation pool.
-  const stats: Record<string, { mean: number; sd: number }> = {};
-  for (const cat of CATEGORIES) {
-    const vals = pool.map((p) => Number(p[cat.key]) || 0);
-    if (vals.length === 0) {
-      stats[cat.key] = { mean: 0, sd: 1 };
-      continue;
-    }
-    const mu = vals.reduce((a, b) => a + b, 0) / vals.length;
-    const variance = vals.reduce((a, v) => a + (v - mu) ** 2, 0) / vals.length;
-    stats[cat.key] = { mean: mu, sd: Math.sqrt(variance) || 1 };
-  }
-
-  // Score every player who clears the minimum-volume floor. Below the floor
-  // their score is null (we don't pretend to rank guys with 6 games or 9 min).
   const scored: PlayerWithScore[] = rows.map((p) => {
     const gp = Number(p.games_played) || 0;
     const mpg = Number(p.minutes_per_game) || 0;
 
+    const stats = {
+      points_per_game: Number(p.points_per_game) || 0,
+      rebounds_per_game: Number(p.rebounds_per_game) || 0,
+      assists_per_game: Number(p.assists_per_game) || 0,
+      steals_per_game: Number(p.steals_per_game) || 0,
+      blocks_per_game: Number(p.blocks_per_game) || 0,
+      three_pointers_made: Number(p.three_pointers_made) || 0,
+      turnovers_per_game: Number(p.turnovers_per_game) || 0,
+    };
+
     let score: number | null = null;
     if (gp >= MIN_GAMES_FOR_RANK && mpg >= MIN_MIN_FOR_RANK) {
-      let total = 0;
-      for (const cat of CATEGORIES) {
-        const { mean, sd } = stats[cat.key];
-        const z = (Number(p[cat.key]) - mean) / sd;
-        total += cat.lowerBetter ? -z : z;
-      }
-      score = Math.round(total * 100) / 100;
+      score = Math.round(fantasyPoints(stats) * 10) / 10;
     }
 
     return {
@@ -131,28 +116,21 @@ async function compute(): Promise<{ ranked: PlayerWithScore[]; byId: Map<number,
       name: String(p.name ?? ''),
       team: (p.team as string) ?? null,
       position: (p.position as string) ?? null,
-      points_per_game: Number(p.points_per_game) || 0,
-      rebounds_per_game: Number(p.rebounds_per_game) || 0,
-      assists_per_game: Number(p.assists_per_game) || 0,
-      steals_per_game: Number(p.steals_per_game) || 0,
-      blocks_per_game: Number(p.blocks_per_game) || 0,
+      ...stats,
       field_goal_percentage: Number(p.field_goal_percentage) || 0,
       free_throw_percentage: Number(p.free_throw_percentage) || 0,
       three_point_percentage: Number(p.three_point_percentage) || 0,
-      three_pointers_made: Number(p.three_pointers_made) || 0,
-      turnovers_per_game: Number(p.turnovers_per_game) || 0,
       minutes_per_game: mpg,
       games_played: gp,
       injury_status: (p.injury_status as string) ?? null,
       injury_detail: (p.injury_detail as string) ?? null,
       headshot_url: (p.headshot_url as string) ?? null,
       fantasy_score: score,
-      fantasy_rank: null, // assigned below
+      fantasy_rank: null,
     };
   });
 
-  // Rank the players who have a score, descending. Nulls stay at the bottom
-  // without a rank assigned.
+  // Rank by FP descending; unranked players (null score) stay at the bottom.
   const rankable = scored.filter((p) => p.fantasy_score !== null);
   rankable.sort((a, b) => (b.fantasy_score ?? 0) - (a.fantasy_score ?? 0));
   rankable.forEach((p, i) => { p.fantasy_rank = i + 1; });
