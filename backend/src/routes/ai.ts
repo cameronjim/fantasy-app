@@ -7,6 +7,11 @@ import type { AuthRequest } from '../middleware/auth.js';
 
 const router = Router();
 
+// Bump when the team-analysis or waiver-suggestions system prompt changes
+// meaningfully — old cache entries hashed without this won't collide so they
+// get re-prompted on next request.
+const PROMPT_VERSION = 'v2-strict';
+
 function extractJSON(text: string): string {
   const fenced = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
   if (fenced) return fenced[1].trim();
@@ -68,7 +73,7 @@ router.get('/team-analysis', async (req: Request, res: Response): Promise<void> 
     const rosterHash = await getRosterHash(userId);
     const prefs = await getUserPreferences(userId);
     const prefsBlock = buildPreferencesPromptBlock(prefs);
-    const cacheKey = crypto.createHash('md5').update(rosterHash + '|' + prefsBlock).digest('hex');
+    const cacheKey = crypto.createHash('md5').update(rosterHash + '|' + prefsBlock + '|' + PROMPT_VERSION).digest('hex');
 
     const cached = await query(
       `SELECT analysis FROM analysis_cache WHERE user_id = $1 AND roster_hash = $2`,
@@ -81,11 +86,22 @@ router.get('/team-analysis', async (req: Request, res: Response): Promise<void> 
 
     // Prefs block lives BEFORE the JSON schema so the "Return ONLY valid JSON"
     // instruction is the last thing the model reads.
-    const systemPrompt = `You are an expert 9-category fantasy basketball analyst.${prefsBlock}
+    const systemPrompt = `You are an expert 9-category fantasy basketball analyst. You are tough but fair — most rosters in a competitive league have at most 2-3 truly strong categories.${prefsBlock}
 
-For context: in a competitive 10-team 9-cat league, typical per-player averages are roughly PTS: 15, REB: 5, AST: 3.5, STL: 1.0, BLK: 0.7, FG%: 46%, FT%: 78%, 3PM: 1.5, TO: 1.8.
+Benchmarks (per-player average in a competitive 10-team 9-cat league):
+  PTS 15.0, REB 5.0, AST 3.5, STL 1.0, BLK 0.7, FG% 46.0, FT% 78.0, 3PM 1.5, TO 1.8
 
-Analyze the roster against those benchmarks and return ONLY a JSON object with this exact shape (no prose, no markdown):
+STRICT rating rules — compute the roster's per-player average for each category, then apply these thresholds. Do not inflate ratings:
+
+  "strong"  = team average is at least 10% above the benchmark
+              (for TO, lower is better — strong means at least 10% BELOW 1.8)
+  "average" = team average is within plus or minus 10% of the benchmark
+  "weak"    = team average is at least 10% below the benchmark
+              (for TO, weak means at least 10% ABOVE 1.8)
+
+Rounding the borderline is "average", never "strong". When in doubt, downgrade.
+
+Return ONLY a JSON object with this exact shape (no prose, no markdown):
 {
   "categories": {
     "PTS": "strong" | "average" | "weak",
@@ -103,7 +119,7 @@ Analyze the roster against those benchmarks and return ONLY a JSON object with t
   "suggestions": ["<actionable suggestion>", ...]
 }
 
-You MUST include at least 2 entries in each of strengths, weaknesses, and suggestions. Rate every one of the 9 categories. Return ONLY valid JSON.`;
+You MUST include at least 2 entries in each of strengths, weaknesses, and suggestions. Rate every one of the 9 categories using the strict rules above. Return ONLY valid JSON.`;
 
     const messages = [{ role: 'user', content: `Analyze this roster:\n\n${context}` }];
     const reply = await callClaude(systemPrompt, messages, { maxTokens: 2048 });
@@ -153,7 +169,7 @@ router.get('/waiver-suggestions', async (req: Request, res: Response): Promise<v
     const rosterHash = await getRosterHash(userId);
     const prefs = await getUserPreferences(userId);
     const prefsBlock = buildPreferencesPromptBlock(prefs);
-    const cacheKey = crypto.createHash('md5').update(rosterHash + '|' + prefsBlock).digest('hex');
+    const cacheKey = crypto.createHash('md5').update(rosterHash + '|' + prefsBlock + '|' + PROMPT_VERSION).digest('hex');
 
     if (!forceRefresh) {
       const cached = await query(

@@ -124,11 +124,15 @@ export const PlayerTable = ({ players, onSelect, selectedForCompare = [], onTogg
                   onClick={() => handleSort(col.key)}
                   className="cursor-pointer select-none whitespace-nowrap"
                 >
-                  <span className="flex items-center gap-1">
+                  <span className="inline-flex items-center gap-1">
                     {col.label}
-                    {sortKey === col.key && (
-                      sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />
-                    )}
+                    {/* Fixed-width slot so the header doesn't reflow when the
+                        active sort column changes. */}
+                    <span className="inline-block w-3 text-current">
+                      {sortKey === col.key
+                        ? (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)
+                        : null}
+                    </span>
                   </span>
                 </th>
               ))}
