@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { GoogleLogin } from '@react-oauth/google';
-import { register, googleSignIn } from '../api/client';
+import { GoogleLogin, useGoogleLogin } from '@react-oauth/google';
+import { register, googleSignIn, googleSignInWithToken } from '../api/client';
 
 interface RegisterPageProps {
   onRegister: () => void;
@@ -47,6 +47,28 @@ export const RegisterPage = ({ onRegister }: RegisterPageProps) => {
     }
   };
 
+  // Forces the Google account picker (vs. silently using the cached account).
+  const switchGoogleAccount = useGoogleLogin({
+    flow: 'implicit',
+    prompt: 'select_account',
+    scope: 'openid email profile',
+    onSuccess: async (tokenResponse) => {
+      setError('');
+      setLoading(true);
+      try {
+        await googleSignInWithToken(tokenResponse.access_token);
+        onRegister();
+        navigate('/', { replace: true });
+      } catch (err: unknown) {
+        const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+        setError(msg ?? 'Google sign-in failed');
+      } finally {
+        setLoading(false);
+      }
+    },
+    onError: () => setError('Google sign-in failed'),
+  });
+
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     setError('');
@@ -85,7 +107,7 @@ export const RegisterPage = ({ onRegister }: RegisterPageProps) => {
           <h2 className="card-title text-2xl mb-1">Create Account</h2>
           <p className="text-sm opacity-50 mb-4">Join Fantasy NBA</p>
 
-          <div className="flex justify-center mb-4">
+          <div className="flex flex-col items-center gap-2 mb-4">
             <GoogleLogin
               onSuccess={(resp) => handleGoogleSuccess(resp.credential)}
               onError={() => setError('Google sign-in failed')}
@@ -94,6 +116,13 @@ export const RegisterPage = ({ onRegister }: RegisterPageProps) => {
               text="signup_with"
               width="290"
             />
+            <button
+              type="button"
+              onClick={() => switchGoogleAccount()}
+              className="text-xs text-primary hover:underline"
+            >
+              Use a different Google account
+            </button>
           </div>
 
           <div className="divider text-xs opacity-50 my-2">or</div>
