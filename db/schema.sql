@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(255),
     password_hash TEXT,
     google_id VARCHAR(64) UNIQUE,
+    name VARCHAR(100),
+    phone VARCHAR(30),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

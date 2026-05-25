@@ -68,13 +68,13 @@ export function Navbar({ isLoggedIn, onLogout }: NavbarProps): JSX.Element {
             </button>
             <ul tabIndex={0} className="dropdown-content menu bg-base-200 rounded-box z-50 w-52 p-2 shadow-lg border border-base-300 mt-1">
               <li>
-                <button onClick={() => goAndBlur('/preferences')}>
-                  Team Preferences
+                <button onClick={() => goAndBlur('/profile')}>
+                  My Profile
                 </button>
               </li>
               <li>
-                <button onClick={() => goAndBlur('/change-password')}>
-                  Change Password
+                <button onClick={() => goAndBlur('/preferences')}>
+                  Team Preferences
                 </button>
               </li>
               <li>

@@ -67,10 +67,24 @@ export interface CurrentUser {
   id: number;
   username: string;
   email: string | null;
+  name: string | null;
+  phone: string | null;
 }
 
 export async function getCurrentUser(): Promise<CurrentUser> {
   const { data } = await api.get('/auth/me');
+  return data;
+}
+
+export interface ProfileUpdate {
+  name?: string;
+  email?: string;
+  phone?: string;
+}
+
+/** patch only the fields the caller provides; omitted fields stay unchanged. */
+export async function updateProfile(updates: ProfileUpdate): Promise<CurrentUser> {
+  const { data } = await api.patch('/auth/profile', updates);
   return data;
 }
 
