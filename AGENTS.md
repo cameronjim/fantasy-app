@@ -533,11 +533,12 @@ Triggered by `workflow_run` after CI passes on a push to `main`. Three jobs:
 Runs as a fourth job in the CI workflow on `pull_request` events, after
 the test jobs pass:
 
-1. Backend → `npx serverless deploy --stage dev` (clobbers previous dev)
+1. Backend → `npx serverless@3 deploy --stage dev` (clobbers previous dev)
 2. Frontend → built with `DEV_API_URL`, sync'd to dev S3 bucket, dev
    CloudFront invalidated
-3. Bot comments on the PR with the dev URLs (updates the same comment on
-   subsequent pushes)
+
+The dev environment is at a fixed URL (`DEV_FRONTEND_URL`), so once the
+job goes green just visit that URL to see your PR's code running.
 
 "Last PR push wins" — two open PRs share one dev environment. Acceptable
 for solo work.
@@ -741,13 +742,13 @@ top of `backend/deploy.ps1`.
 Open any PR with a tiny change. Watch the **CI** workflow on the PR:
 
 - All four jobs (`backend`, `frontend`, `e2e`, `deploy-preview`) should run.
-- After they finish, a bot comment appears on the PR with the preview URL.
-- Click the URL. Sign in. The site should serve from CloudFront, talk to
-  the dev Lambda, hit the dev Neon database.
+- After they finish, visit `DEV_FRONTEND_URL` in a browser. Sign in. The
+  site should serve from dev CloudFront, talk to the dev Lambda, hit the
+  dev Neon database.
 
-If the bot comment doesn't appear, check the `deploy-preview` job logs.
-The most common failures are missing `DEV_*` variables or the IAM policy
-not yet including the dev bucket/distribution.
+If `deploy-preview` fails, check its logs. The most common failures are
+missing `DEV_*` variables or the IAM policy not yet including the dev
+bucket/distribution.
 
 
 
