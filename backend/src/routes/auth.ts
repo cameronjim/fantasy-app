@@ -252,12 +252,18 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+/**
+ * Change password (for users who already have one) OR set initial password
+ * (for google-signin users who don't). The `currentPassword` field is only
+ * required when the user already has a password — verified via the hash
+ * lookup below, not the client.
+ */
 router.patch('/change-password', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const { currentPassword, newPassword } = req.body;
   const userId = (req as AuthRequest).userId;
 
-  if (!currentPassword || !newPassword) {
-    res.status(400).json({ error: 'Current and new password are required' });
+  if (!newPassword) {
+    res.status(400).json({ error: 'New password is required' });
     return;
   }
   const pwError = validatePassword(newPassword);
@@ -271,11 +277,24 @@ router.patch('/change-password', requireAuth, async (req: Request, res: Response
       res.status(404).json({ error: 'User not found' });
       return;
     }
-    const valid = await bcrypt.compare(currentPassword, result.rows[0].password_hash);
-    if (!valid) {
-      res.status(401).json({ error: 'Current password is incorrect' });
-      return;
+    const existingHash: string | null = result.rows[0].password_hash;
+
+    // existing-password users must prove they know the current one before
+    // overwriting it (defense against session hijacking).
+    if (existingHash) {
+      if (!currentPassword) {
+        res.status(400).json({ error: 'Current password is required' });
+        return;
+      }
+      const valid = await bcrypt.compare(currentPassword, existingHash);
+      if (!valid) {
+        res.status(401).json({ error: 'Current password is incorrect' });
+        return;
+      }
     }
+    // google-only users with no existing password skip the check and set
+    // one for the first time.
+
     const newHash = await bcrypt.hash(newPassword, 10);
     await query('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, userId]);
     res.json({ message: 'Password updated successfully' });
@@ -311,7 +330,12 @@ router.get('/me', requireAuth, async (req: Request, res: Response): Promise<void
   const userId = (req as AuthRequest).userId;
   try {
     const result = await query(
-      'SELECT id, username, email, name, phone FROM users WHERE id = $1',
+      // has_password is computed so the client can decide whether to show the
+      // "current password" field on the change-password form. raw password_hash
+      // never leaves the server.
+      `SELECT id, username, email, name, phone,
+              (password_hash IS NOT NULL) AS has_password
+       FROM users WHERE id = $1`,
       [userId]
     );
     if (result.rows.length === 0) {
@@ -341,8 +365,24 @@ function isValidPhone(phone: string): boolean {
  */
 router.patch('/profile', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const userId = (req as AuthRequest).userId;
-  const { name, email, phone } = req.body as { name?: string; email?: string; phone?: string };
+  const { username, name, email, phone } = req.body as {
+    username?: string;
+    name?: string;
+    email?: string;
+    phone?: string;
+  };
 
+  if (username !== undefined) {
+    const trimmed = username.trim();
+    if (trimmed.length < 3) {
+      res.status(400).json({ error: 'Username must be at least 3 characters' });
+      return;
+    }
+    if (trimmed.length > 50) {
+      res.status(400).json({ error: 'Username must be 50 characters or fewer' });
+      return;
+    }
+  }
   if (email !== undefined && !isValidEmail(email)) {
     res.status(400).json({ error: 'Please enter a valid email address' });
     return;
@@ -357,11 +397,16 @@ router.patch('/profile', requireAuth, async (req: Request, res: Response): Promi
   }
 
   // build the dynamic SET clause so we only touch fields the client sent.
-  // null gets stored when the value is an empty string (for name and phone).
+  // null gets stored when the value is an empty string (for name and phone;
+  // username and email can't be cleared).
   const sets: string[] = [];
   const params: unknown[] = [];
   let i = 1;
 
+  if (username !== undefined) {
+    sets.push(`username = $${i++}`);
+    params.push(username.trim());
+  }
   if (name !== undefined) {
     sets.push(`name = $${i++}`);
     params.push(name.trim() === '' ? null : name.trim());
@@ -395,6 +440,14 @@ router.patch('/profile', requireAuth, async (req: Request, res: Response): Promi
     res.json(result.rows[0]);
   } catch (err: unknown) {
     if (err instanceof Error && 'code' in err && (err as { code: string }).code === '23505') {
+      // distinguish which unique constraint blew up so the user knows which
+      // field to change. pg's `detail` includes the column name when the
+      // constraint targets a single column.
+      const detail = ((err as { detail?: string }).detail ?? '').toLowerCase();
+      if (detail.includes('username')) {
+        res.status(409).json({ error: 'That username is already taken' });
+        return;
+      }
       res.status(409).json({ error: 'That email is already in use by another account' });
       return;
     }

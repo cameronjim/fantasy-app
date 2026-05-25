@@ -46,8 +46,18 @@ export async function googleSignInWithToken(accessToken: string): Promise<void> 
   setAuthToken(data.token);
 }
 
-export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
-  await api.patch('/auth/change-password', { currentPassword, newPassword });
+/**
+ * Change or set the user's password. `currentPassword` is required when the
+ * user already has a password; pass `null` (or omit) when setting an initial
+ * password for a google-only account.
+ */
+export async function changePassword(
+  currentPassword: string | null,
+  newPassword: string
+): Promise<void> {
+  const body: { newPassword: string; currentPassword?: string } = { newPassword };
+  if (currentPassword) body.currentPassword = currentPassword;
+  await api.patch('/auth/change-password', body);
 }
 
 export async function forgotPassword(email: string): Promise<{ message: string }> {
@@ -69,6 +79,9 @@ export interface CurrentUser {
   email: string | null;
   name: string | null;
   phone: string | null;
+  // false for google-only users who haven't set a local password yet —
+  // the change-password form drops the "current password" field for them.
+  has_password: boolean;
 }
 
 export async function getCurrentUser(): Promise<CurrentUser> {
@@ -77,6 +90,7 @@ export async function getCurrentUser(): Promise<CurrentUser> {
 }
 
 export interface ProfileUpdate {
+  username?: string;
   name?: string;
   email?: string;
   phone?: string;
