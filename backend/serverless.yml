@@ -10,6 +10,7 @@ provider:
     ANTHROPIC_API_KEY: ${env:ANTHROPIC_API_KEY}
     FRONTEND_URL: ${env:FRONTEND_URL, ''}
     FROM_EMAIL: ${env:FROM_EMAIL, ''}
+    GOOGLE_CLIENT_ID: ${env:GOOGLE_CLIENT_ID, ''}
     AUTH_SECRET: ${env:AUTH_SECRET}
     NODE_ENV: production
   iam:

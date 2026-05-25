@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     username VARCHAR(50) UNIQUE NOT NULL,
     email VARCHAR(255),
-    password_hash TEXT NOT NULL,
+    password_hash TEXT,
+    google_id VARCHAR(64) UNIQUE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
