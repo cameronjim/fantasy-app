@@ -70,11 +70,9 @@ export const TeamTable = ({ teams }: TeamTableProps) => {
               >
                 <span className="inline-flex items-center gap-1">
                   {col.label}
-                  <span className="inline-block w-3 text-current">
-                    {sortKey === col.key
-                      ? (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)
-                      : null}
-                  </span>
+                  {sortKey === col.key
+                    ? (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)
+                    : <ChevronUp size={12} className="invisible" />}
                 </span>
               </th>
             ))}
