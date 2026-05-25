@@ -18,6 +18,8 @@ export interface Player {
   injury_status: string | null;
   injury_detail: string | null;
   headshot_url?: string;
+  fantasy_score?: number | null;
+  fantasy_rank?: number | null;
 }
 
 export interface Team {
