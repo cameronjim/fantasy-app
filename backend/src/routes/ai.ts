@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
 import { query } from '../db.js';
 import { callClaude, buildTeamContext, buildWaiverContext } from '../services/ai.js';
+import { getUserPreferences, buildPreferencesPromptBlock } from '../services/preferences.js';
 import type { AuthRequest } from '../middleware/auth.js';
 
 const router = Router();
@@ -36,7 +37,10 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
     if (context_type === 'myteam') context = await buildTeamContext(userId);
     else if (context_type === 'waiver') context = await buildWaiverContext(userId);
 
-    const systemPrompt = `You are an expert fantasy basketball assistant for 9-category leagues (PTS, REB, AST, STL, BLK, FG%, FT%, 3PM, TO). You help users analyze their roster and make strategic decisions.\n\n${context ? `Current context:\n\n${context}` : 'No roster context.'}\n\nProvide concise, actionable advice. Reference specific player stats. Be direct.`;
+    const prefs = await getUserPreferences(userId);
+    const prefsBlock = buildPreferencesPromptBlock(prefs);
+
+    const systemPrompt = `You are an expert fantasy basketball assistant for 9-category leagues (PTS, REB, AST, STL, BLK, FG%, FT%, 3PM, TO). You help users analyze their roster and make strategic decisions.\n\n${context ? `Current context:\n\n${context}` : 'No roster context.'}${prefsBlock}\n\nProvide concise, actionable advice. Reference specific player stats. Be direct.`;
 
     const messages: Array<{ role: string; content: string }> = [];
     if (history && Array.isArray(history)) {
@@ -61,9 +65,14 @@ router.get('/team-analysis', async (req: Request, res: Response): Promise<void> 
     }
 
     const rosterHash = await getRosterHash(userId);
+    // Include prefs hash in the cache key — changing prefs should bust the cache.
+    const prefs = await getUserPreferences(userId);
+    const prefsBlock = buildPreferencesPromptBlock(prefs);
+    const cacheKey = crypto.createHash('md5').update(rosterHash + '|' + prefsBlock).digest('hex');
+
     const cached = await query(
       `SELECT analysis FROM analysis_cache WHERE user_id = $1 AND roster_hash = $2`,
-      [userId, rosterHash]
+      [userId, cacheKey]
     );
     if (cached.rows.length > 0) {
       res.json(cached.rows[0].analysis);
@@ -90,7 +99,7 @@ router.get('/team-analysis', async (req: Request, res: Response): Promise<void> 
 
 For context: in a competitive 10-team 9-cat league, typical per-player averages are roughly PTS: 15, REB: 5, AST: 3.5, STL: 1.0, BLK: 0.7, FG%: 46%, FT%: 78%, 3PM: 1.5, TO: 1.8.
 
-Rate each category relative to a competitive 9-cat league. Return ONLY valid JSON.`;
+Rate each category relative to a competitive 9-cat league. Return ONLY valid JSON.${prefsBlock}`;
 
     const messages = [{ role: 'user', content: `Analyze this roster:\n\n${context}` }];
     const reply = await callClaude(systemPrompt, messages);
@@ -104,7 +113,7 @@ Rate each category relative to a competitive 9-cat league. Return ONLY valid JSO
            roster_hash = EXCLUDED.roster_hash,
            analysis = EXCLUDED.analysis,
            created_at = NOW()`,
-        [userId, rosterHash, JSON.stringify(analysis)]
+        [userId, cacheKey, JSON.stringify(analysis)]
       );
       res.json(analysis);
     } catch {
@@ -120,12 +129,15 @@ router.get('/waiver-suggestions', async (req: Request, res: Response): Promise<v
   try {
     const forceRefresh = req.query.refresh === 'true';
     const rosterHash = await getRosterHash(userId);
+    const prefs = await getUserPreferences(userId);
+    const prefsBlock = buildPreferencesPromptBlock(prefs);
+    const cacheKey = crypto.createHash('md5').update(rosterHash + '|' + prefsBlock).digest('hex');
 
     if (!forceRefresh) {
       const cached = await query(
         `SELECT suggestions, created_at FROM waiver_cache
          WHERE user_id = $1 AND roster_hash = $2 AND created_at > NOW() - INTERVAL '4 hours'`,
-        [userId, rosterHash]
+        [userId, cacheKey]
       );
       if (cached.rows.length > 0) {
         res.json({ ...cached.rows[0].suggestions, cached: true, cached_at: cached.rows[0].created_at });
@@ -135,7 +147,7 @@ router.get('/waiver-suggestions', async (req: Request, res: Response): Promise<v
 
     const context = await buildWaiverContext(userId);
 
-    const systemPrompt = `You are an expert fantasy basketball analyst for 9-category leagues (PTS, REB, AST, STL, BLK, FG%, FT%, 3PM, TO). Given the user's roster and the provided candidate lists, suggest improvements that address the team's weakest categories.
+    const systemPrompt = `You are an expert fantasy basketball analyst for 9-category leagues (PTS, REB, AST, STL, BLK, FG%, FT%, 3PM, TO). Given the user's roster and the provided candidate lists, suggest improvements that address the team's weakest categories.${prefsBlock}
 
 Rules:
 - Only recommend players from the candidate lists provided. Do not invent player names.
@@ -183,7 +195,7 @@ Provide exactly 5 trade targets and exactly 5 waiver pickups. Return ONLY valid 
            roster_hash = EXCLUDED.roster_hash,
            suggestions = EXCLUDED.suggestions,
            created_at = NOW()`,
-        [userId, rosterHash, JSON.stringify(suggestions)]
+        [userId, cacheKey, JSON.stringify(suggestions)]
       );
       res.json(suggestions);
     } catch {
