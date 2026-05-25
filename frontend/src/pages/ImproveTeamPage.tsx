@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Sparkles, Target, TrendingUp, RefreshCw } from 'lucide-react';
 import { getWaiverSuggestions } from '../api/client';
 import { ChatBox } from '../components/ChatBox';
+import { PreferencesPrompt } from '../components/PreferencesPrompt';
 
 interface Suggestion {
   name: string;
@@ -50,6 +51,7 @@ export const ImproveTeamPage = ({ isLoggedIn }: ImproveTeamPageProps) => {
 
   return (
     <div className="max-w-[1400px] mx-auto px-4 py-6 space-y-5">
+      {isLoggedIn && <PreferencesPrompt />}
       {isLoggedIn ? (
         <>
           <div className="flex items-center justify-between">

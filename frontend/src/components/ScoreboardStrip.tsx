@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { getGames, getLiveGames } from '../api/client';
 import type { Game } from '../types';
@@ -14,17 +14,12 @@ function periodLabel(period: number): string {
 
 export const ScoreboardStrip = () => {
   const [games, setGames] = useState<Game[]>(gamesCache);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [secAgo, setSecAgo] = useState(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchGames = useCallback(async (): Promise<void> => {
     try {
       // Step 1: Show DB data immediately — always fast (~100ms)
       const dbGames = await getGames();
       setGames(dbGames);
-      setLastUpdated(new Date());
-      setSecAgo(0);
       gamesCache = dbGames;
       cacheFetchedAt = Date.now();
 
@@ -62,11 +57,7 @@ export const ScoreboardStrip = () => {
       fetchGames();
     }
     const pollInterval = setInterval(fetchGames, 2 * 60_000);
-    timerRef.current = setInterval(() => setSecAgo((s) => s + 1), 1000);
-    return () => {
-      clearInterval(pollInterval);
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
+    return () => clearInterval(pollInterval);
   }, [fetchGames]);
 
   const scroll = (direction: 'left' | 'right'): void => {
@@ -85,8 +76,6 @@ export const ScoreboardStrip = () => {
     if (diffDays === 1) return 'Tomorrow';
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
-
-  const hasLive = games.some((g) => g.status.toLowerCase() === 'in progress');
 
   const grouped = games.reduce<Record<string, Game[]>>((acc, g) => {
     const date = g.game_date?.split('T')[0] || 'Unknown';
@@ -178,11 +167,6 @@ export const ScoreboardStrip = () => {
         <ChevronRight size={16} />
       </button>
 
-      {hasLive && lastUpdated && (
-        <div className="absolute right-10 top-1 text-[10px] opacity-25">
-          updated {secAgo < 5 ? 'just now' : `${secAgo}s ago`}
-        </div>
-      )}
     </div>
   );
 };

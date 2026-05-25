@@ -55,14 +55,14 @@ export const StatusBadge = () => {
       .reverse()[0];
 
   return (
-    <div className="dropdown dropdown-end">
+    <div className="dropdown dropdown-bottom">
       <button
         tabIndex={0}
-        className="btn btn-ghost btn-xs gap-1.5 px-2 text-[11px] opacity-60 hover:opacity-100"
-        aria-label="Data status"
+        className="btn btn-ghost btn-xs btn-circle"
+        aria-label={`Data updated ${relativeTime(mostRecentISO ?? null)}`}
+        title={`Data updated ${relativeTime(mostRecentISO ?? null)}`}
       >
         <Activity size={12} className="text-success" />
-        <span className="hidden md:inline">Data {relativeTime(mostRecentISO ?? null)}</span>
       </button>
       <div tabIndex={0} className="dropdown-content mt-1 z-50 w-60 p-3 shadow-lg bg-base-200 border border-base-300 rounded-box">
         <p className="text-xs font-bold uppercase tracking-wider opacity-50 mb-2">Last updated</p>
