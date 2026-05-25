@@ -35,8 +35,8 @@
         "iam:ListRoleTags"
       ],
       "Resource": [
-        "arn:aws:iam::915946341842:role/fantasy-nba-api-*",
-        "arn:aws:iam::915946341842:role/dev-fantasy-nba-api-*"
+        "arn:aws:iam::<YOUR_AWS_ACCOUNT_ID>:role/fantasy-nba-api-*",
+        "arn:aws:iam::<YOUR_AWS_ACCOUNT_ID>:role/dev-fantasy-nba-api-*"
       ]
     },
     {
@@ -51,7 +51,7 @@
       ]
     },
     {
-      "Sid": "FrontendBucket",
+      "Sid": "FrontendBuckets",
       "Effect": "Allow",
       "Action": [
         "s3:PutObject",
@@ -60,8 +60,10 @@
         "s3:ListBucket"
       ],
       "Resource": [
-        "arn:aws:s3:::fantasy-nba.cameronjim.com",
-        "arn:aws:s3:::fantasy-nba.cameronjim.com/*"
+        "arn:aws:s3:::<YOUR_PROD_FRONTEND_BUCKET>",
+        "arn:aws:s3:::<YOUR_PROD_FRONTEND_BUCKET>/*",
+        "arn:aws:s3:::<YOUR_DEV_FRONTEND_BUCKET>",
+        "arn:aws:s3:::<YOUR_DEV_FRONTEND_BUCKET>/*"
       ]
     },
     {
@@ -71,7 +73,10 @@
         "cloudfront:CreateInvalidation",
         "cloudfront:GetInvalidation"
       ],
-      "Resource": "arn:aws:cloudfront::915946341842:distribution/E3UGVJU8ESNUG5"
+      "Resource": [
+        "arn:aws:cloudfront::<YOUR_AWS_ACCOUNT_ID>:distribution/<YOUR_PROD_DISTRIBUTION_ID>",
+        "arn:aws:cloudfront::<YOUR_AWS_ACCOUNT_ID>:distribution/<YOUR_DEV_DISTRIBUTION_ID>"
+      ]
     },
     {
       "Sid": "SESForLambda",
