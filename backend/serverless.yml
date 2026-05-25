@@ -7,7 +7,10 @@ frameworkVersion: '3'
 
 provider:
   name: aws
-  runtime: nodejs22.x
+  # nodejs20.x is the highest runtime serverless framework v3 supports.
+  # the runtime is independent of the runner's node version — lambda uses
+  # whatever runtime is declared here, not whatever ci built with.
+  runtime: nodejs20.x
   region: us-east-1
   timeout: 30
   environment:
