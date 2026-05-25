@@ -504,23 +504,46 @@ and every pull request targeting `main`. Three jobs:
 A failure in any job fails the workflow. Playwright HTML reports upload
 as a build artifact on failure for debugging.
 
-### Continuous deployment
+### Continuous deployment — two environments
 
-The workflow at `.github/workflows/deploy.yml` runs **after CI passes on a
-push to `main`** (`workflow_run` trigger). It has three jobs:
+The app runs in **two parallel environments**: production (live to users)
+and dev (a shared preview environment for PRs). Each has its own AWS
+resources and its own database.
 
-1. **deploy-backend** — `npm ci`, `npm run build`, assume the AWS deploy
-   role via OIDC, `npx serverless deploy --stage prod`. This updates the
-   Lambda function code and API Gateway.
-2. **deploy-frontend** — `npm ci`, `npm run build` (with `VITE_API_URL`
-   baked in), assume the AWS deploy role, `aws s3 sync` to the bucket
-   with the right cache headers (long-cache for content-hashed assets,
-   no-cache for `index.html`), `aws cloudfront create-invalidation` on
-   `/` and `/index.html`.
-3. **smoke-test** — `curl /api/health` and the frontend root URL. Fails
-   the workflow if either is broken so you see it immediately.
+| Resource          | Production                            | Dev (preview)                            |
+|-------------------|---------------------------------------|------------------------------------------|
+| Lambda + API GW   | `fantasy-nba-api-prod` stack          | `fantasy-nba-api-dev` stack              |
+| Frontend bucket   | prod S3 bucket                        | dev S3 bucket                            |
+| CloudFront        | prod distribution                     | dev distribution                         |
+| Database          | Neon prod database                    | Neon dev branch                          |
+| Frontend URL      | `PROD_FRONTEND_URL` variable          | `DEV_FRONTEND_URL` variable              |
+| Triggered by      | merge to `main`                       | every push to any open PR                |
 
-If CI fails, deploy never runs. The deploy job uses the exact git SHA
+#### Prod deploys (`.github/workflows/deploy.yml`)
+
+Triggered by `workflow_run` after CI passes on a push to `main`. Three jobs:
+
+1. **deploy-backend** — assume AWS role via OIDC, `npx serverless deploy --stage prod`.
+2. **deploy-frontend** — build with `VITE_API_URL`, sync to prod S3 with
+   correct cache headers, invalidate prod CloudFront.
+3. **smoke-test** — `curl /api/health` and the prod frontend root URL.
+
+#### PR previews (`deploy-preview` job in `.github/workflows/ci.yml`)
+
+Runs as a fourth job in the CI workflow on `pull_request` events, after
+the test jobs pass:
+
+1. Backend → `npx serverless@3 deploy --stage dev` (clobbers previous dev)
+2. Frontend → built with `DEV_API_URL`, sync'd to dev S3 bucket, dev
+   CloudFront invalidated
+
+The dev environment is at a fixed URL (`DEV_FRONTEND_URL`), so once the
+job goes green just visit that URL to see your PR's code running.
+
+"Last PR push wins" — two open PRs share one dev environment. Acceptable
+for solo work.
+
+If CI fails, neither deploy runs. Both deploys use the exact git SHA
 that CI tested — no "rebuild locally and ship" gap.
 
 ### Branch protection (manual one-time setup)
@@ -602,15 +625,33 @@ Add each of these:
 
 Same page → **Variables** tab → **New repository variable**:
 
+**Production:**
+
 | Name                          | Value                                                                |
 |-------------------------------|----------------------------------------------------------------------|
 | `AWS_DEPLOY_ROLE_ARN`         | The Role ARN from step B.11                                          |
-| `S3_BUCKET`                   | Name of the S3 bucket serving the frontend                           |
-| `CLOUDFRONT_DISTRIBUTION_ID`  | The CloudFront distribution ID (e.g. `E1ABCDEF234567`)               |
+| `S3_BUCKET`                   | Name of the S3 bucket serving the prod frontend                      |
+| `CLOUDFRONT_DISTRIBUTION_ID`  | The prod CloudFront distribution ID (e.g. `E1ABCDEF234567`)          |
 | `PROD_API_URL`                | Backend prod URL (e.g. `https://api.cameronjim.com` or the API Gateway URL) |
 | `PROD_FRONTEND_URL`           | Frontend prod URL (e.g. `https://fantasy.cameronjim.com`)            |
 | `GOOGLE_CLIENT_ID`            | Google OAuth client id (public — safe as Variable, not Secret)       |
 | `FROM_EMAIL`                  | Verified SES sender address for password-reset emails                |
+
+**Dev / PR previews** (only needed if you set up the dev environment per
+section H below):
+
+| Name                              | Value                                                            |
+|-----------------------------------|------------------------------------------------------------------|
+| `DEV_S3_BUCKET`                   | Name of the dev frontend S3 bucket                               |
+| `DEV_CLOUDFRONT_DISTRIBUTION_ID`  | The dev CloudFront distribution ID                               |
+| `DEV_API_URL`                     | Dev backend URL (the existing `dev-fantasy-nba-api` invoke URL)  |
+| `DEV_FRONTEND_URL`                | Dev frontend URL (e.g. `https://dev.fantasy-nba.cameronjim.com`) |
+
+Plus a secret:
+
+| Name                  | Value                                                                |
+|-----------------------|----------------------------------------------------------------------|
+| `DEV_DATABASE_URL`    | Connection string for the Neon dev branch (NOT prod's URL)           |
 
 #### F. Verify it works
 
@@ -633,6 +674,81 @@ build live until the next successful sync).
   `aws s3 sync --delete`, so for true rollback you re-run a previous
   good commit's deploy job (Actions → Deploy → previous successful run
   → **Re-run jobs**).
+
+#### H. PR-preview / dev environment setup (one-time, optional)
+
+This wires up the dev environment that the `deploy-preview` job in CI
+writes to. Skip if you only want prod auto-deploys; the PR-preview job
+will just fail without these resources.
+
+##### H.1 Create the dev frontend S3 bucket
+
+1. AWS Console → **S3 → Create bucket**.
+2. Bucket name: `dev.<your-domain>` (e.g. `dev.fantasy-nba.cameronjim.com`)
+   — must be globally unique.
+3. Region: same as prod (us-east-1).
+4. Block all public access: **on** (CloudFront will front it).
+5. Create.
+
+##### H.2 Create the dev CloudFront distribution
+
+1. AWS Console → **CloudFront → Create distribution**.
+2. Origin: the dev S3 bucket from H.1. Origin access: **Origin access control**
+   (create new) — this is what lets CloudFront read the private bucket.
+3. Default cache behavior: redirect HTTP to HTTPS.
+4. Default root object: `index.html`.
+5. **Custom error responses** (for SPA routing): add two — `403` and `404`
+   both → response page path `/index.html`, response code `200`.
+6. (Optional) Alternate domain name: `dev.<your-domain>` + ACM cert.
+7. Create. Note the **Distribution ID** for the `DEV_CLOUDFRONT_DISTRIBUTION_ID` var.
+8. Copy the bucket policy CloudFront generates and apply it to the dev S3
+   bucket (Bucket → Permissions → Bucket policy → Edit).
+
+##### H.3 Create a Neon dev database branch
+
+1. Neon dashboard → your project → **Branches → Create branch**.
+2. Source: `main` (or your default branch).
+3. Name: `dev`.
+4. Copy the connection string for the `DEV_DATABASE_URL` secret.
+
+This gives dev its own data without affecting prod.
+
+##### H.4 Update the IAM policy to allow dev resources
+
+The role needs to write to the new dev bucket and invalidate the new dev
+distribution. Update `.github/deploy-iam-policy.json`:
+
+- `FrontendBuckets` resource list now has both prod and dev bucket ARNs.
+- `CloudFrontInvalidation` resource list now has both prod and dev
+  distribution ARNs.
+
+Paste the updated policy into AWS Console → IAM → Roles →
+`fantasy-nba-deploy` → policy → Edit JSON → Save.
+
+##### H.5 Add the `DEV_*` Secrets and Variables to GitHub
+
+See section E above for the full list.
+
+##### H.6 Stop using `deploy.ps1` against the dev stage
+
+The PR-preview workflow now owns the dev Lambda's env vars. If you keep
+hand-deploying via `deploy.ps1`, the env vars in dev will oscillate
+between your `.env` file and the GitHub Secrets every time you push.
+Hand-deploy to a different stage if you need to — see the comment at the
+top of `backend/deploy.ps1`.
+
+##### H.7 Verify it works
+
+Open any PR with a tiny change. Watch the **CI** workflow on the PR:
+
+- All four jobs (`backend`, `frontend`, `e2e`, `deploy-preview`) should run.
+- After they finish, visit `DEV_FRONTEND_URL` in a browser. Sign in. The
+  site should serve from dev CloudFront, talk to the dev Lambda, hit the
+  dev Neon database.
+
+If `deploy-preview` fails, check its logs. The most common failures are
+missing `DEV_*` variables or the IAM policy not yet including the dev
+bucket/distribution.
 
 
 
