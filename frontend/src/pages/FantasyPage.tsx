@@ -254,14 +254,9 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
                       >
                         <span className="inline-flex items-center gap-1">
                           {col.label}
-                          {/* Fixed-width slot for the sort indicator. Always
-                              present, so columns don't resize when the active
-                              sort changes. */}
-                          <span className="inline-block w-3 text-current">
-                            {col.key && sortKey === col.key
-                              ? (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)
-                              : null}
-                          </span>
+                          {col.key && sortKey === col.key
+                            ? (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)
+                            : <ChevronUp size={12} className="invisible" />}
                         </span>
                       </th>
                     ))}
@@ -324,15 +319,22 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
                     </tr>
                   ))}
                 </tbody>
-                {/* Team averages row — quiet, no benchmark comparison or coloring.
-                    The 9-Category Analysis below does the qualitative read. */}
+                {/* Team averages row — same font/size as the body rows so the
+                    numbers read as part of the table, not a callout. */}
                 <tfoot>
-                  <tr className="bg-base-300/40 font-semibold">
-                    <td className="text-xs uppercase tracking-wider opacity-60">AVG</td>
+                  <tr className="bg-base-300/40">
+                    <td className="font-medium whitespace-nowrap">
+                      {/* Empty spacer matches the avatar slot (w-6 + gap-2)
+                          so "AVG" lines up under the players' first names. */}
+                      <span className="flex items-center gap-2">
+                        <span className="w-6 flex-shrink-0" />
+                        AVG
+                      </span>
+                    </td>
                     <td />
                     <td />
                     {AVG_CATEGORIES.map((cat) => (
-                      <td key={cat.key as string} className="tabular-nums">
+                      <td key={cat.key as string}>
                         {formatAvg(rosterAverages[cat.key as string], cat)}
                       </td>
                     ))}
