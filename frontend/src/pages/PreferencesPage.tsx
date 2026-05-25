@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Navigate, Link } from 'react-router-dom';
 import { CheckCircle2 } from 'lucide-react';
 import { getAuthToken, getPreferences, updatePreferences, type AIPreferences } from '../api/client';
+import { invalidateAIClientCaches } from '../api/clientCaches';
 
 const CATEGORIES = ['PTS', 'REB', 'AST', 'STL', 'BLK', 'FG%', 'FT%', '3PM', 'TO'];
 
@@ -122,6 +123,9 @@ export const PreferencesPage = () => {
       const updated = await updatePreferences(prefs);
       setPrefs(updated);
       setSavedAt(Date.now());
+      // Prefs are part of the server's AI cache key — wipe local caches so
+      // /fantasy and /improve re-fetch with the new prompt next visit.
+      invalidateAIClientCaches();
     } catch {
       setError('Failed to save');
     } finally {

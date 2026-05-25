@@ -3,6 +3,7 @@ import { Lightbulb, Target, TrendingUp, RefreshCw } from 'lucide-react';
 import { getWaiverSuggestions } from '../api/client';
 import { ChatBox } from '../components/ChatBox';
 import { PreferencesPrompt } from '../components/PreferencesPrompt';
+import { getCachedSuggestions, setCachedSuggestions } from '../api/clientCaches';
 
 interface Suggestion {
   name: string;
@@ -14,10 +15,12 @@ interface ImproveTeamPageProps {
 }
 
 export const ImproveTeamPage = ({ isLoggedIn }: ImproveTeamPageProps) => {
-  const [tradeTargets, setTradeTargets] = useState<Suggestion[]>([]);
-  const [waiverPickups, setWaiverPickups] = useState<Suggestion[]>([]);
-  const [summary, setSummary] = useState('');
-  const [cachedAt, setCachedAt] = useState<string | null>(null);
+  // Hydrate from client cache so tab-switches feel instant.
+  const initial = getCachedSuggestions();
+  const [tradeTargets, setTradeTargets] = useState<Suggestion[]>(initial?.trade_targets ?? []);
+  const [waiverPickups, setWaiverPickups] = useState<Suggestion[]>(initial?.waiver_pickups ?? []);
+  const [summary, setSummary] = useState(initial?.summary ?? '');
+  const [cachedAt, setCachedAt] = useState<string | null>(initial?.cached_at ?? null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
@@ -32,6 +35,7 @@ export const ImproveTeamPage = ({ isLoggedIn }: ImproveTeamPageProps) => {
       setWaiverPickups(data.waiver_pickups || []);
       setSummary(data.summary || '');
       setCachedAt(data.cached_at || null);
+      setCachedSuggestions(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load suggestions');
     } finally {
@@ -41,8 +45,12 @@ export const ImproveTeamPage = ({ isLoggedIn }: ImproveTeamPageProps) => {
   }, []);
 
   useEffect(() => {
-    if (isLoggedIn) loadSuggestions();
-  }, [isLoggedIn, loadSuggestions]);
+    if (!isLoggedIn) return;
+    // Skip the network round-trip if we already hydrated from cache.
+    if (initial) return;
+    loadSuggestions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoggedIn]);
 
   const formatCacheTime = (iso: string): string => {
     const d = new Date(iso);
