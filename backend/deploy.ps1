@@ -38,4 +38,4 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host ""
 Write-Host "Running serverless deploy..." -ForegroundColor Cyan
-npx serverless deploy
+npx serverless@3 deploy
