@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback } from 'react';
-import { Search, Plus, Trash2, RefreshCw } from 'lucide-react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
+import { Search, Plus, Trash2, RefreshCw, ChevronUp, ChevronDown } from 'lucide-react';
 import { getMyRoster, getPlayers, addToRoster, dropFromRoster, getTeamAnalysis } from '../api/client';
 import type { Player, RosterPlayer, TeamAnalysis } from '../types';
 import { getTeamLogoUrl } from '../utils/teamLogos';
@@ -18,6 +18,29 @@ const CAT_COLORS: Record<string, string> = {
   weak: 'badge-error',
 };
 
+// Column definitions for the My Roster table. `key` is the sort field; columns
+// without a key (like the bare "Player" column header) are not sortable.
+const ROSTER_COLUMNS: Array<{ key: keyof RosterPlayer | null; label: string }> = [
+  { key: 'name',                     label: 'Player' },
+  { key: 'position',                 label: 'Pos' },
+  { key: 'team',                     label: 'Team' },
+  { key: 'points_per_game',          label: 'PTS' },
+  { key: 'rebounds_per_game',        label: 'REB' },
+  { key: 'assists_per_game',         label: 'AST' },
+  { key: 'steals_per_game',          label: 'STL' },
+  { key: 'blocks_per_game',          label: 'BLK' },
+  { key: 'field_goal_percentage',    label: 'FG%' },
+  { key: 'free_throw_percentage',    label: 'FT%' },
+  { key: 'three_pointers_made',      label: '3PM' },
+  { key: 'turnovers_per_game',       label: 'TO' },
+];
+
+const NUMERIC_ROSTER_KEYS = new Set<keyof RosterPlayer>([
+  'points_per_game', 'rebounds_per_game', 'assists_per_game', 'steals_per_game',
+  'blocks_per_game', 'field_goal_percentage', 'free_throw_percentage',
+  'three_pointers_made', 'turnovers_per_game',
+]);
+
 interface FantasyPageProps {
   isLoggedIn: boolean;
 }
@@ -31,6 +54,8 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [rosterLoading, setRosterLoading] = useState(true);
   const [toast, setToast] = useState<{ message: string; variant: ToastVariant } | null>(null);
+  const [sortKey, setSortKey] = useState<keyof RosterPlayer>('points_per_game');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   const loadRoster = useCallback(async (): Promise<void> => {
     try {
@@ -111,6 +136,32 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
   };
 
   const n = (v: unknown): number => Number(v) || 0;
+
+  const handleSort = (key: keyof RosterPlayer): void => {
+    if (sortKey === key) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortKey(key);
+      // Strings default to A->Z (asc), numbers default to high-to-low (desc).
+      setSortDir(NUMERIC_ROSTER_KEYS.has(key) ? 'desc' : 'asc');
+    }
+  };
+
+  const sortedRoster = useMemo(() => {
+    return [...roster].sort((a, b) => {
+      const aVal = a[sortKey];
+      const bVal = b[sortKey];
+      if (aVal == null) return 1;
+      if (bVal == null) return -1;
+      if (NUMERIC_ROSTER_KEYS.has(sortKey)) {
+        const diff = Number(aVal) - Number(bVal);
+        return sortDir === 'asc' ? diff : -diff;
+      }
+      return sortDir === 'asc'
+        ? String(aVal).localeCompare(String(bVal))
+        : String(bVal).localeCompare(String(aVal));
+    });
+  }, [roster, sortKey, sortDir]);
 
   const injuryBadge = (status: string | null): JSX.Element | null => {
     if (!status) return null;
@@ -195,13 +246,25 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
               <table className="table table-zebra table-sm">
                 <thead>
                   <tr>
-                    {['Player', 'Pos', 'Team', 'PTS', 'REB', 'AST', 'STL', 'BLK', 'FG%', 'FT%', '3PM', 'TO', ...(isLoggedIn ? [''] : [])].map((h, i) => (
-                      <th key={`${h}-${i}`}>{h}</th>
+                    {ROSTER_COLUMNS.map((col) => (
+                      <th
+                        key={col.label}
+                        onClick={col.key ? () => handleSort(col.key!) : undefined}
+                        className={col.key ? 'cursor-pointer select-none whitespace-nowrap' : 'whitespace-nowrap'}
+                      >
+                        <span className="flex items-center gap-1">
+                          {col.label}
+                          {col.key && sortKey === col.key && (
+                            sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />
+                          )}
+                        </span>
+                      </th>
                     ))}
+                    {isLoggedIn && <th />}
                   </tr>
                 </thead>
                 <tbody>
-                  {roster.map((p) => (
+                  {sortedRoster.map((p) => (
                     <tr key={p.id} className="hover">
                       <td className="font-medium whitespace-nowrap">
                         <span className="flex items-center gap-2">
