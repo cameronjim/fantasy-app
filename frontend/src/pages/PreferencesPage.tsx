@@ -47,6 +47,31 @@ const TRADE_CHOICES: Choice<NonNullable<AIPreferences['trade_activity']>>[] = [
   { value: 'set_forget', label: 'Set and forget',    description: 'Avoid trade suggestions unless huge upside.' },
 ];
 
+const SCHEDULE_CHOICES: Choice<NonNullable<AIPreferences['schedule_weight']>>[] = [
+  { value: 'matters_a_lot', label: 'Matters a lot',    description: 'Heavily favor 4-game weeks and good matchups.' },
+  { value: 'somewhat',      label: 'Somewhat',         description: 'Consider schedule but talent comes first.' },
+  { value: 'ignore',        label: 'Ignore it',        description: 'Talent and role only. Schedule evens out.' },
+];
+
+const ROOKIE_CHOICES: Choice<NonNullable<AIPreferences['rookie_hunger']>>[] = [
+  { value: 'love_them', label: 'Love them',     description: 'Surface rookies and breakouts aggressively.' },
+  { value: 'mixed',     label: 'Selectively',   description: 'Open if the upside is real.' },
+  { value: 'avoid',     label: 'Avoid',         description: 'Only proven, established producers.' },
+];
+
+const PLAYOFF_CHOICES: Choice<NonNullable<AIPreferences['playoff_focus']>>[] = [
+  { value: 'yes', label: 'Yes',  description: 'Weight toward players healthy/producing in late-season weeks.' },
+  { value: 'no',  label: 'No',   description: 'Optimize for season-long performance.' },
+];
+
+const BENCH_CHOICES: Choice<NonNullable<AIPreferences['bench_philosophy']>>[] = [
+  { value: 'high_upside_stash',  label: 'Upside stashes',     description: 'High-ceiling speculative picks, injured-star stashes.' },
+  { value: 'safe_role_players',  label: 'Safe role players',  description: 'Reliable nightly contributors, minimal volatility.' },
+  { value: 'streaming_slots',    label: 'Streaming slots',    description: 'Keep slots open for daily/weekly streaming.' },
+];
+
+const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
+
 export const PreferencesPage = () => {
   if (!getAuthToken()) {
     return <Navigate to="/login" replace state={{ from: '/preferences' }} />;
@@ -72,6 +97,22 @@ export const PreferencesPage = () => {
       ? current.filter((c) => c !== cat)
       : [...current, cat];
     setPrefs({ ...prefs, punt_categories: next });
+  };
+
+  const togglePriorityCategory = (cat: string): void => {
+    const current = prefs.priority_categories ?? [];
+    const next = current.includes(cat)
+      ? current.filter((c) => c !== cat)
+      : [...current, cat];
+    setPrefs({ ...prefs, priority_categories: next });
+  };
+
+  const togglePosition = (pos: string): void => {
+    const current = prefs.position_needs ?? [];
+    const next = current.includes(pos)
+      ? current.filter((p) => p !== pos)
+      : [...current, pos];
+    setPrefs({ ...prefs, position_needs: next });
   };
 
   const handleSave = async (): Promise<void> => {
@@ -146,9 +187,77 @@ export const PreferencesPage = () => {
           onChange={(v) => setPrefs({ ...prefs, trade_activity: v })}
         />
 
+        <Question
+          label="How much does the weekly schedule matter?"
+          choices={SCHEDULE_CHOICES}
+          value={prefs.schedule_weight}
+          onChange={(v) => setPrefs({ ...prefs, schedule_weight: v })}
+        />
+
+        <Question
+          label="How do you feel about rookies and breakouts?"
+          choices={ROOKIE_CHOICES}
+          value={prefs.rookie_hunger}
+          onChange={(v) => setPrefs({ ...prefs, rookie_hunger: v })}
+        />
+
+        <Question
+          label="Are you planning for fantasy playoffs?"
+          choices={PLAYOFF_CHOICES}
+          value={prefs.playoff_focus}
+          onChange={(v) => setPrefs({ ...prefs, playoff_focus: v })}
+        />
+
+        <Question
+          label="Bench philosophy?"
+          choices={BENCH_CHOICES}
+          value={prefs.bench_philosophy}
+          onChange={(v) => setPrefs({ ...prefs, bench_philosophy: v })}
+        />
+
         <div>
           <label className="text-sm font-semibold block mb-2">
-            Are you punting any categories? <span className="text-xs opacity-50 font-normal">(select all you ignore)</span>
+            Do you have roster needs at any positions? <span className="text-xs opacity-50 font-normal">(select all that apply)</span>
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {POSITIONS.map((pos) => {
+              const selected = (prefs.position_needs ?? []).includes(pos);
+              return (
+                <button
+                  key={pos}
+                  onClick={() => togglePosition(pos)}
+                  className={`btn btn-sm ${selected ? 'btn-primary' : 'btn-ghost border border-base-300'}`}
+                >
+                  {pos}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div>
+          <label className="text-sm font-semibold block mb-2">
+            Priority categories <span className="text-xs opacity-50 font-normal">(must be strengths)</span>
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {CATEGORIES.map((cat) => {
+              const selected = (prefs.priority_categories ?? []).includes(cat);
+              return (
+                <button
+                  key={cat}
+                  onClick={() => togglePriorityCategory(cat)}
+                  className={`btn btn-sm ${selected ? 'btn-success text-white' : 'btn-ghost border border-base-300'}`}
+                >
+                  {cat}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div>
+          <label className="text-sm font-semibold block mb-2">
+            Punt categories <span className="text-xs opacity-50 font-normal">(ignore these entirely)</span>
           </label>
           <div className="flex flex-wrap gap-2">
             {CATEGORIES.map((cat) => {
@@ -157,7 +266,7 @@ export const PreferencesPage = () => {
                 <button
                   key={cat}
                   onClick={() => togglePuntCategory(cat)}
-                  className={`btn btn-sm ${selected ? 'btn-error' : 'btn-ghost border border-base-300'}`}
+                  className={`btn btn-sm ${selected ? 'btn-error text-white' : 'btn-ghost border border-base-300'}`}
                 >
                   {cat}
                 </button>
@@ -184,7 +293,7 @@ export const PreferencesPage = () => {
       <div className="sticky bottom-0 mt-8 -mx-4 px-4 py-3 bg-base-100/95 backdrop-blur border-t border-base-300 flex items-center justify-between">
         <div className="flex items-center gap-3">
           {savedAt && Date.now() - savedAt < 4000 && (
-            <span className="flex items-center gap-1.5 text-success text-sm">
+            <span className="badge badge-success gap-1.5 px-3 py-3 text-sm font-semibold text-white">
               <CheckCircle2 size={16} />
               Saved
             </span>
