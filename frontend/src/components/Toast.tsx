@@ -21,7 +21,9 @@ export const Toast = ({ message, variant = 'success', onDismiss, duration = 2500
     return () => clearTimeout(id);
   }, [duration, onDismiss]);
 
-  const bg = variant === 'success' ? 'bg-emerald-500' : 'bg-red-500';
+  // `bg-success` and `bg-error` resolve to the brand green / red defined
+  // in index.css. don't hardcode tailwind palette colors here.
+  const bg = variant === 'success' ? 'bg-success' : 'bg-error';
   const Icon = variant === 'success' ? CheckCircle2 : AlertTriangle;
 
   return (

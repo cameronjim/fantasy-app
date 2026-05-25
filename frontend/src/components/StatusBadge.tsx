@@ -61,8 +61,10 @@ export const StatusBadge = () => {
         aria-label={`Data updated ${relativeTime(mostRecentISO ?? null)}`}
         title={`Data updated ${relativeTime(mostRecentISO ?? null)}`}
       >
-        {/* Filled green dot — much more visible than text-success in light mode */}
-        <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+        {/* filled brand-green dot. uses `bg-success` (overridden in
+            index.css to the brand green) so every "success" indicator in
+            the app stays the same color. */}
+        <span className="inline-block w-2 h-2 rounded-full bg-success" />
       </button>
       <div tabIndex={0} className="dropdown-content mt-1 z-50 w-60 p-3 shadow-lg bg-base-200 border border-base-300 rounded-box">
         <p className="text-xs font-bold uppercase tracking-wider opacity-50 mb-2">Last updated</p>
