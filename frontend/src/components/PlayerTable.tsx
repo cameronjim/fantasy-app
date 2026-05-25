@@ -12,25 +12,30 @@ interface PlayerTableProps {
 
 type SortKey = keyof Player;
 
-// `minW` locks each column's minimum width so sorting (which brings new rows
-// into view) can't widen/narrow the column based on whichever names or
-// numbers happen to be at the top.
-const COLUMNS: { key: SortKey; label: string; format?: (v: number) => string; minW: string }[] = [
-  { key: 'name',                   label: 'Player', minW: 'min-w-[200px]' },
-  { key: 'team',                   label: 'Team',   minW: 'min-w-[80px]' },
-  { key: 'position',               label: 'Pos',    minW: 'min-w-[60px]' },
-  { key: 'points_per_game',        label: 'PPG',    minW: 'min-w-[60px]', format: (v) => Number(v).toFixed(1) },
-  { key: 'rebounds_per_game',      label: 'RPG',    minW: 'min-w-[60px]', format: (v) => Number(v).toFixed(1) },
-  { key: 'assists_per_game',       label: 'APG',    minW: 'min-w-[60px]', format: (v) => Number(v).toFixed(1) },
-  { key: 'steals_per_game',        label: 'SPG',    minW: 'min-w-[60px]', format: (v) => Number(v).toFixed(1) },
-  { key: 'blocks_per_game',        label: 'BPG',    minW: 'min-w-[60px]', format: (v) => Number(v).toFixed(1) },
-  { key: 'field_goal_percentage',  label: 'FG%',    minW: 'min-w-[60px]', format: (v) => Number(v).toFixed(1) },
-  { key: 'three_point_percentage', label: '3P%',    minW: 'min-w-[60px]', format: (v) => Number(v).toFixed(1) },
-  { key: 'free_throw_percentage',  label: 'FT%',    minW: 'min-w-[60px]', format: (v) => Number(v).toFixed(1) },
-  { key: 'turnovers_per_game',     label: 'TOV',    minW: 'min-w-[60px]', format: (v) => Number(v).toFixed(1) },
-  { key: 'minutes_per_game',       label: 'MIN',    minW: 'min-w-[60px]', format: (v) => Number(v).toFixed(1) },
-  { key: 'games_played',           label: 'GP',     minW: 'min-w-[50px]' },
+// Fixed pixel widths. The table uses `table-layout: fixed` below so these
+// widths are authoritative — content that doesn't fit is truncated. Sorting
+// can never resize a column.
+const COLUMNS: { key: SortKey; label: string; format?: (v: number) => string; w: string }[] = [
+  { key: 'name',                   label: 'Player', w: 'w-[220px]' },
+  { key: 'team',                   label: 'Team',   w: 'w-[78px]' },
+  { key: 'position',               label: 'Pos',    w: 'w-[60px]' },
+  { key: 'points_per_game',        label: 'PPG',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'rebounds_per_game',      label: 'RPG',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'assists_per_game',       label: 'APG',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'steals_per_game',        label: 'SPG',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'blocks_per_game',        label: 'BPG',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'field_goal_percentage',  label: 'FG%',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'three_point_percentage', label: '3P%',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'free_throw_percentage',  label: 'FT%',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'turnovers_per_game',     label: 'TOV',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'minutes_per_game',       label: 'MIN',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'games_played',           label: 'GP',     w: 'w-[58px]' },
 ];
+
+// Sum of all column widths + ~40px for the optional compare checkbox.
+// Used as the table's min-width so it horizontally scrolls on narrow screens
+// instead of squishing columns.
+const TABLE_MIN_WIDTH = '1130px';
 
 // How many rows to render initially, and how many more to add each time
 // the user scrolls within INFINITE_THRESHOLD pixels of the bottom.
@@ -117,15 +122,20 @@ export const PlayerTable = ({ players, onSelect, selectedForCompare = [], onTogg
   return (
     <div>
       <div className="overflow-x-auto rounded-box border border-base-300">
-        <table className="table table-zebra table-sm w-full">
+        {/* table-fixed makes the browser use the header widths only, ignoring
+            content size — so re-sorting can never change column widths. */}
+        <table
+          className="table table-zebra table-sm"
+          style={{ tableLayout: 'fixed', minWidth: TABLE_MIN_WIDTH, width: '100%' }}
+        >
           <thead>
             <tr>
-              {onToggleCompare && <th className="w-8" />}
+              {onToggleCompare && <th className="w-10" />}
               {COLUMNS.map((col) => (
                 <th
                   key={col.key}
                   onClick={() => handleSort(col.key)}
-                  className={`cursor-pointer select-none whitespace-nowrap ${col.minW}`}
+                  className={`cursor-pointer select-none whitespace-nowrap ${col.w}`}
                 >
                   <span className="inline-flex items-center gap-1">
                     {col.label}
@@ -165,8 +175,8 @@ export const PlayerTable = ({ players, onSelect, selectedForCompare = [], onTogg
                       className={`whitespace-nowrap ${col.format ? 'tabular-nums' : ''}`}
                     >
                       {col.key === 'name' ? (
-                        <span className="flex items-center gap-2">
-                          <div className="avatar">
+                        <span className="flex items-center gap-2 overflow-hidden">
+                          <div className="avatar flex-shrink-0">
                             <div className="w-7 rounded-full">
                               <img
                                 src={player.headshot_url || FALLBACK_SVG}
@@ -175,9 +185,10 @@ export const PlayerTable = ({ players, onSelect, selectedForCompare = [], onTogg
                               />
                             </div>
                           </div>
-                          <span className="font-medium">{player.name}</span>
+                          {/* truncate so unusually long names don't reflow the column */}
+                          <span className="font-medium truncate" title={player.name}>{player.name}</span>
                           {player.injury_status && (
-                            <span className={injuryBadgeClass(player.injury_status)}>
+                            <span className={`flex-shrink-0 ${injuryBadgeClass(player.injury_status)}`}>
                               {player.injury_status.replace(/_/g, ' ')}
                             </span>
                           )}
