@@ -160,7 +160,9 @@ jobs:
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           FRONTEND_URL: ${{ vars.DEV_FRONTEND_URL }}
           FROM_EMAIL: ${{ vars.FROM_EMAIL }}
-        run: npx serverless deploy --stage dev
+        # pin to v3 explicitly — v4 demands a serverless.com license key in ci,
+        # and serverless.yml sets frameworkVersion '3'.
+        run: npx serverless@3 deploy --stage dev
 
       # frontend: build with the dev api url baked in, sync to dev bucket.
       - name: Install frontend deps
