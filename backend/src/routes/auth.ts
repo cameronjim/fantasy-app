@@ -306,12 +306,12 @@ router.patch('/set-email', requireAuth, async (req: Request, res: Response): Pro
   }
 });
 
-/** Returns whether the current logged-in user has an email set (for the banner prompt). */
+/** Returns the current logged-in user's profile fields (powers the /profile page). */
 router.get('/me', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const userId = (req as AuthRequest).userId;
   try {
     const result = await query(
-      'SELECT id, username, email FROM users WHERE id = $1',
+      'SELECT id, username, email, name, phone FROM users WHERE id = $1',
       [userId]
     );
     if (result.rows.length === 0) {
@@ -321,6 +321,84 @@ router.get('/me', requireAuth, async (req: Request, res: Response): Promise<void
     res.json(result.rows[0]);
   } catch {
     res.status(500).json({ error: 'Failed to load profile' });
+  }
+});
+
+// lightweight phone validation: digits, spaces, dashes, parens, leading +.
+// strict format check happens client-side and via real-world SMS delivery —
+// here we just reject obviously-broken inputs.
+function isValidPhone(phone: string): boolean {
+  if (typeof phone !== 'string') return false;
+  if (phone.trim() === '') return true; // empty means "clear the field"
+  return /^[+0-9 ().-]{7,30}$/.test(phone.trim());
+}
+
+/**
+ * Update profile fields. Each field is optional in the body — fields that
+ * aren't sent stay unchanged. Sending an empty string clears the field
+ * (for name and phone; email cannot be cleared because it's needed for
+ * password reset).
+ */
+router.patch('/profile', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const userId = (req as AuthRequest).userId;
+  const { name, email, phone } = req.body as { name?: string; email?: string; phone?: string };
+
+  if (email !== undefined && !isValidEmail(email)) {
+    res.status(400).json({ error: 'Please enter a valid email address' });
+    return;
+  }
+  if (phone !== undefined && !isValidPhone(phone)) {
+    res.status(400).json({ error: 'Please enter a valid phone number' });
+    return;
+  }
+  if (name !== undefined && name.length > 100) {
+    res.status(400).json({ error: 'Name must be 100 characters or fewer' });
+    return;
+  }
+
+  // build the dynamic SET clause so we only touch fields the client sent.
+  // null gets stored when the value is an empty string (for name and phone).
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  let i = 1;
+
+  if (name !== undefined) {
+    sets.push(`name = $${i++}`);
+    params.push(name.trim() === '' ? null : name.trim());
+  }
+  if (email !== undefined) {
+    sets.push(`email = $${i++}`);
+    params.push(email.toLowerCase().trim());
+  }
+  if (phone !== undefined) {
+    sets.push(`phone = $${i++}`);
+    params.push(phone.trim() === '' ? null : phone.trim());
+  }
+
+  if (sets.length === 0) {
+    res.status(400).json({ error: 'No fields to update' });
+    return;
+  }
+
+  params.push(userId);
+
+  try {
+    const result = await query(
+      `UPDATE users SET ${sets.join(', ')} WHERE id = $${i}
+       RETURNING id, username, email, name, phone`,
+      params
+    );
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+    res.json(result.rows[0]);
+  } catch (err: unknown) {
+    if (err instanceof Error && 'code' in err && (err as { code: string }).code === '23505') {
+      res.status(409).json({ error: 'That email is already in use by another account' });
+      return;
+    }
+    res.status(500).json({ error: 'Failed to update profile' });
   }
 });
 
