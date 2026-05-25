@@ -3,6 +3,7 @@ import { Search, Plus, Trash2, RefreshCw } from 'lucide-react';
 import { getMyRoster, getPlayers, addToRoster, dropFromRoster, getTeamAnalysis } from '../api/client';
 import type { Player, RosterPlayer, TeamAnalysis } from '../types';
 import { getTeamLogoUrl } from '../utils/teamLogos';
+import { PreferencesPrompt } from '../components/PreferencesPrompt';
 
 const CAT_COLORS: Record<string, string> = {
   strong: 'badge-success',
@@ -96,6 +97,7 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
 
   return (
     <div className="max-w-[1400px] mx-auto px-4 py-6 space-y-5">
+      {isLoggedIn && <PreferencesPrompt />}
       {isLoggedIn && (
         <div className="card bg-base-200">
           <div className="card-body p-4">

@@ -1,6 +1,6 @@
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { BarChart3, Users, TrendingUp, LogIn, User } from 'lucide-react';
-import { ThemeToggle } from './ThemeToggle';
+import { BarChart3, Users, TrendingUp, LogIn, User, Sun, Moon } from 'lucide-react';
+import { useTheme } from '../hooks/useTheme';
 import { StatusBadge } from './StatusBadge';
 
 interface NavbarProps {
@@ -17,6 +17,8 @@ const tabs = [
 export default function Navbar({ isLoggedIn, onLogout }: NavbarProps) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { theme, toggle: toggleTheme } = useTheme();
+  const isDark = theme === 'business';
 
   const goToSignIn = (): void => {
     navigate('/login', { state: { from: location.pathname } });
@@ -27,9 +29,14 @@ export default function Navbar({ isLoggedIn, onLogout }: NavbarProps) {
     navigate(path);
   };
 
+  const themeAndBlur = (): void => {
+    (document.activeElement as HTMLElement)?.blur();
+    toggleTheme();
+  };
+
   return (
     <div className="navbar bg-base-200 border-b border-base-300 sticky top-0 z-50 px-4">
-      <div className="flex-1 flex items-center gap-3">
+      <div className="flex-1 flex items-center gap-2">
         <NavLink to="/" className="text-xl font-bold tracking-tight">
           Fantasy <span className="text-primary">NBA</span>
         </NavLink>
@@ -53,18 +60,16 @@ export default function Navbar({ isLoggedIn, onLogout }: NavbarProps) {
           );
         })}
 
-        <ThemeToggle />
-
         {isLoggedIn ? (
           <div className="dropdown dropdown-end ml-1">
             <button tabIndex={0} className="btn btn-ghost btn-sm gap-1">
               <User size={16} />
               <span className="hidden sm:inline text-xs">Account</span>
             </button>
-            <ul tabIndex={0} className="dropdown-content menu bg-base-200 rounded-box z-50 w-48 p-2 shadow-lg border border-base-300 mt-1">
+            <ul tabIndex={0} className="dropdown-content menu bg-base-200 rounded-box z-50 w-52 p-2 shadow-lg border border-base-300 mt-1">
               <li>
                 <button onClick={() => goAndBlur('/preferences')}>
-                  AI Preferences
+                  Team Preferences
                 </button>
               </li>
               <li>
@@ -73,6 +78,15 @@ export default function Navbar({ isLoggedIn, onLogout }: NavbarProps) {
                 </button>
               </li>
               <li>
+                <button onClick={themeAndBlur} className="flex items-center justify-between">
+                  <span>Theme</span>
+                  <span className="flex items-center gap-1 opacity-60 text-xs">
+                    {isDark ? <Moon size={12} /> : <Sun size={12} />}
+                    {isDark ? 'Dark' : 'Light'}
+                  </span>
+                </button>
+              </li>
+              <li className="border-t border-base-300 mt-1 pt-1">
                 <button onClick={onLogout} className="text-error">
                   Sign Out
                 </button>
@@ -80,10 +94,22 @@ export default function Navbar({ isLoggedIn, onLogout }: NavbarProps) {
             </ul>
           </div>
         ) : (
-          <button onClick={goToSignIn} className="btn btn-primary btn-sm ml-1 gap-1">
-            <LogIn size={16} />
-            <span className="hidden sm:inline">Sign In</span>
-          </button>
+          <>
+            {/* Logged-out users still need a way to toggle theme.
+                Tiny circle button keeps it from crowding the Sign In CTA. */}
+            <button
+              onClick={toggleTheme}
+              className="btn btn-ghost btn-sm btn-circle"
+              aria-label={`Switch to ${isDark ? 'light' : 'dark'} mode`}
+              title={`Switch to ${isDark ? 'light' : 'dark'} mode`}
+            >
+              {isDark ? <Sun size={16} /> : <Moon size={16} />}
+            </button>
+            <button onClick={goToSignIn} className="btn btn-primary btn-sm ml-1 gap-1">
+              <LogIn size={16} />
+              <span className="hidden sm:inline">Sign In</span>
+            </button>
+          </>
         )}
       </div>
     </div>
