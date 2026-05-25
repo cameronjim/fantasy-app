@@ -33,9 +33,6 @@ const COLUMNS: { key: SortKey; label: string; full: string; format?: (v: number)
   { key: 'games_played',           label: 'GP',     full: 'Games Played',                w: 'w-[58px]' },
 ];
 
-// Sum of all column widths + ~40px for the optional compare checkbox.
-const TABLE_MIN_WIDTH = '1200px';
-
 // How many rows to render initially, and how many more to add each time
 // the user scrolls within INFINITE_THRESHOLD pixels of the bottom.
 const INITIAL_ROWS = 30;
@@ -125,8 +122,7 @@ export const PlayerTable = ({ players, onSelect, selectedForCompare = [], onTogg
         {/* table-fixed makes the browser use the header widths only, ignoring
             content size — so re-sorting can never change column widths. */}
         <table
-          className="table table-zebra table-sm"
-          style={{ tableLayout: 'fixed', minWidth: TABLE_MIN_WIDTH, width: '100%' }}
+          className="table table-zebra table-sm table-fixed min-w-[1200px] w-full"
         >
           <thead>
             <tr>

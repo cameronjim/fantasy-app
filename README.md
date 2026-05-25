@@ -8,7 +8,7 @@ A full-stack fantasy basketball application with real NBA stats, AI-powered team
 - **Backend**: Node.js + Express + TypeScript
 - **Database**: PostgreSQL
 - **Scraper**: Python + Scrapy (NBA stats from stats.nba.com)
-- **AI**: Anthropic Claude API (claude-sonnet-4-20250514)
+- **AI**: Anthropic Claude API
 
 ## Prerequisites
 
@@ -30,7 +30,16 @@ cp .env.example .env
 Edit `.env`:
 ```
 ANTHROPIC_API_KEY=your-anthropic-api-key
+AUTH_SECRET=replace-with-a-long-random-secret
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/fantasy_nba
+FRONTEND_URL=http://localhost:5173
+GOOGLE_CLIENT_ID=your-google-client-id
+```
+
+Optional production email settings:
+
+```env
+FROM_EMAIL=
 ```
 
 ### 2. Database
@@ -82,14 +91,14 @@ Runs on `http://localhost:3001`. API endpoints:
 | `/api/teams` | GET | All teams |
 | `/api/teams/:id` | GET | Team detail |
 | `/api/games` | GET | Today's and recent games |
-| `/api/fantasy/leagues` | GET/POST | List or create leagues |
-| `/api/fantasy/leagues/:id/teams` | GET/POST | List or create teams in a league |
-| `/api/fantasy/teams/:id` | GET | Team roster with player stats |
-| `/api/fantasy/teams/:id/roster` | POST | Add player to roster |
-| `/api/fantasy/teams/:id/roster/:playerId` | DELETE | Drop player |
+| `/api/games/live` | GET | Live scoreboard data |
+| `/api/fantasy/roster` | GET | Current user's roster |
+| `/api/fantasy/roster` | POST | Add player to roster |
+| `/api/fantasy/roster/:playerId` | DELETE | Drop player |
+| `/api/preferences` | GET/PATCH | AI strategy preferences |
 | `/api/ai/chat` | POST | AI chat with team/waiver context |
-| `/api/ai/team-analysis` | POST | AI team analysis |
-| `/api/ai/waiver-suggestions` | POST | AI waiver wire suggestions |
+| `/api/ai/team-analysis` | GET | AI team analysis |
+| `/api/ai/waiver-suggestions` | GET | AI waiver wire suggestions |
 
 ### 5. Frontend
 
@@ -101,6 +110,13 @@ npm run dev
 
 Runs on `http://localhost:5173` with API requests proxied to the backend.
 
+For Google Sign-In locally, create `frontend/.env`:
+
+```env
+VITE_GOOGLE_CLIENT_ID=your-google-client-id
+VITE_API_URL=
+```
+
 ## Features
 
 ### Tab 1: Player & Team Stats
@@ -109,16 +125,13 @@ Runs on `http://localhost:5173` with API requests proxied to the backend.
 - Player detail modal with injury status
 - Live scoreboard strip showing today's games
 
-### Tab 2: My Fantasy Teams
-- Create and manage leagues and teams
+### Tab 2: My Team
+- Create and manage a personal fantasy roster
 - View roster with inline player stats
 - AI-powered team analysis (strengths, weaknesses, suggestions)
-- AI chat with full team context
 
 ### Tab 3: Waiver Wire & AI Pickups
 - AI-generated pickup and drop suggestions
-- Available player search
-- One-click add/drop
 - AI chat for trade/waiver advice
 
 ## Project Structure
@@ -162,5 +175,5 @@ fantasy_app/
         ├── types.ts
         ├── api/client.ts
         ├── components/     # Navbar, tables, modals, chat, etc.
-        └── pages/          # StatsPage, FantasyPage, WaiverPage
+        └── pages/          # StatsPage, FantasyPage, ImproveTeamPage
 ```
