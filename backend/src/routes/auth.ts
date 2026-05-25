@@ -184,8 +184,7 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
       googleId = info.sub;
       email = info.email?.toLowerCase();
     }
-  } catch (err) {
-    console.error('Google credential verification failed:', err);
+  } catch {
     res.status(401).json({ error: 'Invalid Google credential' });
     return;
   }
@@ -248,8 +247,7 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
       { expiresIn: '30d' }
     );
     res.json({ token });
-  } catch (err) {
-    console.error('Google sign-in error:', err);
+  } catch {
     res.status(500).json({ error: 'Failed to sign in with Google' });
   }
 });
@@ -345,10 +343,6 @@ router.post('/forgot-password', async (req: Request, res: Response): Promise<voi
       [email]
     );
 
-    if (userResult.rows.length === 0) {
-      console.log(`forgot-password: no user found with email ${email}`);
-    }
-
     if (userResult.rows.length > 0) {
       const { id: userId, username } = userResult.rows[0];
 
@@ -373,15 +367,13 @@ router.post('/forgot-password', async (req: Request, res: Response): Promise<voi
 
       try {
         await sendEmail({ to: email, subject, html, text });
-      } catch (sendErr) {
-        // Log but still return generic success — never leak.
-        console.error('SES sendEmail failed:', sendErr);
+      } catch {
+        // still return generic success so reset state is not exposed
       }
     }
 
     res.json(genericResponse);
-  } catch (err) {
-    console.error('forgot-password error:', err);
+  } catch {
     res.json(genericResponse);
   }
 });
@@ -423,8 +415,7 @@ router.post('/reset-password', async (req: Request, res: Response): Promise<void
     await query('UPDATE password_reset_tokens SET used_at = NOW() WHERE token_hash = $1', [tokenHash]);
 
     res.json({ message: 'Password updated successfully' });
-  } catch (err) {
-    console.error('reset-password error:', err);
+  } catch {
     res.status(500).json({ error: 'Failed to reset password' });
   }
 });
