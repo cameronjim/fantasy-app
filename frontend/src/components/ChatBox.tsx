@@ -47,16 +47,40 @@ export const ChatBox = ({ contextType, isLoggedIn = true }: ChatBoxProps) => {
     }
   };
 
+  const renderInline = (text: string): Array<string | JSX.Element> => {
+    return text.split(/(\*\*.*?\*\*)/g).map((part, index) => {
+      const match = part.match(/^\*\*(.*?)\*\*$/);
+      if (!match) return part;
+      return <strong key={`${index}-${match[1]}`}>{match[1]}</strong>;
+    });
+  };
+
   const formatMessage = (text: string): JSX.Element[] => {
-    return text.split('\n').map((line, i) => {
-      let formatted = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-      if (formatted.startsWith('- ') || formatted.startsWith('* ')) {
-        formatted = '&bull; ' + formatted.slice(2);
+    return text.split('\n').map((line, index) => {
+      if (!line) {
+        return <span key={index} className="block">{'\u00a0'}</span>;
       }
-      formatted = formatted.replace(/^(\d+)\.\s/, '<span class="text-primary font-semibold">$1.</span> ');
-      return (
-        <span key={i} className="block" dangerouslySetInnerHTML={{ __html: formatted || '&nbsp;' }} />
-      );
+
+      const numbered = line.match(/^(\d+)\.\s(.*)$/);
+      if (numbered) {
+        return (
+          <span key={`${index}-${line}`} className="block">
+            <span className="text-primary font-semibold">{numbered[1]}.</span>{' '}
+            {renderInline(numbered[2])}
+          </span>
+        );
+      }
+
+      if (line.startsWith('- ') || line.startsWith('* ')) {
+        return (
+          <span key={`${index}-${line}`} className="block">
+            {'\u2022 '}
+            {renderInline(line.slice(2))}
+          </span>
+        );
+      }
+
+      return <span key={`${index}-${line}`} className="block">{renderInline(line)}</span>;
     });
   };
 
