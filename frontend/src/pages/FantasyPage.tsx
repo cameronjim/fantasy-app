@@ -5,6 +5,7 @@ import type { Player, RosterPlayer, TeamAnalysis } from '../types';
 import { getTeamLogoUrl } from '../utils/teamLogos';
 import { PreferencesPrompt } from '../components/PreferencesPrompt';
 import { Toast, type ToastVariant } from '../components/Toast';
+import { TeamAverages } from '../components/TeamAverages';
 import {
   getCachedAnalysis,
   setCachedAnalysis,
@@ -172,6 +173,8 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
           <div className="px-4 py-3 border-b border-base-300">
             <h3 className="font-semibold text-sm">My Roster ({roster.length} players)</h3>
           </div>
+
+          {isLoggedIn && roster.length > 0 && <TeamAverages roster={roster} />}
 
           {!isLoggedIn ? (
             <div className="text-center p-12">
