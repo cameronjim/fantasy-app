@@ -5,7 +5,7 @@ import type { Player, RosterPlayer, TeamAnalysis } from '../types';
 import { getTeamLogoUrl } from '../utils/teamLogos';
 import { PreferencesPrompt } from '../components/PreferencesPrompt';
 import { Toast, type ToastVariant } from '../components/Toast';
-import { TeamAverages } from '../components/TeamAverages';
+import { computeRosterAverages, formatAvg, AVG_CATEGORIES } from '../components/TeamAverages';
 import {
   getCachedAnalysis,
   setCachedAnalysis,
@@ -147,6 +147,8 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
     }
   };
 
+  const rosterAverages = useMemo(() => computeRosterAverages(roster), [roster]);
+
   const sortedRoster = useMemo(() => {
     return [...roster].sort((a, b) => {
       const aVal = a[sortKey];
@@ -225,8 +227,6 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
             <h3 className="font-semibold text-sm">My Roster ({roster.length} players)</h3>
           </div>
 
-          {isLoggedIn && roster.length > 0 && <TeamAverages roster={roster} />}
-
           {!isLoggedIn ? (
             <div className="text-center p-12">
               <p className="font-semibold text-sm mb-1">Sign in to use My Team</p>
@@ -252,11 +252,16 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
                         onClick={col.key ? () => handleSort(col.key!) : undefined}
                         className={col.key ? 'cursor-pointer select-none whitespace-nowrap' : 'whitespace-nowrap'}
                       >
-                        <span className="flex items-center gap-1">
+                        <span className="inline-flex items-center gap-1">
                           {col.label}
-                          {col.key && sortKey === col.key && (
-                            sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />
-                          )}
+                          {/* Fixed-width slot for the sort indicator. Always
+                              present, so columns don't resize when the active
+                              sort changes. */}
+                          <span className="inline-block w-3 text-current">
+                            {col.key && sortKey === col.key
+                              ? (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)
+                              : null}
+                          </span>
                         </span>
                       </th>
                     ))}
@@ -319,6 +324,21 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
                     </tr>
                   ))}
                 </tbody>
+                {/* Team averages row — quiet, no benchmark comparison or coloring.
+                    The 9-Category Analysis below does the qualitative read. */}
+                <tfoot>
+                  <tr className="bg-base-300/40 font-semibold">
+                    <td className="text-xs uppercase tracking-wider opacity-60">AVG</td>
+                    <td />
+                    <td />
+                    {AVG_CATEGORIES.map((cat) => (
+                      <td key={cat.key as string} className="tabular-nums">
+                        {formatAvg(rosterAverages[cat.key as string], cat)}
+                      </td>
+                    ))}
+                    {isLoggedIn && <td />}
+                  </tr>
+                </tfoot>
               </table>
             </div>
           )}
