@@ -5,6 +5,11 @@ import type { Player, RosterPlayer, TeamAnalysis } from '../types';
 import { getTeamLogoUrl } from '../utils/teamLogos';
 import { PreferencesPrompt } from '../components/PreferencesPrompt';
 import { Toast, type ToastVariant } from '../components/Toast';
+import {
+  getCachedAnalysis,
+  setCachedAnalysis,
+  invalidateAIClientCaches,
+} from '../api/clientCaches';
 
 const CAT_COLORS: Record<string, string> = {
   strong: 'badge-success',
@@ -21,7 +26,7 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<Player[]>([]);
   const [searching, setSearching] = useState(false);
-  const [analysis, setAnalysis] = useState<TeamAnalysis | null>(null);
+  const [analysis, setAnalysis] = useState<TeamAnalysis | null>(getCachedAnalysis);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [rosterLoading, setRosterLoading] = useState(true);
   const [toast, setToast] = useState<{ message: string; variant: ToastVariant } | null>(null);
@@ -42,6 +47,7 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
     try {
       const data = await getTeamAnalysis();
       setAnalysis(data);
+      setCachedAnalysis(data);
     } catch {
       setAnalysis(null);
     } finally {
@@ -50,6 +56,15 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
   }, []);
 
   useEffect(() => { if (isLoggedIn) loadRoster(); }, [isLoggedIn, loadRoster]);
+
+  // Auto-load analysis when the user has a roster but no fresh cached result.
+  // Avoids the awkward "click Refresh to see anything" empty state, and
+  // re-uses cache on tab-switch so navigation feels instant.
+  useEffect(() => {
+    if (!isLoggedIn || roster.length === 0) return;
+    if (analysis) return; // already showing cached result
+    loadAnalysis();
+  }, [isLoggedIn, roster.length, analysis, loadAnalysis]);
 
   useEffect(() => {
     if (!search.trim()) { setSearchResults([]); return; }
@@ -75,6 +90,7 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
       setSearchResults([]);
       await loadRoster();
       setAnalysis(null);
+      invalidateAIClientCaches(); // roster changed -> waiver suggestions stale too
       setToast({ message: `Added ${playerName} to your team`, variant: 'success' });
     } catch {
       setToast({ message: `Couldn't add ${playerName}`, variant: 'error' });
@@ -86,6 +102,7 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
       await dropFromRoster(playerId);
       await loadRoster();
       setAnalysis(null);
+      invalidateAIClientCaches();
       setToast({ message: `Dropped ${playerName} from your team`, variant: 'success' });
     } catch {
       setToast({ message: `Couldn't drop ${playerName}`, variant: 'error' });
