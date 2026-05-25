@@ -40,7 +40,7 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
     const prefs = await getUserPreferences(userId);
     const prefsBlock = buildPreferencesPromptBlock(prefs);
 
-    const systemPrompt = `You are an expert fantasy basketball assistant for 9-category leagues (PTS, REB, AST, STL, BLK, FG%, FT%, 3PM, TO). You help users analyze their roster and make strategic decisions.\n\n${context ? `Current context:\n\n${context}` : 'No roster context.'}${prefsBlock}\n\nProvide concise, actionable advice. Reference specific player stats. Be direct.`;
+    const systemPrompt = `You are an expert fantasy basketball assistant for 9-category leagues (PTS, REB, AST, STL, BLK, FG%, FT%, 3PM, TO). You help users analyze their roster and make strategic decisions.${prefsBlock}\n\n${context ? `Current context:\n\n${context}` : 'No roster context.'}\n\nProvide concise, actionable advice. Reference specific player stats. Be direct.`;
 
     const messages: Array<{ role: string; content: string }> = [];
     if (history && Array.isArray(history)) {
@@ -51,6 +51,7 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
     const reply = await callClaude(systemPrompt, messages, { model: 'claude-sonnet-4-6', maxTokens: 1024 });
     res.json({ reply });
   } catch (error) {
+    console.error('chat error:', error);
     res.status(500).json({ error: 'Failed to process chat' });
   }
 });
@@ -65,7 +66,6 @@ router.get('/team-analysis', async (req: Request, res: Response): Promise<void> 
     }
 
     const rosterHash = await getRosterHash(userId);
-    // Include prefs hash in the cache key — changing prefs should bust the cache.
     const prefs = await getUserPreferences(userId);
     const prefsBlock = buildPreferencesPromptBlock(prefs);
     const cacheKey = crypto.createHash('md5').update(rosterHash + '|' + prefsBlock).digest('hex');
@@ -79,7 +79,13 @@ router.get('/team-analysis', async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const systemPrompt = `You are an expert 9-category fantasy basketball analyst. Analyze the roster and return a JSON object:
+    // Prefs block lives BEFORE the JSON schema so the "Return ONLY valid JSON"
+    // instruction is the last thing the model reads.
+    const systemPrompt = `You are an expert 9-category fantasy basketball analyst.${prefsBlock}
+
+For context: in a competitive 10-team 9-cat league, typical per-player averages are roughly PTS: 15, REB: 5, AST: 3.5, STL: 1.0, BLK: 0.7, FG%: 46%, FT%: 78%, 3PM: 1.5, TO: 1.8.
+
+Analyze the roster against those benchmarks and return ONLY a JSON object with this exact shape (no prose, no markdown):
 {
   "categories": {
     "PTS": "strong" | "average" | "weak",
@@ -97,15 +103,29 @@ router.get('/team-analysis', async (req: Request, res: Response): Promise<void> 
   "suggestions": ["<actionable suggestion>", ...]
 }
 
-For context: in a competitive 10-team 9-cat league, typical per-player averages are roughly PTS: 15, REB: 5, AST: 3.5, STL: 1.0, BLK: 0.7, FG%: 46%, FT%: 78%, 3PM: 1.5, TO: 1.8.
-
-Rate each category relative to a competitive 9-cat league. Return ONLY valid JSON.${prefsBlock}`;
+You MUST include at least 2 entries in each of strengths, weaknesses, and suggestions. Rate every one of the 9 categories. Return ONLY valid JSON.`;
 
     const messages = [{ role: 'user', content: `Analyze this roster:\n\n${context}` }];
-    const reply = await callClaude(systemPrompt, messages);
+    const reply = await callClaude(systemPrompt, messages, { maxTokens: 2048 });
 
     try {
       const analysis = JSON.parse(extractJSON(reply));
+
+      // Guard against degenerate responses: an empty result is almost always a
+      // model hallucination, not a real "this roster has no strengths". Surface
+      // it to the user without poisoning the cache.
+      const empty =
+        Object.keys(analysis.categories ?? {}).length === 0 &&
+        (analysis.strengths ?? []).length === 0 &&
+        (analysis.weaknesses ?? []).length === 0 &&
+        (analysis.suggestions ?? []).length === 0;
+
+      if (empty) {
+        console.warn('team-analysis: model returned empty analysis, not caching. raw:', reply.slice(0, 300));
+        res.json({ ...analysis, _empty: true });
+        return;
+      }
+
       await query(
         `INSERT INTO analysis_cache (user_id, roster_hash, analysis, created_at)
          VALUES ($1, $2, $3, NOW())
@@ -116,10 +136,12 @@ Rate each category relative to a competitive 9-cat league. Return ONLY valid JSO
         [userId, cacheKey, JSON.stringify(analysis)]
       );
       res.json(analysis);
-    } catch {
+    } catch (parseErr) {
+      console.error('team-analysis: JSON parse failed. raw response (first 500 chars):', reply.slice(0, 500), 'error:', parseErr);
       res.json({ raw_analysis: reply, strengths: [], weaknesses: [], suggestions: [], categories: {} });
     }
   } catch (error) {
+    console.error('team-analysis error:', error);
     res.status(500).json({ error: 'Failed to analyze team' });
   }
 });
@@ -154,8 +176,9 @@ Rules:
 - Each player name must appear at most once across the entire response.
 - The "reasoning" field must be plain text only — no markdown, no rank numbers, no meta-commentary.
 - Do not include phrases like "Duplicate entry", "instead recommend", or any self-correction notes.
+- Provide exactly 5 trade targets and exactly 5 waiver pickups.
 
-Return a JSON object:
+Return ONLY a JSON object with this exact shape (no prose, no markdown):
 {
   "trade_targets": [
     { "name": "<player name>", "reasoning": "<plain text: which weak categories they address and why>" }
@@ -166,10 +189,10 @@ Return a JSON object:
   "summary": "<2-3 sentence plain text strategy focused on the team's biggest weaknesses>"
 }
 
-Provide exactly 5 trade targets and exactly 5 waiver pickups. Return ONLY valid JSON.`;
+Return ONLY valid JSON.`;
 
     const messages = [{ role: 'user', content: `Suggest improvements:\n\n${context}` }];
-    const reply = await callClaude(systemPrompt, messages);
+    const reply = await callClaude(systemPrompt, messages, { maxTokens: 2048 });
 
     try {
       const raw = JSON.parse(extractJSON(reply));
@@ -188,6 +211,14 @@ Provide exactly 5 trade targets and exactly 5 waiver pickups. Return ONLY valid 
         summary: raw.summary ?? '',
       };
 
+      // Don't cache an empty result — let a refresh re-prompt the model.
+      const empty = suggestions.trade_targets.length === 0 && suggestions.waiver_pickups.length === 0;
+      if (empty) {
+        console.warn('waiver-suggestions: model returned no picks, not caching. raw:', reply.slice(0, 300));
+        res.json({ ...suggestions, _empty: true });
+        return;
+      }
+
       await query(
         `INSERT INTO waiver_cache (user_id, roster_hash, suggestions, created_at)
          VALUES ($1, $2, $3, NOW())
@@ -198,10 +229,12 @@ Provide exactly 5 trade targets and exactly 5 waiver pickups. Return ONLY valid 
         [userId, cacheKey, JSON.stringify(suggestions)]
       );
       res.json(suggestions);
-    } catch {
+    } catch (parseErr) {
+      console.error('waiver-suggestions: JSON parse failed. raw response (first 500 chars):', reply.slice(0, 500), 'error:', parseErr);
       res.json({ raw: reply, trade_targets: [], waiver_pickups: [], summary: '' });
     }
   } catch (error) {
+    console.error('waiver-suggestions error:', error);
     res.status(500).json({ error: 'Failed to generate suggestions' });
   }
 });

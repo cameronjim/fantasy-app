@@ -28,7 +28,13 @@ export const PreferencesPrompt = () => {
           prefs.league_format ||
           prefs.roster_strategy ||
           prefs.trade_activity ||
+          prefs.schedule_weight ||
+          prefs.rookie_hunger ||
+          prefs.playoff_focus ||
+          prefs.bench_philosophy ||
           (prefs.punt_categories && prefs.punt_categories.length > 0) ||
+          (prefs.priority_categories && prefs.priority_categories.length > 0) ||
+          (prefs.position_needs && prefs.position_needs.length > 0) ||
           (prefs.extra_notes && prefs.extra_notes.length > 0)
         );
         setShouldShow(!hasAny);

@@ -68,8 +68,14 @@ export interface AIPreferences {
   opportunity_chase?: 'yes' | 'no';
   league_format?: 'h2h_categories' | 'h2h_points' | 'roto' | 'points';
   punt_categories?: string[];
+  priority_categories?: string[];
   roster_strategy?: 'stars_scrubs' | 'balanced' | 'streaming';
   trade_activity?: 'active' | 'occasional' | 'set_forget';
+  schedule_weight?: 'matters_a_lot' | 'somewhat' | 'ignore';
+  rookie_hunger?: 'love_them' | 'mixed' | 'avoid';
+  playoff_focus?: 'yes' | 'no';
+  bench_philosophy?: 'high_upside_stash' | 'safe_role_players' | 'streaming_slots';
+  position_needs?: string[];
   extra_notes?: string;
 }
 
