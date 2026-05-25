@@ -12,21 +12,24 @@ interface PlayerTableProps {
 
 type SortKey = keyof Player;
 
-const COLUMNS: { key: SortKey; label: string; format?: (v: number) => string }[] = [
-  { key: 'name', label: 'Player' },
-  { key: 'team', label: 'Team' },
-  { key: 'position', label: 'Pos' },
-  { key: 'points_per_game', label: 'PPG', format: (v) => Number(v).toFixed(1) },
-  { key: 'rebounds_per_game', label: 'RPG', format: (v) => Number(v).toFixed(1) },
-  { key: 'assists_per_game', label: 'APG', format: (v) => Number(v).toFixed(1) },
-  { key: 'steals_per_game', label: 'SPG', format: (v) => Number(v).toFixed(1) },
-  { key: 'blocks_per_game', label: 'BPG', format: (v) => Number(v).toFixed(1) },
-  { key: 'field_goal_percentage', label: 'FG%', format: (v) => Number(v).toFixed(1) },
-  { key: 'three_point_percentage', label: '3P%', format: (v) => Number(v).toFixed(1) },
-  { key: 'free_throw_percentage', label: 'FT%', format: (v) => Number(v).toFixed(1) },
-  { key: 'turnovers_per_game', label: 'TOV', format: (v) => Number(v).toFixed(1) },
-  { key: 'minutes_per_game', label: 'MIN', format: (v) => Number(v).toFixed(1) },
-  { key: 'games_played', label: 'GP' },
+// `minW` locks each column's minimum width so sorting (which brings new rows
+// into view) can't widen/narrow the column based on whichever names or
+// numbers happen to be at the top.
+const COLUMNS: { key: SortKey; label: string; format?: (v: number) => string; minW: string }[] = [
+  { key: 'name',                   label: 'Player', minW: 'min-w-[200px]' },
+  { key: 'team',                   label: 'Team',   minW: 'min-w-[80px]' },
+  { key: 'position',               label: 'Pos',    minW: 'min-w-[60px]' },
+  { key: 'points_per_game',        label: 'PPG',    minW: 'min-w-[60px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'rebounds_per_game',      label: 'RPG',    minW: 'min-w-[60px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'assists_per_game',       label: 'APG',    minW: 'min-w-[60px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'steals_per_game',        label: 'SPG',    minW: 'min-w-[60px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'blocks_per_game',        label: 'BPG',    minW: 'min-w-[60px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'field_goal_percentage',  label: 'FG%',    minW: 'min-w-[60px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'three_point_percentage', label: '3P%',    minW: 'min-w-[60px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'free_throw_percentage',  label: 'FT%',    minW: 'min-w-[60px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'turnovers_per_game',     label: 'TOV',    minW: 'min-w-[60px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'minutes_per_game',       label: 'MIN',    minW: 'min-w-[60px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'games_played',           label: 'GP',     minW: 'min-w-[50px]' },
 ];
 
 // How many rows to render initially, and how many more to add each time
@@ -122,12 +125,10 @@ export const PlayerTable = ({ players, onSelect, selectedForCompare = [], onTogg
                 <th
                   key={col.key}
                   onClick={() => handleSort(col.key)}
-                  className="cursor-pointer select-none whitespace-nowrap"
+                  className={`cursor-pointer select-none whitespace-nowrap ${col.minW}`}
                 >
                   <span className="inline-flex items-center gap-1">
                     {col.label}
-                    {/* Always render a chevron — `invisible` hides it but keeps
-                        the layout space so column widths never change on sort. */}
                     {sortKey === col.key
                       ? (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)
                       : <ChevronUp size={12} className="invisible" />}
@@ -159,7 +160,10 @@ export const PlayerTable = ({ players, onSelect, selectedForCompare = [], onTogg
                     </td>
                   )}
                   {COLUMNS.map((col) => (
-                    <td key={col.key} className="whitespace-nowrap">
+                    <td
+                      key={col.key}
+                      className={`whitespace-nowrap ${col.format ? 'tabular-nums' : ''}`}
+                    >
                       {col.key === 'name' ? (
                         <span className="flex items-center gap-2">
                           <div className="avatar">
