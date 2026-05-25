@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { query } from '../db.js';
+import { getCurrentBenchmarks } from '../services/benchmarks.js';
 
 const router = Router();
 
@@ -18,6 +19,20 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
     res.json(result.rows[0]);
   } catch {
     res.status(500).json({ error: 'Failed to load status' });
+  }
+});
+
+/**
+ * Live league benchmarks computed from the current player pool. Powers the
+ * AI's "strong/average/weak" thresholds; also handy for the UI if we ever
+ * want to surface the league average alongside the user's team averages.
+ */
+router.get('/benchmarks', async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const benchmarks = await getCurrentBenchmarks();
+    res.json(benchmarks);
+  } catch {
+    res.status(500).json({ error: 'Failed to load benchmarks' });
   }
 });
 
