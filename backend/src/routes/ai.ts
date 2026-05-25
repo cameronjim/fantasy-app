@@ -173,6 +173,18 @@ You MUST include at least 2 entries in each of strengths, weaknesses, and sugges
 router.get('/waiver-suggestions', async (req: Request, res: Response): Promise<void> => {
   const userId = (req as AuthRequest).userId;
   try {
+    // Short-circuit empty rosters before doing any work. Saves an AI call,
+    // a DB roundtrip, and a long spinner on first visit before the user
+    // has added any players.
+    const rosterCount = await query(
+      'SELECT COUNT(*)::int AS n FROM my_roster WHERE user_id = $1',
+      [userId]
+    );
+    if (rosterCount.rows[0].n === 0) {
+      res.json({ trade_targets: [], waiver_pickups: [], summary: '', empty_roster: true });
+      return;
+    }
+
     const forceRefresh = req.query.refresh === 'true';
     const rosterHash = await getRosterHash(userId);
     const prefs = await getUserPreferences(userId);

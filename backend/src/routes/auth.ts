@@ -162,13 +162,20 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
     // Branch 1: already linked to this google_id?
     let result = await query('SELECT id FROM users WHERE google_id = $1', [googleId]);
 
-    // Branch 2: existing user by email — attach the google_id.
+    // Branch 2: existing user by email — attach the google_id, unless that
+    // user already has a *different* google_id linked (rare edge case but
+    // we don't want to silently overwrite a real link).
     if (result.rows.length === 0) {
       const byEmail = await query(
-        'SELECT id FROM users WHERE LOWER(email) = $1',
+        'SELECT id, google_id FROM users WHERE LOWER(email) = $1',
         [email]
       );
       if (byEmail.rows.length > 0) {
+        const existingGoogleId = byEmail.rows[0].google_id;
+        if (existingGoogleId && existingGoogleId !== googleId) {
+          res.status(409).json({ error: 'This email is already linked to a different Google account.' });
+          return;
+        }
         await query(
           'UPDATE users SET google_id = $1 WHERE id = $2',
           [googleId, byEmail.rows[0].id]
