@@ -26,6 +26,7 @@ export const PreferencesPrompt = () => {
           prefs.player_age_pref ||
           prefs.opportunity_chase ||
           prefs.league_format ||
+          prefs.league_size ||
           prefs.roster_strategy ||
           prefs.trade_activity ||
           prefs.schedule_weight ||

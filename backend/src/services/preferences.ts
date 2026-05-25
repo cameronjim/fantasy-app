@@ -14,6 +14,7 @@ export interface AIPreferences {
   player_age_pref?: 'veterans' | 'balanced' | 'young_upside';
   opportunity_chase?: 'yes' | 'no';
   league_format?: 'h2h_categories' | 'h2h_points' | 'roto' | 'points';
+  league_size?: number; // typical: 8, 10, 12, 14 — bounded server-side
   punt_categories?: string[]; // subset of ['PTS','REB','AST','STL','BLK','FG%','FT%','3PM','TO']
   priority_categories?: string[]; // same valid set as punt_categories
   roster_strategy?: 'stars_scrubs' | 'balanced' | 'streaming';
@@ -51,6 +52,9 @@ export async function setUserPreferences(userId: number, prefs: AIPreferences): 
   }
   if (['h2h_categories', 'h2h_points', 'roto', 'points'].includes(prefs.league_format ?? '')) {
     cleaned.league_format = prefs.league_format;
+  }
+  if (typeof prefs.league_size === 'number' && prefs.league_size >= 4 && prefs.league_size <= 20) {
+    cleaned.league_size = Math.round(prefs.league_size);
   }
   if (Array.isArray(prefs.punt_categories)) {
     cleaned.punt_categories = prefs.punt_categories.filter((c) => VALID_CATEGORIES.includes(c));
@@ -131,6 +135,13 @@ export function buildPreferencesPromptBlock(prefs: AIPreferences): string {
       points: 'season-long points league',
     };
     lines.push(`- League format: ${formatMap[prefs.league_format]}. Tailor advice for this format.`);
+  }
+
+  if (typeof prefs.league_size === 'number') {
+    // Estimate rostered-player count so the AI knows the realistic waiver pool.
+    // 13-deep roster is the most common 9-cat default.
+    const rostered = prefs.league_size * 13;
+    lines.push(`- League has ${prefs.league_size} teams (~${rostered} players rostered). Calibrate waiver/trade recommendations to that pool size — in a deeper league, fewer impact players are available on waivers, so suggestions should skew toward realistic streamers and lower-owned breakouts. In a shallower league, more star-adjacent players will be available.`);
   }
 
   if (prefs.punt_categories && prefs.punt_categories.length > 0) {
