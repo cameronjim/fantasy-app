@@ -322,4 +322,131 @@ describe('PATCH /api/auth/profile', () => {
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/already/i);
   });
+
+  it('rejects a username shorter than 3 characters', async () => {
+    // act
+    const res = await request(app)
+      .patch('/api/auth/profile')
+      .set('Authorization', bearerFor(1))
+      .send({ username: 'al' });
+
+    // assert
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/3 characters/i);
+  });
+
+  it('updates the username when valid and unique', async () => {
+    // arrange
+    queryMock.mockResolvedValueOnce(
+      pgResult([{ id: 7, username: 'alice2', email: 'a@b.co', name: null, phone: null }])
+    );
+
+    // act
+    const res = await request(app)
+      .patch('/api/auth/profile')
+      .set('Authorization', bearerFor(7))
+      .send({ username: 'alice2' });
+
+    // assert
+    expect(res.status).toBe(200);
+    expect(res.body.username).toBe('alice2');
+    const [, params] = queryMock.mock.calls[0];
+    expect(params).toEqual(['alice2', 7]);
+  });
+
+  it('returns 409 with a username-specific message on username collision', async () => {
+    // arrange — pg's detail typically reads "Key (username)=(taken) already exists"
+    queryMock.mockRejectedValueOnce(pgUniqueViolation('Key (username)=(taken) already exists'));
+
+    // act
+    const res = await request(app)
+      .patch('/api/auth/profile')
+      .set('Authorization', bearerFor(1))
+      .send({ username: 'taken' });
+
+    // assert
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/username/i);
+  });
+});
+
+describe('PATCH /api/auth/change-password', () => {
+  it('returns 400 when newPassword is missing', async () => {
+    // act
+    const res = await request(app)
+      .patch('/api/auth/change-password')
+      .set('Authorization', bearerFor(1))
+      .send({ currentPassword: 'Whatever1!' });
+
+    // assert
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/new password/i);
+  });
+
+  it('requires currentPassword when the user has an existing password', async () => {
+    // arrange — user row has a real bcrypt hash, so the route must demand
+    // currentPassword before allowing the change.
+    const existingHash = await bcrypt.hash('Original1!', 10);
+    queryMock.mockResolvedValueOnce(pgResult([{ password_hash: existingHash }]));
+
+    // act
+    const res = await request(app)
+      .patch('/api/auth/change-password')
+      .set('Authorization', bearerFor(1))
+      .send({ newPassword: 'Brandnew1!' });
+
+    // assert
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/current password/i);
+  });
+
+  it('rejects an incorrect currentPassword with 401', async () => {
+    // arrange
+    const existingHash = await bcrypt.hash('Original1!', 10);
+    queryMock.mockResolvedValueOnce(pgResult([{ password_hash: existingHash }]));
+
+    // act
+    const res = await request(app)
+      .patch('/api/auth/change-password')
+      .set('Authorization', bearerFor(1))
+      .send({ currentPassword: 'Wrong1!aa', newPassword: 'Brandnew1!' });
+
+    // assert
+    expect(res.status).toBe(401);
+    expect(res.body.error).toMatch(/incorrect/i);
+  });
+
+  it('lets google-only users set a password without providing currentPassword', async () => {
+    // arrange — user row has password_hash = null (google-only account).
+    queryMock.mockResolvedValueOnce(pgResult([{ password_hash: null }]));
+    // the second query is the UPDATE; we don't care about its return shape here.
+    queryMock.mockResolvedValueOnce(pgResult([{ id: 1 }]));
+
+    // act
+    const res = await request(app)
+      .patch('/api/auth/change-password')
+      .set('Authorization', bearerFor(1))
+      .send({ newPassword: 'Brandnew1!' });
+
+    // assert
+    expect(res.status).toBe(200);
+    expect(res.body.message).toMatch(/updated/i);
+  });
+
+  it('changes the password for a normal user with the correct currentPassword', async () => {
+    // arrange
+    const existingHash = await bcrypt.hash('Original1!', 10);
+    queryMock.mockResolvedValueOnce(pgResult([{ password_hash: existingHash }]));
+    queryMock.mockResolvedValueOnce(pgResult([{ id: 1 }]));
+
+    // act
+    const res = await request(app)
+      .patch('/api/auth/change-password')
+      .set('Authorization', bearerFor(1))
+      .send({ currentPassword: 'Original1!', newPassword: 'Brandnew1!' });
+
+    // assert
+    expect(res.status).toBe(200);
+    expect(res.body.message).toMatch(/updated/i);
+  });
 });

@@ -67,6 +67,7 @@ export const ProfilePage = () => {
 
 const MyProfilePanel = () => {
   const [user, setUser] = useState<CurrentUser | null>(null);
+  const [username, setUsername] = useState('');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -79,6 +80,7 @@ const MyProfilePanel = () => {
     getCurrentUser()
       .then((u) => {
         setUser(u);
+        setUsername(u.username);
         setName(u.name ?? '');
         setEmail(u.email ?? '');
         setPhone(u.phone ?? '');
@@ -89,7 +91,8 @@ const MyProfilePanel = () => {
 
   const dirty =
     !!user &&
-    (name !== (user.name ?? '') ||
+    (username !== user.username ||
+      name !== (user.name ?? '') ||
       email !== (user.email ?? '') ||
       phone !== (user.phone ?? ''));
 
@@ -100,11 +103,14 @@ const MyProfilePanel = () => {
     setError('');
     try {
       const updated = await updateProfile({
+        username: username === user.username ? undefined : username,
         name: name === (user.name ?? '') ? undefined : name,
         email: email === (user.email ?? '') ? undefined : email,
         phone: phone === (user.phone ?? '') ? undefined : phone,
       });
-      setUser(updated);
+      // updateProfile doesn't return has_password (it's not on the PATCH
+      // response), so merge to keep the existing flag.
+      setUser({ ...user, ...updated });
       setSavedAt(Date.now());
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
@@ -126,7 +132,7 @@ const MyProfilePanel = () => {
     <>
       <h2 className="card-title text-lg mb-1">My Profile</h2>
       <p className="text-sm opacity-50 mb-4">
-        These fields are for your records. Email is used for password resets.
+        Email is used for password resets. Username is what you sign in with.
       </p>
 
       <form onSubmit={handleSave} className="space-y-4 max-w-md">
@@ -134,11 +140,14 @@ const MyProfilePanel = () => {
           <label className="text-xs font-medium opacity-60 mb-1 block">Username</label>
           <input
             type="text"
-            value={user?.username ?? ''}
-            readOnly
-            className="input input-bordered w-full opacity-70 cursor-not-allowed"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            className="input input-bordered w-full"
+            minLength={3}
+            maxLength={50}
+            autoComplete="username"
           />
-          <p className="text-xs opacity-40 mt-1">Usernames can't be changed.</p>
+          <p className="text-xs opacity-40 mt-1">3–50 characters. Must be unique.</p>
         </div>
 
         <div>
@@ -196,12 +205,23 @@ const MyProfilePanel = () => {
 };
 
 const ChangePasswordPanel = () => {
+  // has_password decides whether this is "change password" (requires current
+  // password) or "set password" (first-time setup for google-only users).
+  // null while still loading the user profile.
+  const [hasPassword, setHasPassword] = useState<boolean | null>(null);
+  const [profileLoadError, setProfileLoadError] = useState('');
   const [currentPw, setCurrentPw] = useState('');
   const [newPw, setNewPw] = useState('');
   const [confirmNewPw, setConfirmNewPw] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    getCurrentUser()
+      .then((u) => setHasPassword(u.has_password))
+      .catch(() => setProfileLoadError('Failed to load account info'));
+  }, []);
 
   const pwValidationError = newPw ? validatePassword(newPw) : null;
 
@@ -219,11 +239,16 @@ const ChangePasswordPanel = () => {
     }
     setLoading(true);
     try {
-      await changePassword(currentPw, newPw);
+      // google-only users (no existing password) skip the current-password
+      // step; the backend allows it for that case.
+      await changePassword(hasPassword ? currentPw : null, newPw);
       setSuccess(true);
       setCurrentPw('');
       setNewPw('');
       setConfirmNewPw('');
+      // after setting an initial password, the user now HAS a password —
+      // flip the flag so a second "change" requires the current one.
+      setHasPassword(true);
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
       setError(msg ?? 'Failed to update password');
@@ -231,6 +256,17 @@ const ChangePasswordPanel = () => {
       setLoading(false);
     }
   };
+
+  if (profileLoadError) {
+    return <p className="text-error text-sm">{profileLoadError}</p>;
+  }
+  if (hasPassword === null) {
+    return (
+      <div className="flex justify-center py-12">
+        <span className="loading loading-spinner loading-md" />
+      </div>
+    );
+  }
 
   if (success) {
     return (
@@ -240,33 +276,51 @@ const ChangePasswordPanel = () => {
             <CheckCircle2 size={28} />
           </div>
         </div>
-        <h2 className="card-title justify-center text-xl mb-2">Password updated</h2>
+        <h2 className="card-title justify-center text-xl mb-2">Password saved</h2>
         <p className="text-sm opacity-60 mb-4">
-          Your password has been changed successfully.
+          Your password has been saved successfully.
         </p>
         <button onClick={() => setSuccess(false)} className="btn btn-ghost btn-sm">
-          Change another password
+          Change password again
         </button>
       </div>
     );
   }
 
+  const heading = hasPassword ? 'Change Password' : 'Set Password';
+  const intro = hasPassword
+    ? 'Update the password on your account.'
+    : 'You signed in with Google and don\'t have a local password yet. Set one here so you can also sign in with your username.';
+  const submitLabel = hasPassword ? 'Update password' : 'Set password';
+
+  // empty current-password check only applies when the user has a password.
+  // for google-only users with no password, currentPw is unused and we don't
+  // gate the submit button on it.
+  const submitDisabled =
+    loading ||
+    !newPw ||
+    !confirmNewPw ||
+    !!pwValidationError ||
+    (hasPassword && !currentPw);
+
   return (
     <>
-      <h2 className="card-title text-lg mb-1">Change Password</h2>
-      <p className="text-sm opacity-50 mb-4">Update the password on your account.</p>
+      <h2 className="card-title text-lg mb-1">{heading}</h2>
+      <p className="text-sm opacity-50 mb-4">{intro}</p>
 
       <form onSubmit={handleSubmit} className="space-y-3 max-w-md">
-        <div>
-          <label className="text-xs font-medium opacity-60 mb-1 block">Current password</label>
-          <input
-            type="password"
-            value={currentPw}
-            onChange={(e) => setCurrentPw(e.target.value)}
-            className={`input input-bordered w-full ${error === 'Current password is incorrect' ? 'input-error' : ''}`}
-            autoComplete="current-password"
-          />
-        </div>
+        {hasPassword && (
+          <div>
+            <label className="text-xs font-medium opacity-60 mb-1 block">Current password</label>
+            <input
+              type="password"
+              value={currentPw}
+              onChange={(e) => setCurrentPw(e.target.value)}
+              className={`input input-bordered w-full ${error === 'Current password is incorrect' ? 'input-error' : ''}`}
+              autoComplete="current-password"
+            />
+          </div>
+        )}
 
         <div>
           <label className="text-xs font-medium opacity-60 mb-1 block">New password</label>
@@ -305,14 +359,8 @@ const ChangePasswordPanel = () => {
 
         {error && <p className="text-error text-sm">{error}</p>}
 
-        <button
-          type="submit"
-          disabled={
-            loading || !currentPw || !newPw || !confirmNewPw || !!pwValidationError
-          }
-          className="btn btn-primary"
-        >
-          {loading ? <span className="loading loading-spinner loading-sm" /> : 'Update password'}
+        <button type="submit" disabled={submitDisabled} className="btn btn-primary">
+          {loading ? <span className="loading loading-spinner loading-sm" /> : submitLabel}
         </button>
       </form>
     </>
