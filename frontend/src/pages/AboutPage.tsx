@@ -1,8 +1,8 @@
-import { Github, ExternalLink, ShieldCheck, GitBranch, Database, Cloud, Code2, TestTube2 } from 'lucide-react';
+import { Github, ShieldCheck, GitBranch, Database, Cloud, Code2, TestTube2 } from 'lucide-react';
 
 // public landing page describing what this project is and how it's built.
-// targeted at hiring managers / reviewers — keeps the high-level story and
-// links to the code rather than restating implementation detail.
+// targeted at hiring managers and reviewers, so it keeps the high-level
+// story and contact info rather than restating implementation detail.
 //
 // content rule: any tech mentioned here must actually be in use in the
 // repo. nothing aspirational. if a section becomes inaccurate, fix the
@@ -25,34 +25,15 @@ const Hero = () => (
   <section>
     <p className="text-xs uppercase tracking-widest opacity-50 mb-2">About this project</p>
     <h1 className="text-3xl md:text-4xl font-bold mb-3">
-      Fantasy NBA — full-stack with AI assist
+      Fantasy NBA, a full-stack app with AI assist
     </h1>
     <p className="text-base opacity-70 leading-relaxed max-w-2xl">
-      A personal full-stack basketball app combining real NBA stats, a personal
-      fantasy roster, and Claude-powered analysis. Built end-to-end by{' '}
-      <a
-        href="https://github.com/cameronjim"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-primary underline-offset-2 hover:underline"
-      >
-        Cameron Jim
-      </a>{' '}
-      as a portfolio piece — production-deployed with real CI/CD, automated
-      tests, and live data scraping.
+      This is a personal full-stack basketball app that combines real NBA
+      stats, a personal fantasy roster, and Claude-powered analysis. I built
+      it end to end as a portfolio piece. It runs in production with real
+      CI/CD, automated tests across every layer, and a live data scraper
+      that updates the stats on a six-hour schedule.
     </p>
-    <div className="flex flex-wrap gap-2 mt-5">
-      <a
-        href="https://github.com/cameronjim/fantasy-app"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="btn btn-sm btn-primary gap-2"
-      >
-        <Github size={14} />
-        View source on GitHub
-        <ExternalLink size={12} />
-      </a>
-    </div>
   </section>
 );
 
@@ -63,9 +44,9 @@ const TechStack = () => (
       <StackCard
         title="Frontend"
         items={[
-          'React 18 + TypeScript (strict)',
+          'React 18 with TypeScript in strict mode',
           'Vite 6 build tooling',
-          'Tailwind 4 + DaisyUI 5 components',
+          'Tailwind 4 and DaisyUI 5 components',
           'React Router 7 for client-side routing',
           'Axios for the typed API client',
           '@react-oauth/google for Google Sign-In',
@@ -74,31 +55,31 @@ const TechStack = () => (
       <StackCard
         title="Backend"
         items={[
-          'Node.js 22 + Express 4',
-          'TypeScript ESM (NodeNext resolution)',
+          'Node.js 22 with Express 4',
+          'TypeScript ESM using NodeNext resolution',
           'PostgreSQL via the pg driver',
           'JWT auth with bcryptjs password hashing',
-          '@anthropic-ai/sdk (Claude) for AI features',
-          'AWS SDK v3 for SES (password-reset email)',
+          '@anthropic-ai/sdk (Claude) for the AI features',
+          'AWS SDK v3 for SES password-reset email',
         ]}
       />
       <StackCard
         title="Infrastructure"
         items={[
-          'AWS Lambda + HTTP API Gateway (backend)',
-          'S3 + CloudFront (frontend static hosting)',
+          'AWS Lambda and HTTP API Gateway for the backend',
+          'S3 and CloudFront for the frontend static hosting',
           'Neon serverless Postgres with dev branching',
           'AWS SES for transactional email',
           'CloudFormation via Serverless Framework v3',
-          'OIDC trust between GitHub Actions and AWS — no long-lived keys',
+          'OIDC trust between GitHub Actions and AWS, so no long-lived access keys live in the repo',
         ]}
       />
       <StackCard
         title="Data pipeline"
         items={[
-          'Python + Scrapy + nba_api',
+          'Python with Scrapy and the nba_api library',
           'Beautiful Soup for CBS Sports injury parsing',
-          'Scheduled scrape every 6 hours via GitHub Actions cron',
+          'A scheduled scrape every six hours via GitHub Actions cron',
           'Upserts directly into Postgres via psycopg2',
         ]}
       />
@@ -112,45 +93,50 @@ const Architecture = () => (
     <div className="card bg-base-200">
       <div className="card-body prose prose-sm max-w-none">
         <p className="opacity-80">
-          The app is a thin layer over a stats database. The frontend is a
-          single-page React app that talks to a Lambda-hosted Express API. The
-          Lambda reads from Postgres for player/team/game data and from the
-          Anthropic Claude API for analysis surfaces. The Python scraper runs
-          on a cron and writes fresh stats into Postgres independently of the
-          web app.
+          The app sits on top of a Postgres stats database. The frontend is a
+          single-page React app that calls a Lambda-hosted Express API, which
+          reads from Postgres for player, team, and game data, and from the
+          Anthropic Claude API for the analysis surfaces. A separate Python
+          scraper runs on its own cron, writing fresh stats into Postgres
+          independently of the web app, so the API never has to wait on data
+          collection.
         </p>
         <h3 className="text-base font-semibold mt-4 mb-2">Separation of concerns</h3>
         <ul className="space-y-1 text-sm opacity-80">
           <li>
-            <strong>Components</strong> render UI. Loading, empty, error, and
-            success states are mandatory for every flow.
+            <strong>Components</strong> render UI. Every flow has explicit
+            loading, empty, error, and success states.
           </li>
           <li>
-            <strong>Hooks</strong> coordinate state and side effects (e.g. theme,
-            client-side AI response caching).
+            <strong>Hooks</strong> coordinate state and side effects, such as
+            theme toggling and client-side AI response caching.
           </li>
           <li>
-            <strong>API client</strong> is the only place that talks HTTP. No
-            component fetches directly.
+            <strong>The API client</strong> is the only place that talks HTTP.
+            No component fetches directly.
           </li>
           <li>
-            <strong>Route handlers</strong> validate input and return JSON; the
-            <code className="text-xs"> requireAuth</code> middleware binds the JWT's user id
-            so query parameters are never client-supplied.
+            <strong>Route handlers</strong> validate input and return JSON,
+            and the <code className="text-xs">requireAuth</code> middleware
+            binds the JWT's user id so query parameters are never
+            client-supplied.
           </li>
           <li>
-            <strong>Services</strong> own business logic (fantasy scoring,
-            Anthropic calls, SES). Database access funnels through a single
-            parameterized <code className="text-xs">query()</code> helper.
+            <strong>Services</strong> own business logic such as fantasy
+            scoring, Anthropic calls, and SES sends. All database access
+            funnels through a single parameterized{' '}
+            <code className="text-xs">query()</code> helper.
           </li>
         </ul>
         <h3 className="text-base font-semibold mt-4 mb-2">Fantasy scoring engine</h3>
         <p className="opacity-80">
-          The scoring service supports every major industry format —
-          NBA.com's <code className="text-xs">NBA_FANTASY_PTS</code>, FanDuel,
-          DraftKings (with DD/TD bonuses), ESPN H2H Points, Yahoo High Score —
-          plus a z-score variant for 9-category leagues. Formats are selectable
-          per-user via the existing preferences system. Default is NBA standard.
+          The scoring service supports every major industry format,
+          including NBA.com's <code className="text-xs">NBA_FANTASY_PTS</code>,
+          FanDuel, DraftKings (with double-double and triple-double bonuses),
+          ESPN H2H Points, and Yahoo High Score. It also includes a z-score
+          variant for nine-category leagues. Formats are selectable per user
+          via the existing preferences system, and the default is NBA
+          standard.
         </p>
       </div>
     </div>
@@ -164,34 +150,34 @@ const Engineering = () => (
       <StackCard
         title="Code quality"
         items={[
-          'Strict TypeScript across frontend and backend',
-          'Single AGENTS.md style guide with role-specific sections',
-          'No `any`, no `@ts-ignore`, lowercase comments that explain why',
-          'Parameterized SQL only — never string-interpolate user input',
-          'Centralized brand color tokens (no hardcoded hex in components)',
+          'Strict TypeScript across both frontend and backend',
+          'A single AGENTS.md style guide with role-specific sections',
+          'No `any`, no `@ts-ignore`, and lowercase comments that explain why rather than what',
+          'Parameterized SQL only; user input never gets string-interpolated into a query',
+          'Centralized brand color tokens so no component hardcodes a hex value',
         ]}
       />
       <StackCard
         icon={TestTube2}
         title="Testing"
         items={[
-          'Unit tests (Vitest) for pure logic — scoring, validation',
-          'API tests (Vitest + Supertest) for every route, with mocked db',
-          'E2E tests (Playwright) using the Page Object Model',
-          'Mocked AWS, mocked Anthropic — no live calls in CI',
-          'AAA-structured tests with behavior-focused names',
+          'Vitest unit tests for pure logic like scoring and validation',
+          'Vitest with Supertest API tests for every route, against a mocked database',
+          'Playwright E2E tests using the Page Object Model',
+          'AWS and Anthropic are mocked in CI so no live calls are ever made',
+          'Tests follow AAA structure with behavior-focused names',
         ]}
       />
       <StackCard
         icon={ShieldCheck}
         title="Security"
         items={[
-          'bcrypt for password hashing (cost factor 10)',
-          'JWTs verified server-side; user-scoped queries bind the JWT id',
-          'Google Sign-In with token verification against Google',
-          'Password-reset tokens stored as SHA-256 hashes, single-use',
-          'Forgot-password returns the same response for known/unknown emails (no enumeration)',
-          'CORS allow-list driven by env var per environment',
+          'bcrypt for password hashing at a cost factor of 10',
+          'JWTs verified server-side, with every user-scoped query bound to the JWT id',
+          'Google Sign-In with full token verification against Google',
+          'Password-reset tokens stored as SHA-256 hashes and consumed exactly once',
+          'Forgot-password always returns the same response for known and unknown emails to prevent enumeration',
+          'CORS allow-list is driven by an environment variable, per environment',
         ]}
       />
     </div>
@@ -210,15 +196,16 @@ const Pipeline = () => (
               On every pull request
             </h3>
             <ol className="space-y-1.5 text-sm opacity-80 list-decimal list-inside">
-              <li>Backend typecheck + unit + API tests</li>
-              <li>Frontend typecheck + unit tests + production build</li>
-              <li>Playwright E2E suite (Chromium, cached browser binaries)</li>
+              <li>Backend typecheck and unit and API tests run</li>
+              <li>Frontend typecheck, unit tests, and a production build run</li>
+              <li>The full Playwright E2E suite runs on Chromium with cached browser binaries</li>
               <li>
-                If green → deploys backend to <code className="text-xs">--stage dev</code>{' '}
-                Lambda, syncs the frontend bundle to a dev S3 bucket, invalidates
-                the dev CloudFront distribution
+                If everything is green, the backend deploys to{' '}
+                <code className="text-xs">--stage dev</code> on Lambda, the
+                frontend bundle syncs to a dev S3 bucket, and the dev
+                CloudFront distribution is invalidated.
               </li>
-              <li>Preview is live at a fixed dev URL within ~3 minutes</li>
+              <li>The preview is live at a fixed dev URL within about three minutes.</li>
             </ol>
           </div>
           <div>
@@ -228,17 +215,28 @@ const Pipeline = () => (
             </h3>
             <ol className="space-y-1.5 text-sm opacity-80 list-decimal list-inside">
               <li>CI re-runs on the merge commit</li>
-              <li>Prod deploy fires: <code className="text-xs">serverless deploy --stage prod</code></li>
-              <li>Frontend S3 sync with content-hashed asset caching + index.html invalidation</li>
-              <li>Smoke test: <code className="text-xs">curl /api/health</code> + frontend root</li>
-              <li>Branch protection requires all checks green before merge</li>
+              <li>
+                Production deploy fires:{' '}
+                <code className="text-xs">serverless deploy --stage prod</code>
+              </li>
+              <li>
+                Frontend syncs to the prod S3 bucket with content-hashed asset
+                caching and index.html invalidation
+              </li>
+              <li>
+                A smoke test runs against{' '}
+                <code className="text-xs">/api/health</code> and the frontend
+                root URL
+              </li>
+              <li>Branch protection blocks the merge button until all checks are green</li>
             </ol>
           </div>
         </div>
         <p className="text-xs opacity-50 mt-5">
-          Database migrations stay manual on purpose — every schema change runs
-          through Neon's SQL editor with eyes on. Lambda versioning provides
-          sub-minute rollback for code regressions.
+          Database migrations are kept manual on purpose. Every schema change
+          runs through Neon's SQL editor with human review, while Lambda's
+          built-in versioning provides sub-minute rollback for any code
+          regression.
         </p>
       </div>
     </div>
@@ -248,7 +246,8 @@ const Pipeline = () => (
 const Footer = () => (
   <section className="border-t border-base-300 pt-6">
     <p className="text-sm opacity-60">
-      Want to talk about this project, the engineering decisions, or hiring? I'd love to.
+      If you'd like to talk about this project, the engineering decisions
+      behind it, or potential opportunities, I'd love to hear from you.
     </p>
     <div className="flex flex-wrap gap-3 mt-3">
       <a
@@ -260,7 +259,7 @@ const Footer = () => (
         <Github size={14} /> GitHub
       </a>
       <a
-        href="mailto:cameroncjim@gmail.com"
+        href="mailto:cjim02@student.ubc.ca"
         className="btn btn-sm btn-ghost gap-2"
       >
         Email
