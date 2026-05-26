@@ -46,8 +46,18 @@ export async function googleSignInWithToken(accessToken: string): Promise<void> 
   setAuthToken(data.token);
 }
 
-export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
-  await api.patch('/auth/change-password', { currentPassword, newPassword });
+/**
+ * Change or set the user's password. `currentPassword` is required when the
+ * user already has a password; pass `null` (or omit) when setting an initial
+ * password for a google-only account.
+ */
+export async function changePassword(
+  currentPassword: string | null,
+  newPassword: string
+): Promise<void> {
+  const body: { newPassword: string; currentPassword?: string } = { newPassword };
+  if (currentPassword) body.currentPassword = currentPassword;
+  await api.patch('/auth/change-password', body);
 }
 
 export async function forgotPassword(email: string): Promise<{ message: string }> {
@@ -59,18 +69,32 @@ export async function resetPassword(token: string, newPassword: string): Promise
   await api.post('/auth/reset-password', { token, newPassword });
 }
 
-export async function setEmail(email: string): Promise<void> {
-  await api.patch('/auth/set-email', { email });
-}
-
 export interface CurrentUser {
   id: number;
   username: string;
   email: string | null;
+  name: string | null;
+  phone: string | null;
+  // false for google-only users who haven't set a local password yet —
+  // the change-password form drops the "current password" field for them.
+  has_password: boolean;
 }
 
 export async function getCurrentUser(): Promise<CurrentUser> {
   const { data } = await api.get('/auth/me');
+  return data;
+}
+
+export interface ProfileUpdate {
+  username?: string;
+  name?: string;
+  email?: string;
+  phone?: string;
+}
+
+/** patch only the fields the caller provides; omitted fields stay unchanged. */
+export async function updateProfile(updates: ProfileUpdate): Promise<CurrentUser> {
+  const { data } = await api.patch('/auth/profile', updates);
   return data;
 }
 
