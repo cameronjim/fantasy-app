@@ -215,6 +215,8 @@ describe('PATCH /api/auth/profile', () => {
   });
 
   it('returns 400 when no fields are sent', async () => {
+    // arrange — no setup; the route inspects the body only.
+
     // act
     const res = await request(app)
       .patch('/api/auth/profile')
@@ -226,7 +228,24 @@ describe('PATCH /api/auth/profile', () => {
     expect(res.body.error).toMatch(/no fields/i);
   });
 
+  it('rejects an explicit null field (regression: previously crashed with null.trim())', async () => {
+    // arrange — explicit null is `!== undefined`, so without the type guard
+    // the username branch would call `null.trim()` and throw 500.
+
+    // act
+    const res = await request(app)
+      .patch('/api/auth/profile')
+      .set('Authorization', bearerFor(1))
+      .send({ username: null });
+
+    // assert
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/string/i);
+  });
+
   it('returns 400 when the email is malformed', async () => {
+    // arrange — body-only validation, no db setup.
+
     // act
     const res = await request(app)
       .patch('/api/auth/profile')
@@ -239,6 +258,8 @@ describe('PATCH /api/auth/profile', () => {
   });
 
   it('returns 400 when the phone has invalid characters', async () => {
+    // arrange — body-only validation, no db setup.
+
     // act
     const res = await request(app)
       .patch('/api/auth/profile')
@@ -251,6 +272,8 @@ describe('PATCH /api/auth/profile', () => {
   });
 
   it('returns 400 when the name exceeds 100 characters', async () => {
+    // arrange — body-only validation, no db setup.
+
     // act
     const res = await request(app)
       .patch('/api/auth/profile')

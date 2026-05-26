@@ -96,6 +96,19 @@ const MyProfilePanel = () => {
       email !== (user.email ?? '') ||
       phone !== (user.phone ?? ''));
 
+  // hide the "saved" indicator once the user starts editing again, and
+  // auto-clear it after a few seconds even if they don't. without this the
+  // green message stuck around forever after the first save.
+  useEffect(() => {
+    if (!savedAt) return;
+    if (dirty) {
+      setSavedAt(null);
+      return;
+    }
+    const id = setTimeout(() => setSavedAt(null), 3000);
+    return () => clearTimeout(id);
+  }, [savedAt, dirty]);
+
   const handleSave = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     if (!user) return;
@@ -108,8 +121,8 @@ const MyProfilePanel = () => {
         email: email === (user.email ?? '') ? undefined : email,
         phone: phone === (user.phone ?? '') ? undefined : phone,
       });
-      // updateProfile doesn't return has_password (it's not on the PATCH
-      // response), so merge to keep the existing flag.
+      // api response only includes the changed fields, so merge to preserve
+      // has_password (and any other fields the patch doesn't return).
       setUser({ ...user, ...updated });
       setSavedAt(Date.now());
     } catch (err: unknown) {
