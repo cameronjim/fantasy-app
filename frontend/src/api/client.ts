@@ -69,10 +69,6 @@ export async function resetPassword(token: string, newPassword: string): Promise
   await api.post('/auth/reset-password', { token, newPassword });
 }
 
-export async function setEmail(email: string): Promise<void> {
-  await api.patch('/auth/set-email', { email });
-}
-
 export interface CurrentUser {
   id: number;
   username: string;

@@ -50,6 +50,19 @@ export function Navbar({ isLoggedIn, onLogout }: NavbarProps): JSX.Element {
           Fantasy <span className="text-primary">NBA</span>
         </NavLink>
         <StatusBadge />
+        {/* small secondary link to the project's "about" page (for hiring
+            managers / reviewers). kept low-emphasis so it doesn't crowd the
+            primary tabs. */}
+        <NavLink
+          to="/about"
+          className={({ isActive }) =>
+            `text-xs opacity-50 hover:opacity-100 transition-opacity ml-1 ${
+              isActive ? 'opacity-100 text-primary' : ''
+            }`
+          }
+        >
+          About
+        </NavLink>
       </div>
       <div className="flex-none gap-1">
         {tabs.map((tab) => {
