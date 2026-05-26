@@ -245,11 +245,7 @@ const Pipeline = () => (
 
 const Footer = () => (
   <section className="border-t border-base-300 pt-6">
-    <p className="text-sm opacity-60">
-      If you'd like to talk about this project, the engineering decisions
-      behind it, or potential opportunities, I'd love to hear from you.
-    </p>
-    <div className="flex flex-wrap gap-3 mt-3">
+    <div className="flex flex-wrap gap-3">
       <a
         href="https://github.com/cameronjim"
         target="_blank"
