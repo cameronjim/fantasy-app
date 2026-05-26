@@ -9,8 +9,9 @@ import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
-import { ChangePasswordPage } from './pages/ChangePasswordPage';
+import { ProfilePage } from './pages/ProfilePage';
 import { PreferencesPage } from './pages/PreferencesPage';
+import { AboutPage } from './pages/AboutPage';
 import { getAuthToken, setAuthToken } from './api/client';
 
 export const App = (): JSX.Element => {
@@ -43,8 +44,11 @@ export const App = (): JSX.Element => {
               <Route path="/register" element={<RegisterPage onRegister={handleLoginSuccess} />} />
               <Route path="/forgot-password" element={<ForgotPasswordPage />} />
               <Route path="/reset-password" element={<ResetPasswordPage />} />
-              <Route path="/change-password" element={<ChangePasswordPage />} />
+              <Route path="/profile" element={<ProfilePage />} />
+              {/* legacy route — redirect to the Change Password tab inside /profile. */}
+              <Route path="/change-password" element={<Navigate to="/profile#password" replace />} />
               <Route path="/preferences" element={<PreferencesPage />} />
+              <Route path="/about" element={<AboutPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </main>

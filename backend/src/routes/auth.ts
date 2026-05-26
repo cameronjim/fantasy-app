@@ -252,12 +252,16 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+// change password for existing-password users, OR set initial password for
+// google-signin users who have none. currentPassword is only required when
+// the user already has a password — the check uses the hash on disk, not
+// what the client claims.
 router.patch('/change-password', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const { currentPassword, newPassword } = req.body;
   const userId = (req as AuthRequest).userId;
 
-  if (!currentPassword || !newPassword) {
-    res.status(400).json({ error: 'Current and new password are required' });
+  if (!newPassword) {
+    res.status(400).json({ error: 'New password is required' });
     return;
   }
   const pwError = validatePassword(newPassword);
@@ -271,11 +275,24 @@ router.patch('/change-password', requireAuth, async (req: Request, res: Response
       res.status(404).json({ error: 'User not found' });
       return;
     }
-    const valid = await bcrypt.compare(currentPassword, result.rows[0].password_hash);
-    if (!valid) {
-      res.status(401).json({ error: 'Current password is incorrect' });
-      return;
+    const existingHash: string | null = result.rows[0].password_hash;
+
+    // existing-password users must prove they know the current one before
+    // overwriting it (defense against session hijacking).
+    if (existingHash) {
+      if (!currentPassword) {
+        res.status(400).json({ error: 'Current password is required' });
+        return;
+      }
+      const valid = await bcrypt.compare(currentPassword, existingHash);
+      if (!valid) {
+        res.status(401).json({ error: 'Current password is incorrect' });
+        return;
+      }
     }
+    // google-only users with no existing password skip the check and set
+    // one for the first time.
+
     const newHash = await bcrypt.hash(newPassword, 10);
     await query('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, userId]);
     res.json({ message: 'Password updated successfully' });
@@ -306,12 +323,17 @@ router.patch('/set-email', requireAuth, async (req: Request, res: Response): Pro
   }
 });
 
-/** Returns whether the current logged-in user has an email set (for the banner prompt). */
+/** Returns the current logged-in user's profile fields (powers the /profile page). */
 router.get('/me', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const userId = (req as AuthRequest).userId;
   try {
     const result = await query(
-      'SELECT id, username, email FROM users WHERE id = $1',
+      // has_password is computed so the client can decide whether to show the
+      // "current password" field on the change-password form. raw password_hash
+      // never leaves the server.
+      `SELECT id, username, email, name, phone,
+              (password_hash IS NOT NULL) AS has_password
+       FROM users WHERE id = $1`,
       [userId]
     );
     if (result.rows.length === 0) {
@@ -321,6 +343,129 @@ router.get('/me', requireAuth, async (req: Request, res: Response): Promise<void
     res.json(result.rows[0]);
   } catch {
     res.status(500).json({ error: 'Failed to load profile' });
+  }
+});
+
+// lightweight phone validation: digits, spaces, dashes, parens, leading +.
+// strict format check happens client-side and via real-world SMS delivery —
+// here we just reject obviously-broken inputs.
+function isValidPhone(phone: string): boolean {
+  if (typeof phone !== 'string') return false;
+  if (phone.trim() === '') return true; // empty means "clear the field"
+  return /^[+0-9 ().-]{7,30}$/.test(phone.trim());
+}
+
+/**
+ * Update profile fields. Each field is optional in the body — fields that
+ * aren't sent stay unchanged. Sending an empty string clears the field
+ * (for name and phone; email cannot be cleared because it's needed for
+ * password reset).
+ */
+router.patch('/profile', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const userId = (req as AuthRequest).userId;
+  const { username, name, email, phone } = req.body as {
+    username?: string;
+    name?: string;
+    email?: string;
+    phone?: string;
+  };
+
+  // reject explicit nulls and non-string types up front. without this guard
+  // each branch below would either crash (e.g. `null.trim()` throws a
+  // typeerror) or silently coerce. require a string per field that's
+  // actually being updated.
+  for (const [key, value] of [
+    ['username', username],
+    ['name', name],
+    ['email', email],
+    ['phone', phone],
+  ] as const) {
+    if (value !== undefined && typeof value !== 'string') {
+      res.status(400).json({ error: `${key} must be a string` });
+      return;
+    }
+  }
+
+  if (username !== undefined) {
+    const trimmed = username.trim();
+    if (trimmed.length < 3) {
+      res.status(400).json({ error: 'Username must be at least 3 characters' });
+      return;
+    }
+    if (trimmed.length > 50) {
+      res.status(400).json({ error: 'Username must be 50 characters or fewer' });
+      return;
+    }
+  }
+  if (email !== undefined && !isValidEmail(email)) {
+    res.status(400).json({ error: 'Please enter a valid email address' });
+    return;
+  }
+  if (phone !== undefined && !isValidPhone(phone)) {
+    res.status(400).json({ error: 'Please enter a valid phone number' });
+    return;
+  }
+  if (name !== undefined && name.length > 100) {
+    res.status(400).json({ error: 'Name must be 100 characters or fewer' });
+    return;
+  }
+
+  // build the dynamic SET clause so we only touch fields the client sent.
+  // null gets stored when the value is an empty string (for name and phone;
+  // username and email can't be cleared).
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  let i = 1;
+
+  if (username !== undefined) {
+    sets.push(`username = $${i++}`);
+    params.push(username.trim());
+  }
+  if (name !== undefined) {
+    sets.push(`name = $${i++}`);
+    params.push(name.trim() === '' ? null : name.trim());
+  }
+  if (email !== undefined) {
+    sets.push(`email = $${i++}`);
+    params.push(email.toLowerCase().trim());
+  }
+  if (phone !== undefined) {
+    sets.push(`phone = $${i++}`);
+    params.push(phone.trim() === '' ? null : phone.trim());
+  }
+
+  if (sets.length === 0) {
+    res.status(400).json({ error: 'No fields to update' });
+    return;
+  }
+
+  params.push(userId);
+
+  try {
+    const result = await query(
+      `UPDATE users SET ${sets.join(', ')} WHERE id = $${i}
+       RETURNING id, username, email, name, phone`,
+      params
+    );
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+    res.json(result.rows[0]);
+  } catch (err: unknown) {
+    if (err instanceof Error && 'code' in err && (err as { code: string }).code === '23505') {
+      // distinguish which unique constraint blew up so the user knows which
+      // field to change. pg's `detail` includes the column name when the
+      // constraint targets a single column.
+      const detail = ((err as { detail?: string }).detail ?? '').toLowerCase();
+      if (detail.includes('username')) {
+        res.status(409).json({ error: 'That username is already taken' });
+        return;
+      }
+      res.status(409).json({ error: 'That email is already in use by another account' });
+      return;
+    }
+    res.status(500).json({ error: 'Failed to update profile' });
   }
 });
 

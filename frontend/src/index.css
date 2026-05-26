@@ -3,5 +3,21 @@
   themes: lofi --default, business --prefersdark;
 }
 
+/* brand colors — single source of truth. components should use daisyui's
+   `success` / `error` utility classes (text-success, bg-success, etc.) so
+   any palette change propagates through these variables. do not hardcode
+   tailwind palette colors like `bg-emerald-500` or `bg-red-500` inside
+   components. */
+:root {
+  --brand-green: #10b981; /* tailwind emerald-500 — darker / more visible than daisyui's default success */
+  --brand-red: #ef4444;   /* tailwind red-500 — matches the original error-toast look */
+}
+
+[data-theme="lofi"],
+[data-theme="business"] {
+  --color-success: var(--brand-green);
+  --color-error: var(--brand-red);
+}
+
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { scrollbar-width: none; }
