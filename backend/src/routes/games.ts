@@ -47,13 +47,19 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     // games) the old LIMIT-30 query surfaced weeks-old games as if they were
     // current. bounds are ET date strings (matching game_date) with one extra
     // day of slack on each side so a boundary game is never cut off.
+    //
+    // the NOT(...) clause drops "phantom" past games: a game whose date has
+    // passed but still has no scores was never actually played (e.g. an
+    // "if necessary" playoff game in a series that ended early). a real
+    // completed game always has scores, so past + null scores = never played.
     const result = await query(
       `SELECT id, nba_game_id, home_team, away_team, game_date,
               home_score, away_score, status, arena, updated_at
        FROM games
        WHERE game_date >= $1 AND game_date <= $2
+         AND NOT (game_date < $3 AND home_score IS NULL AND away_score IS NULL)
        ORDER BY game_date ASC, id ASC`,
-      [etIsoDate(-(PAST_WINDOW_DAYS + 1)), etIsoDate(FUTURE_WINDOW_DAYS + 1)]
+      [etIsoDate(-(PAST_WINDOW_DAYS + 1)), etIsoDate(FUTURE_WINDOW_DAYS + 1), etIsoDate(0)]
     );
     res.json(result.rows);
   } catch {
@@ -164,8 +170,18 @@ router.get('/live', async (_req: Request, res: Response): Promise<void> => {
       };
     });
 
+    // drop "phantom" past games before doing anything with them: a game whose
+    // date has passed but still has no scores was never played (e.g. an
+    // "if necessary" playoff game in a series that ended in a sweep). ESPN
+    // keeps these on the schedule, so the range fetch returns them — but they
+    // shouldn't be written to the db or shown as blank past games.
+    const today = etIsoDate(0);
+    const played = result.filter(
+      (g) => !(g.game_date < today && g.home_score === null && g.away_score === null)
+    );
+
     // Write back to DB so getGames() stays fresh when ESPN is unavailable
-    for (const g of result) {
+    for (const g of played) {
       try {
         await query(
           `INSERT INTO games (nba_game_id, home_team, away_team, game_date, home_score, away_score, status, arena, updated_at)
@@ -185,8 +201,8 @@ router.get('/live', async (_req: Request, res: Response): Promise<void> => {
       } catch { /* non-fatal */ }
     }
 
-    liveCache = { data: result, fetchedAt: Date.now() };
-    res.json(result);
+    liveCache = { data: played, fetchedAt: Date.now() };
+    res.json(played);
   } catch (err) {
     const isAbort = err instanceof Error && err.name === 'AbortError';
     res.status(isAbort ? 504 : 500).json({
