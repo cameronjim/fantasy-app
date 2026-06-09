@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { getGames, getLiveGames } from '../api/client';
 import type { Game } from '../types';
@@ -14,6 +14,11 @@ function periodLabel(period: number): string {
 
 export const ScoreboardStrip = () => {
   const [games, setGames] = useState<Game[]>(gamesCache);
+  // tracks the day we've already auto-scrolled to "today" for, so the
+  // background poll and live-score overlay (both of which update `games`)
+  // don't keep yanking the strip back to today while the user is manually
+  // scrolling through past or upcoming games.
+  const autoScrolledForDay = useRef<string | null>(null);
 
   const fetchGames = useCallback(async (): Promise<void> => {
     try {
@@ -87,22 +92,25 @@ export const ScoreboardStrip = () => {
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
-  // Auto-scroll the scoreboard strip so today's date group sits roughly at the
-  // start of the viewport — instead of the user landing in the past and having
-  // to scroll right. Re-runs when the data set changes (today moves to a
-  // different index when the scraper window slides).
+  // auto-scroll the strip so today's group sits near the left of the viewport,
+  // so the user lands on today rather than weeks in the past. this runs only
+  // ONCE per day: re-running on every `games` update would fight the user,
+  // snapping them back to today each time the 2-min poll or the live overlay
+  // refreshes the data while they're scrolling through other games. the ref
+  // re-arms when the date rolls over so it still re-centers across midnight.
   useEffect(() => {
     if (games.length === 0) return;
+    if (autoScrolledForDay.current === todayIso) return;
     // requestAnimationFrame ensures the elements are laid out before we measure.
     const raf = requestAnimationFrame(() => {
       const container = document.getElementById('scoreboard-scroll');
       const todayEl = container?.querySelector<HTMLElement>(`[data-date="${todayIso}"]`);
       if (container && todayEl) {
-        // Position today's group ~80px from the left edge of the visible area
-        // (just past the left scroll button), centering the focus on today
-        // and showing past games trailing behind.
+        // position today's group ~80px from the left edge of the visible area
+        // (just past the left scroll button), showing past games trailing behind.
         const offsetLeft = todayEl.offsetLeft - container.offsetLeft - 80;
         container.scrollTo({ left: Math.max(0, offsetLeft), behavior: 'auto' });
+        autoScrolledForDay.current = todayIso;
       }
     });
     return () => cancelAnimationFrame(raf);
