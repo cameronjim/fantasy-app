@@ -434,16 +434,16 @@ router.post('/bets', requireAuth, async (req: Request, res: Response): Promise<v
       return;
     }
 
-    // money tracking is optional: note what you put down and whether it was
-    // a normal cash bet, a bonus (free) bet, or an odds boost.
-    const hasStake = stake != null;
-    if (hasStake && (typeof stake !== 'number' || stake <= 0 || stake > 100000)) {
-      res.status(400).json({ error: 'stake must be between 0 and 100000' });
-      return;
-    }
+    // the wager kind covers the promos books like bet365 hand out: a normal
+    // cash bet, a bonus (free) bet, or an odds boost.
     const wagerType: WagerType = wager_type ?? 'cash';
     if (!WAGER_TYPES.includes(wagerType)) {
       res.status(400).json({ error: 'wager_type must be cash, bonus_bet, or odds_boost' });
+      return;
+    }
+    // stake is mandatory — the ledger's net math depends on it.
+    if (typeof stake !== 'number' || stake <= 0 || stake > 100000) {
+      res.status(400).json({ error: 'stake must be between 0 and 100000' });
       return;
     }
 
@@ -543,7 +543,7 @@ router.post('/bets', requireAuth, async (req: Request, res: Response): Promise<v
         isStraight && market !== 'moneyline' ? line : null,
         hasOdds ? american_odds : null,
         isText ? description.trim() : null,
-        hasStake ? stake : null,
+        stake,
         wagerType,
       ]
     );

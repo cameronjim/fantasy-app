@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import { formatAmerican, formatLine, formatMoney, formatSignedMoney } from '../utils/formatOdds';
 import type {
-  Bet, BettingGame, BetStatus, LedgerSummary, NewBet,
+  Bet, BettingGame, BetStatus, LedgerSummary, NewBet, NewBetGameRef,
   BetMarket, BetSelection, StraightMarket, WagerType,
 } from '../types';
 
@@ -12,7 +12,7 @@ interface BetLedgerProps {
   loading: boolean;
   error: string;
   games: BettingGame[];
-  onTrackBet: (bet: NewBet) => Promise<void>;
+  onTrackBet: (bet: NewBet, gameRef?: NewBetGameRef) => Promise<void>;
   onSettleBet: (id: number, status: BetStatus) => Promise<void>;
   onRemoveBet: (id: number) => Promise<void>;
 }
@@ -56,7 +56,7 @@ function betLabel(bet: Bet): string {
 
 interface AddBetFormProps {
   games: BettingGame[];
-  onTrackBet: (bet: NewBet) => Promise<void>;
+  onTrackBet: (bet: NewBet, gameRef?: NewBetGameRef) => Promise<void>;
   onDone: () => void;
 }
 
@@ -115,24 +115,28 @@ const AddBetForm = ({ games, onTrackBet, onDone }: AddBetFormProps) => {
     return Number.isNaN(n) ? null : n;
   };
 
-  // money fields apply to every bet type and are always optional.
-  const moneyFields = (): Pick<NewBet, 'stake' | 'wager_type'> => {
+  // every bet records what was put down — the net math depends on it.
+  const parsedStake = (): number | null => {
     const n = parseFloat(stakeText.trim());
-    return {
-      stake: Number.isNaN(n) || n <= 0 ? null : n,
-      wager_type: wagerType,
-    };
+    return Number.isNaN(n) || n <= 0 ? null : n;
   };
 
-  const canSubmit = isStraight
-    ? !!game && !!resolved
-    : description.trim().length >= 3;
+  const canSubmit =
+    parsedStake() != null &&
+    (isStraight ? !!game && !!resolved : description.trim().length >= 3);
 
   const handleSubmit = async (): Promise<void> => {
-    if (!canSubmit || saving) return;
+    const stake = parsedStake();
+    if (!canSubmit || stake == null || saving) return;
     setSaving(true);
     setError('');
     try {
+      // onTrackBet applies optimistically and resolves immediately — the form
+      // closes without waiting for the network. failures surface in the
+      // ledger's error state.
+      const gameRef = game
+        ? { home_team: game.home_team, away_team: game.away_team, game_date: game.game_date }
+        : undefined;
       if (isStraight && game && resolved) {
         await onTrackBet({
           market: market as StraightMarket,
@@ -140,16 +144,18 @@ const AddBetForm = ({ games, onTrackBet, onDone }: AddBetFormProps) => {
           selection,
           line: resolved.line,
           american_odds: resolved.odds,
-          ...moneyFields(),
-        });
+          stake,
+          wager_type: wagerType,
+        }, gameRef);
       } else {
         await onTrackBet({
           market,
           description: description.trim(),
           american_odds: parsedOdds(),
+          stake,
+          wager_type: wagerType,
           ...(market === 'prop' && game ? { nba_game_id: game.nba_game_id } : {}),
-          ...moneyFields(),
-        });
+        }, market === 'prop' ? gameRef : undefined);
       }
       onDone();
     } catch {
@@ -228,7 +234,7 @@ const AddBetForm = ({ games, onTrackBet, onDone }: AddBetFormProps) => {
         )}
 
         <div>
-          <label className="text-xs font-semibold block mb-1" htmlFor="addbet-stake">Stake (optional)</label>
+          <label className="text-xs font-semibold block mb-1" htmlFor="addbet-stake">Stake</label>
           <label className="input input-bordered input-sm flex items-center gap-1 w-28">
             $
             <input
@@ -308,16 +314,6 @@ const AddBetForm = ({ games, onTrackBet, onDone }: AddBetFormProps) => {
 
 export const BetLedger = ({ bets, summary, loading, error, games, onTrackBet, onSettleBet, onRemoveBet }: BetLedgerProps) => {
   const [adding, setAdding] = useState(false);
-  const [busyId, setBusyId] = useState<number | null>(null);
-
-  const withBusy = async (id: number, action: () => Promise<void>): Promise<void> => {
-    setBusyId(id);
-    try {
-      await action();
-    } finally {
-      setBusyId(null);
-    }
-  };
 
   const hasMoney = bets.some((b) => b.stake != null);
 
@@ -402,16 +398,14 @@ export const BetLedger = ({ bets, summary, loading, error, games, onTrackBet, on
                             {bet.status === 'pending' && manual && (
                               <>
                                 <button
-                                  onClick={() => withBusy(bet.id, () => onSettleBet(bet.id, 'won'))}
-                                  disabled={busyId === bet.id}
+                                  onClick={() => void onSettleBet(bet.id, 'won')}
                                   className="btn btn-ghost btn-xs text-success"
                                   title="Mark this bet as won"
                                 >
                                   Won
                                 </button>
                                 <button
-                                  onClick={() => withBusy(bet.id, () => onSettleBet(bet.id, 'lost'))}
-                                  disabled={busyId === bet.id}
+                                  onClick={() => void onSettleBet(bet.id, 'lost')}
                                   className="btn btn-ghost btn-xs text-error"
                                   title="Mark this bet as lost"
                                 >
@@ -420,8 +414,7 @@ export const BetLedger = ({ bets, summary, loading, error, games, onTrackBet, on
                               </>
                             )}
                             <button
-                              onClick={() => withBusy(bet.id, () => onRemoveBet(bet.id))}
-                              disabled={busyId === bet.id}
+                              onClick={() => void onRemoveBet(bet.id)}
                               className="btn btn-ghost btn-xs"
                               aria-label={`Delete bet: ${betLabel(bet)}`}
                               title="Delete this bet"
