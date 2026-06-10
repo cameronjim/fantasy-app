@@ -79,6 +79,42 @@ describe('POST /api/auth/register validation', () => {
     expect(res.body.error).toMatch(/number or symbol/i);
   });
 
+  it('rejects a username longer than 50 characters', async () => {
+    // act
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({ username: 'a'.repeat(51), email: 'a@b.co', password: 'Aa1!aaaa' });
+
+    // assert
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/50 characters/i);
+  });
+
+  it('rejects an email longer than 255 characters', async () => {
+    // arrange — valid format but oversized local part.
+    const longEmail = `${'a'.repeat(260)}@b.co`;
+
+    // act
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({ username: 'alice', email: longEmail, password: 'Aa1!aaaa' });
+
+    // assert
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/email/i);
+  });
+
+  it('rejects a password longer than 200 characters (bcrypt DoS guard)', async () => {
+    // act
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({ username: 'alice', email: 'a@b.co', password: `Aa1!${'a'.repeat(220)}` });
+
+    // assert
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/200 characters/i);
+  });
+
   it('returns 409 when the email is already taken', async () => {
     // arrange
     queryMock.mockRejectedValueOnce(pgUniqueViolation('Key (email) already exists'));
