@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { query } from '../db.js';
+import { etIsoDate } from '../services/dates.js';
 
 const router = Router();
 
@@ -14,16 +15,6 @@ const LIVE_CACHE_TTL = 3 * 60_000; // 3 minutes
 // forward covers upcoming games without pulling an unbounded schedule.
 const PAST_WINDOW_DAYS = 14;
 const FUTURE_WINDOW_DAYS = 10;
-
-// the ET calendar date `offsetDays` from now, as YYYY-MM-DD. game days are
-// anchored to Eastern Time (ESPN stores them as UTC midnight of the ET date),
-// so the window must be computed in ET, not in the Lambda's UTC clock or the
-// db's UTC CURRENT_DATE. en-CA formats as YYYY-MM-DD, which is both the db
-// game_date format and one strip away from ESPN's YYYYMMDD.
-function etIsoDate(offsetDays: number): string {
-  const instant = new Date(Date.now() + offsetDays * 24 * 60 * 60 * 1000);
-  return instant.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
-}
 
 router.get('/', async (req: Request, res: Response): Promise<void> => {
   try {
