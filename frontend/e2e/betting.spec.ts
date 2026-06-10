@@ -158,9 +158,12 @@ test.describe('Betting page', () => {
     await page.getByLabel('Bet type').selectOption('custom');
     await page.getByLabel('Describe the bet').fill('First basket: Wembanyama');
     await page.getByLabel('Odds (optional)').fill('+900');
+    // stake is mandatory — the add button stays disabled until it's filled
+    await expect(page.getByRole('button', { name: 'Add bet' })).toBeDisabled();
+    await page.getByLabel('Stake', { exact: true }).fill('10');
     await page.getByRole('button', { name: 'Add bet' }).click();
 
-    // the ledger re-fetched and now lists the custom bet with settle buttons
+    // the row appears instantly (optimistic) and survives the server confirm
     await expect(page.getByRole('cell', { name: 'First basket: Wembanyama', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Won' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Lost' })).toBeVisible();

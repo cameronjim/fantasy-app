@@ -121,35 +121,49 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
     return () => clearTimeout(timer);
   }, [search, roster]);
 
-  const handleAdd = async (playerId: number, playerName: string): Promise<void> => {
-    try {
-      await addToRoster(playerId);
-      setSearch('');
-      setSearchResults([]);
-      await loadRoster();
-      // Bump the request id so any in-flight analysis call discards its result
-      // — otherwise an analysis started for the previous roster could land
-      // *after* this mutation and overwrite the cleared state with stale data.
-      analysisRequestIdRef.current++;
-      setAnalysis(null);
-      invalidateAIClientCaches();
-      setToast({ message: `Added ${playerName} to your team`, variant: 'success' });
-    } catch {
-      setToast({ message: `Couldn't add ${playerName}`, variant: 'error' });
-    }
+  // Add/drop apply optimistically: the row appears/disappears immediately and
+  // the API call runs in the background. On failure the previous roster is
+  // restored and the toast flips to an error.
+  const handleAdd = (player: Player): void => {
+    // negative roster_id marks the optimistic row; the silent reload after the
+    // POST swaps in the real one without any visible loading state.
+    const optimistic: RosterPlayer = {
+      ...player,
+      roster_id: -player.id,
+      player_id: player.id,
+      added_at: new Date().toISOString(),
+    };
+    setRoster((prev) => [...prev, optimistic]);
+    setSearch('');
+    setSearchResults([]);
+    // Bump the request id so any in-flight analysis call discards its result
+    // — otherwise an analysis started for the previous roster could land
+    // *after* this mutation and overwrite the cleared state with stale data.
+    analysisRequestIdRef.current++;
+    setAnalysis(null);
+    invalidateAIClientCaches();
+    setToast({ message: `Added ${player.name} to your team`, variant: 'success' });
+
+    void addToRoster(player.id)
+      .then(() => loadRoster())
+      .catch(() => {
+        setRoster((prev) => prev.filter((p) => p.player_id !== player.id));
+        setToast({ message: `Couldn't add ${player.name}`, variant: 'error' });
+      });
   };
 
-  const handleDrop = async (playerId: number, playerName: string): Promise<void> => {
-    try {
-      await dropFromRoster(playerId);
-      await loadRoster();
-      analysisRequestIdRef.current++;
-      setAnalysis(null);
-      invalidateAIClientCaches();
-      setToast({ message: `Dropped ${playerName} from your team`, variant: 'success' });
-    } catch {
+  const handleDrop = (playerId: number, playerName: string): void => {
+    const previousRoster = roster;
+    setRoster((prev) => prev.filter((p) => (p.player_id || p.id) !== playerId));
+    analysisRequestIdRef.current++;
+    setAnalysis(null);
+    invalidateAIClientCaches();
+    setToast({ message: `Dropped ${playerName} from your team`, variant: 'success' });
+
+    void dropFromRoster(playerId).catch(() => {
+      setRoster(previousRoster);
       setToast({ message: `Couldn't drop ${playerName}`, variant: 'error' });
-    }
+    });
   };
 
   const n = (v: unknown): number => Number(v) || 0;
@@ -227,7 +241,7 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
                       <span className="text-xs opacity-50">{player.position} · {player.team}</span>
                       <span className="text-xs opacity-70">{n(player.points_per_game).toFixed(1)} PPG</span>
                     </div>
-                    <button onClick={() => handleAdd(player.id, player.name)} className="btn btn-primary btn-xs gap-1">
+                    <button onClick={() => handleAdd(player)} className="btn btn-primary btn-xs gap-1">
                       <Plus size={12} /> Add
                     </button>
                   </div>
