@@ -73,6 +73,10 @@ export interface TeamAnalysis {
   strengths: string[];
   weaknesses: string[];
   suggestions: string[];
+  // true when the server returned a previous analysis because the cache key
+  // rotated — the client shows it and regenerates in the background.
+  stale?: boolean;
+  cached_at?: string;
 }
 
 export type BetMarket = 'spread' | 'total' | 'moneyline' | 'prop' | 'parlay' | 'custom';
@@ -162,6 +166,9 @@ export interface BettingPicksResponse {
   cached?: boolean;
   cached_at?: string;
   no_games?: boolean;
+  // true when these are the previous picks served instantly because lines
+  // moved — the client shows them and regenerates in the background.
+  stale?: boolean;
 }
 
 export type WagerType = 'cash' | 'bonus_bet' | 'odds_boost';

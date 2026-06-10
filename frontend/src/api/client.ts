@@ -81,6 +81,8 @@ export interface CurrentUser {
   // false for google-only users who haven't set a local password yet —
   // the change-password form drops the "current password" field for them.
   has_password: boolean;
+  // gates the admin nav link only; the admin api re-checks server-side.
+  is_admin: boolean;
 }
 
 export async function getCurrentUser(): Promise<CurrentUser> {
@@ -195,12 +197,12 @@ export async function chatWithAI(message: string, contextType?: string, history?
   return data;
 }
 
-export async function getTeamAnalysis(): Promise<TeamAnalysis> {
-  const { data } = await api.get('/ai/team-analysis');
+export async function getTeamAnalysis(refresh?: boolean): Promise<TeamAnalysis> {
+  const { data } = await api.get('/ai/team-analysis', { params: refresh ? { refresh: 'true' } : {} });
   return data;
 }
 
-export async function getWaiverSuggestions(refresh?: boolean): Promise<{ trade_targets: Array<{name: string; reasoning: string}>; waiver_pickups: Array<{name: string; reasoning: string}>; summary: string; cached?: boolean; cached_at?: string; empty_roster?: boolean }> {
+export async function getWaiverSuggestions(refresh?: boolean): Promise<{ trade_targets: Array<{name: string; reasoning: string}>; waiver_pickups: Array<{name: string; reasoning: string}>; summary: string; cached?: boolean; cached_at?: string; empty_roster?: boolean; stale?: boolean }> {
   const { data } = await api.get('/ai/waiver-suggestions', { params: refresh ? { refresh: 'true' } : {} });
   return data;
 }
@@ -232,4 +234,61 @@ export async function settleBetStatus(id: number, status: BetStatus): Promise<Be
 
 export async function deleteBet(id: number): Promise<void> {
   await api.delete(`/betting/bets/${id}`);
+}
+
+/**
+ * Fire-and-forget pageview beacon. Failures are swallowed on purpose —
+ * analytics must never affect the user experience.
+ */
+export function trackPageView(path: string, referrer?: string): void {
+  api.post('/track/pageview', referrer ? { path, referrer } : { path }).catch(() => {});
+}
+
+export interface AdminUser {
+  id: number;
+  username: string;
+  email: string | null;
+  name: string | null;
+  is_admin: boolean;
+  created_at: string;
+  has_password: boolean;
+  has_google: boolean;
+  roster_count: number;
+  last_seen: string | null;
+}
+
+export interface AdminStats {
+  totals: {
+    total_users: number;
+    new_users_7d: number;
+    views_24h: number;
+    views_7d: number;
+    active_users_24h: number;
+  };
+  top_paths: Array<{ path: string; views: number }>;
+}
+
+export interface AdminPageView {
+  id: number;
+  path: string;
+  referrer: string | null;
+  user_agent: string | null;
+  created_at: string;
+  // null for views by logged-out visitors.
+  username: string | null;
+}
+
+export async function getAdminUsers(): Promise<AdminUser[]> {
+  const { data } = await api.get('/admin/users');
+  return data;
+}
+
+export async function getAdminStats(): Promise<AdminStats> {
+  const { data } = await api.get('/admin/stats');
+  return data;
+}
+
+export async function getAdminViews(): Promise<AdminPageView[]> {
+  const { data } = await api.get('/admin/views');
+  return data;
 }

@@ -94,13 +94,28 @@ router.get('/team-analysis', async (req: Request, res: Response): Promise<void> 
       .update(rosterHash + '|' + prefsBlock + '|' + benchmarksKey + '|' + PROMPT_VERSION)
       .digest('hex');
 
-    const cached = await query(
-      `SELECT analysis FROM analysis_cache WHERE user_id = $1 AND roster_hash = $2`,
-      [userId, cacheKey]
-    );
-    if (cached.rows.length > 0) {
-      res.json(cached.rows[0].analysis);
-      return;
+    const forceRefresh = req.query.refresh === 'true';
+    if (!forceRefresh) {
+      const cached = await query(
+        `SELECT analysis FROM analysis_cache WHERE user_id = $1 AND roster_hash = $2`,
+        [userId, cacheKey]
+      );
+      if (cached.rows.length > 0) {
+        res.json(cached.rows[0].analysis);
+        return;
+      }
+
+      // key rotated (roster/prefs/benchmarks changed) — serve the previous
+      // analysis instantly with a stale marker instead of blocking the page
+      // on a model call; the client regenerates in the background.
+      const stale = await query(
+        `SELECT analysis, created_at FROM analysis_cache WHERE user_id = $1`,
+        [userId]
+      );
+      if (stale.rows.length > 0) {
+        res.json({ ...stale.rows[0].analysis, stale: true, cached_at: stale.rows[0].created_at });
+        return;
+      }
     }
 
     // Prefs block lives BEFORE the JSON schema so the "Return ONLY valid JSON"
@@ -207,6 +222,23 @@ router.get('/waiver-suggestions', async (req: Request, res: Response): Promise<v
       );
       if (cached.rows.length > 0) {
         res.json({ ...cached.rows[0].suggestions, cached: true, cached_at: cached.rows[0].created_at });
+        return;
+      }
+
+      // ttl expired or the roster/prefs changed — serve the previous
+      // suggestions instantly with a stale marker; the client regenerates
+      // in the background instead of blocking the page on a model call.
+      const stale = await query(
+        `SELECT suggestions, created_at FROM waiver_cache WHERE user_id = $1`,
+        [userId]
+      );
+      if (stale.rows.length > 0) {
+        res.json({
+          ...stale.rows[0].suggestions,
+          cached: true,
+          stale: true,
+          cached_at: stale.rows[0].created_at,
+        });
         return;
       }
     }

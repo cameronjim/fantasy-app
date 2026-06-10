@@ -179,6 +179,29 @@ describe('GET /api/betting/picks', () => {
     expect(claudeMock).not.toHaveBeenCalled();
   });
 
+  it('serves the previous picks with stale:true when lines moved, without calling the model', async () => {
+    // arrange — the odds-hash lookup misses (lines drifted), the by-user
+    // fallback finds the user's last picks. db order: prefs, fresh miss, stale hit.
+    const oldPicks = { picks: [{ game_id: '401859966', category: 'safe' }], parlay: null, summary: 'old slate' };
+    queryMock
+      .mockResolvedValueOnce(pgResult([{ ai_preferences: {} }]))
+      .mockResolvedValueOnce(pgResult([]))
+      .mockResolvedValueOnce(pgResult([{ picks: oldPicks, created_at: '2026-06-09T12:00:00Z' }]));
+
+    // act
+    const res = await request(app)
+      .get('/api/betting/picks')
+      .set('Authorization', bearerFor(5));
+
+    // assert — the old picks come back instantly, flagged for background
+    // regeneration; the model is never called on this request.
+    expect(res.status).toBe(200);
+    expect(res.body.stale).toBe(true);
+    expect(res.body.cached_at).toBe('2026-06-09T12:00:00Z');
+    expect(res.body.summary).toBe('old slate');
+    expect(claudeMock).not.toHaveBeenCalled();
+  });
+
   it('generates fresh picks, re-attaches snapshot odds, and caps each category at 2', async () => {
     // arrange — refresh=true skips the cache read; db: prefs, then cache upsert
     queryMock
