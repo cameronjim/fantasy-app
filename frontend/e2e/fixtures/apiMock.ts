@@ -1,6 +1,9 @@
 import type { Page, Route } from '@playwright/test';
 import { ALL_PLAYERS, type PlayerFixture } from './players';
-import type { Team, Game, TeamAnalysis } from '../../src/types';
+import type {
+  Team, Game, TeamAnalysis,
+  BettingGame, BettingPicksResponse, Bet, LedgerSummary,
+} from '../../src/types';
 
 // route handlers that satisfy the api calls the app makes on first paint.
 // tests opt in to richer responses by passing overrides; we never hit a
@@ -29,6 +32,9 @@ export interface MockOptions {
   rosterRequiresAuth?: boolean;
   teamAnalysis?: TeamAnalysis;
   waiverSuggestions?: WaiverSuggestionsResponse;
+  bettingOdds?: BettingGame[];
+  bettingPicks?: BettingPicksResponse;
+  bets?: { bets: Bet[]; summary: LedgerSummary };
   // extra handlers applied before the defaults — useful for forcing a
   // specific status code or asserting that a particular call was made.
   custom?: Array<{ url: RegExp | string; handler: (route: Route) => Promise<void> | void }>;
@@ -107,4 +113,63 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<void>
   await page.route('**/api/auth/me', (route) =>
     route.fulfill({ status: 401, json: { error: 'Unauthorized' } }),
   );
+
+  // betting page first-paint endpoints. defaults are safe empties; tests opt
+  // into picks/odds/ledger content via the options above.
+  await page.route('**/api/betting/odds', (route) =>
+    route.fulfill({ json: { games: opts.bettingOdds ?? [], fetched_at: '2026-05-24T12:00:00Z' } }),
+  );
+
+  await page.route('**/api/betting/picks*', (route) => {
+    const fallback: BettingPicksResponse = { picks: [], parlay: null, summary: '', no_games: true };
+    route.fulfill({ json: opts.bettingPicks ?? fallback });
+  });
+
+  await page.route('**/api/betting/bets**', (route) => {
+    const method = route.request().method();
+    if (method === 'POST') {
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      route.fulfill({
+        status: 201,
+        json: {
+          id: 1, nba_game_id: null, home_team: null, away_team: null, game_date: null,
+          selection: null, line: null, american_odds: null, description: null,
+          status: 'pending', created_at: '2026-05-24T12:00:00Z', settled_at: null,
+          ...body,
+        },
+      });
+      return;
+    }
+    if (method === 'PATCH') {
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      route.fulfill({
+        json: {
+          id: 1, market: 'custom', nba_game_id: null, home_team: null, away_team: null,
+          game_date: null, selection: null, line: null, american_odds: null,
+          description: 'mock bet', status: body.status,
+          created_at: '2026-05-24T12:00:00Z', settled_at: '2026-05-24T13:00:00Z',
+        },
+      });
+      return;
+    }
+    if (method === 'DELETE') {
+      route.fulfill({ status: 204, body: '' });
+      return;
+    }
+    const emptyLedger = {
+      bets: [],
+      summary: { wins: 0, losses: 0, pushes: 0, pending: 0, net: 0 },
+    };
+    route.fulfill({ json: opts.bets ?? emptyLedger });
+  });
+
+  // the betting prefs panel (and PreferencesPrompt) read these; PATCH echoes
+  // the payload back like the real route returns the updated prefs.
+  await page.route('**/api/preferences', (route) => {
+    if (route.request().method() === 'PATCH') {
+      route.fulfill({ json: route.request().postDataJSON() ?? {} });
+      return;
+    }
+    route.fulfill({ json: {} });
+  });
 }

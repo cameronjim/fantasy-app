@@ -5,6 +5,7 @@ import { Navbar } from './components/Navbar';
 import { StatsPage } from './pages/StatsPage';
 import { FantasyPage } from './pages/FantasyPage';
 import { ImproveTeamPage } from './pages/ImproveTeamPage';
+import { BettingPage } from './pages/BettingPage';
 import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
@@ -40,6 +41,7 @@ export const App = (): JSX.Element => {
               <Route path="/" element={<StatsPage />} />
               <Route path="/fantasy" element={<FantasyPage isLoggedIn={isLoggedIn} />} />
               <Route path="/improve" element={<ImproveTeamPage isLoggedIn={isLoggedIn} />} />
+              <Route path="/betting" element={<BettingPage isLoggedIn={isLoggedIn} />} />
               <Route path="/login" element={<LoginPage onLogin={handleLoginSuccess} />} />
               <Route path="/register" element={<RegisterPage onRegister={handleLoginSuccess} />} />
               <Route path="/forgot-password" element={<ForgotPasswordPage />} />
