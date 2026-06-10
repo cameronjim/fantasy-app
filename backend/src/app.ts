@@ -15,6 +15,7 @@ import { fantasyRouter } from './routes/fantasy.js';
 import { aiRouter } from './routes/ai.js';
 import { authRouter } from './routes/auth.js';
 import { preferencesRouter } from './routes/preferences.js';
+import { bettingRouter } from './routes/betting.js';
 import { statusRouter } from './routes/status.js';
 import { requireAuth } from './middleware/auth.js';
 
@@ -34,6 +35,8 @@ app.use('/api/games', gamesRouter);
 app.use('/api/fantasy', requireAuth, fantasyRouter);
 app.use('/api/ai', requireAuth, aiRouter);
 app.use('/api/preferences', preferencesRouter);
+// per-endpoint auth: the odds board is public, picks/bets require a token.
+app.use('/api/betting', bettingRouter);
 app.use('/api/status', statusRouter);
 
 app.get('/api/health', (_req, res) => {

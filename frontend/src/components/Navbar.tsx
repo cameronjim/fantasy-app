@@ -1,5 +1,5 @@
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { BarChart3, Users, TrendingUp, LogIn, User, Sun, Moon } from 'lucide-react';
+import { BarChart3, Users, TrendingUp, Dices, LogIn, User, Sun, Moon } from 'lucide-react';
 import { useTheme } from '../hooks/useTheme';
 import { StatusBadge } from './StatusBadge';
 
@@ -12,6 +12,7 @@ const tabs = [
   { to: '/', label: 'Stats', icon: BarChart3 },
   { to: '/fantasy', label: 'My Team', icon: Users },
   { to: '/improve', label: 'Improve Team', icon: TrendingUp },
+  { to: '/betting', label: 'Betting', icon: Dices },
 ];
 
 export function Navbar({ isLoggedIn, onLogout }: NavbarProps): JSX.Element {
