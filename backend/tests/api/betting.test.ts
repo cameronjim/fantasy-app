@@ -551,7 +551,34 @@ describe('PATCH /api/betting/bets/:id', () => {
     expect(res.body.status).toBe('won');
     const [sql, params] = queryMock.mock.calls[0];
     expect(sql).toMatch(/UPDATE bets/);
-    expect(params).toEqual(['won', 5, 9]);
+    // settled_at travels as its own parameter, not a sql CASE on $1
+    expect((params as unknown[])[0]).toBe('won');
+    expect((params as unknown[])[1]).toBeInstanceOf(Date);
+    expect((params as unknown[])[2]).toBe(5);
+    expect((params as unknown[])[3]).toBe(9);
+  });
+
+  it('clears settled_at when a settle is undone back to pending', async () => {
+    // arrange
+    queryMock.mockResolvedValueOnce(pgResult([
+      {
+        id: 5, market: 'custom', nba_game_id: null, home_team: null, away_team: null,
+        game_date: null, selection: null, line: null, american_odds: 600,
+        description: 'weird exotic', stake: 10, wager_type: 'cash', status: 'pending',
+        created_at: '2026-06-09T12:00:00Z', settled_at: null,
+      },
+    ]));
+
+    // act
+    const res = await request(app)
+      .patch('/api/betting/bets/5')
+      .set('Authorization', bearerFor(9))
+      .send({ status: 'pending' });
+
+    // assert
+    expect(res.status).toBe(200);
+    const [, params] = queryMock.mock.calls[0];
+    expect((params as unknown[])[1]).toBeNull();
   });
 
   it('rejects an invalid status', async () => {

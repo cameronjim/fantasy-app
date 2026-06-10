@@ -575,14 +575,18 @@ router.patch('/bets/:id', requireAuth, async (req: Request, res: Response): Prom
       res.status(400).json({ error: 'status must be pending, won, lost, or push' });
       return;
     }
+    // settled_at is computed here rather than with a SQL CASE — reusing one
+    // parameter in two type contexts makes the prepared statement fragile.
+    const settledAt = status === 'pending' ? null : new Date();
     const result = await query(
       `UPDATE bets
-       SET status = $1, settled_at = CASE WHEN $1 = 'pending' THEN NULL ELSE NOW() END
-       WHERE id = $2 AND user_id = $3
+       SET status = $1, settled_at = $2
+       WHERE id = $3 AND user_id = $4
        RETURNING id, market, nba_game_id, home_team, away_team, game_date, selection,
                  line::float AS line, american_odds, description,
+                 stake::float AS stake, wager_type,
                  status, created_at, settled_at`,
-      [status, id, userId]
+      [status, settledAt, id, userId]
     );
     if (result.rows.length === 0) {
       res.status(404).json({ error: 'Bet not found' });
