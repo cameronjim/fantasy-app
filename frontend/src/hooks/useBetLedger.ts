@@ -61,7 +61,7 @@ export function useBetLedger(isLoggedIn: boolean): UseBetLedger {
       game_date: gameRef?.game_date ?? null,
       selection: bet.selection ?? null,
       line: bet.line ?? null,
-      american_odds: bet.american_odds ?? null,
+      american_odds: bet.american_odds,
       description: bet.description ?? null,
       stake: bet.stake,
       wager_type: bet.wager_type ?? 'cash',

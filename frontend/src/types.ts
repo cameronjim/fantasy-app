@@ -194,7 +194,7 @@ export interface NewBet {
   nba_game_id?: string;
   selection?: BetSelection;
   line?: number | null;
-  american_odds?: number | null;
+  american_odds: number;
   description?: string;
   stake: number;
   wager_type?: WagerType;
