@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, vi } from 'vitest';
 import { cleanup } from '@testing-library/react';
+import { clearCachedResources } from '../src/api/resourceCache';
 
 // jsdom doesn't implement scrollIntoView; ChatBox calls it on every message
 // change, so tests that render the page would crash without this shim.
@@ -12,8 +13,9 @@ afterEach(() => {
   cleanup();
 });
 
-// each test gets a clean localStorage so token state from one test never
-// bleeds into the next.
+// each test gets a clean localStorage and resource cache so state from one
+// test never bleeds into the next.
 beforeEach(() => {
   localStorage.clear();
+  clearCachedResources();
 });

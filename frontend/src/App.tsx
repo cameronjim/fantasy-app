@@ -16,13 +16,25 @@ import { AboutPage } from './pages/AboutPage';
 import { AdminPage } from './pages/AdminPage';
 import { PageViewTracker } from './components/PageViewTracker';
 import { getAuthToken, setAuthToken } from './api/client';
+import { useWarmupPrefetch } from './hooks/useWarmupPrefetch';
+import { invalidateCached, CACHE_KEYS } from './api/resourceCache';
+import { invalidateAIClientCaches, invalidateBettingClientCache } from './api/clientCaches';
 
 export const App = (): JSX.Element => {
   const [isLoggedIn, setIsLoggedIn] = useState(() => !!getAuthToken());
 
+  // warm the other tabs' data right after first paint so the first visit to
+  // each is instant (the AI endpoints are excluded — they cost per call).
+  useWarmupPrefetch(isLoggedIn);
+
   const handleLogout = (): void => {
     setAuthToken(null);
     setIsLoggedIn(false);
+    // user-scoped caches must not leak into the next account on this device.
+    invalidateCached(CACHE_KEYS.roster);
+    invalidateCached(CACHE_KEYS.bets);
+    invalidateAIClientCaches();
+    invalidateBettingClientCache();
   };
 
   const handleLoginSuccess = (): void => {
