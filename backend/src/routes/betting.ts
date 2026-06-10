@@ -5,7 +5,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth.js';
 import { callClaude, buildBettingContext, extractJSON } from '../services/ai.js';
 import { getUserPreferences, buildBettingPromptBlock } from '../services/preferences.js';
 import { getUpcomingOdds, computeOddsHash, type BettingGame } from '../services/odds.js';
-import { americanToImpliedProb, combineParlay } from '../services/oddsMath.js';
+import { americanToImpliedProb, combineParlay, profitOnWin } from '../services/oddsMath.js';
 import {
   settleBet,
   summarizeLedger,
@@ -403,6 +403,9 @@ router.get('/bets', requireAuth, async (req: Request, res: Response): Promise<vo
     const bets = (result.rows as BetRow[]).map((b) => ({
       ...b,
       net: betNet(b.status, b.wager_type, b.stake, b.american_odds),
+      // what the bet pays (excluding returned stake) if it hits — the UI
+      // shows this on pending rows.
+      to_win: b.stake != null && b.american_odds != null ? profitOnWin(b.stake, b.american_odds) : null,
     }));
     // total money result across bets that recorded a stake and have settled.
     const net = Math.round(bets.reduce((sum, b) => sum + (b.net ?? 0), 0) * 100) / 100;
@@ -547,7 +550,11 @@ router.post('/bets', requireAuth, async (req: Request, res: Response): Promise<v
         wagerType,
       ]
     );
-    res.status(201).json(result.rows[0]);
+    const saved = result.rows[0];
+    res.status(201).json({
+      ...saved,
+      to_win: hasOdds ? profitOnWin(stake, american_odds) : null,
+    });
   } catch {
     res.status(500).json({ error: 'Failed to save bet' });
   }
