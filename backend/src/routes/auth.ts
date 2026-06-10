@@ -5,14 +5,34 @@ import crypto from 'crypto';
 import { OAuth2Client } from 'google-auth-library';
 import { query } from '../db.js';
 import { requireAuth, AuthRequest } from '../middleware/auth.js';
+import { rateLimit } from '../middleware/rateLimit.js';
 import { sendEmail, passwordResetEmail } from '../services/email.js';
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const router = Router();
 
+// per-IP limits on the unauthenticated auth endpoints. login is the tightest
+// (brute-force target); forgot-password is capped to stop using us as a
+// spam/SES-abuse relay. tokens last 7 days — short enough to bound a leaked
+// token's window without nagging the user to re-login constantly.
+const TOKEN_TTL = '7d';
+const loginLimiter = rateLimit({ scope: 'login', limit: 5, windowSeconds: 900 });
+const registerLimiter = rateLimit({ scope: 'register', limit: 5, windowSeconds: 3600 });
+const forgotPasswordLimiter = rateLimit({ scope: 'forgot-password', limit: 3, windowSeconds: 3600 });
+const resetPasswordLimiter = rateLimit({ scope: 'reset-password', limit: 10, windowSeconds: 3600 });
+
+const MAX_USERNAME_LENGTH = 50;
+const MAX_EMAIL_LENGTH = 255;
+const MAX_PASSWORD_LENGTH = 200;
+
 function validatePassword(password: string): string | null {
   if (password.length < 8) return 'Password must be at least 8 characters';
+  // bcrypt only hashes the first 72 bytes, but a multi-megabyte input is still
+  // a cheap CPU-DoS vector — cap it well before that.
+  if (password.length > MAX_PASSWORD_LENGTH) {
+    return `Password must be ${MAX_PASSWORD_LENGTH} characters or fewer`;
+  }
   if (!/[A-Z]/.test(password)) return 'Password must contain at least one uppercase letter';
   if (!/[0-9!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?`~]/.test(password)) {
     return 'Password must contain at least one number or symbol';
@@ -31,19 +51,31 @@ function getFrontendUrl(): string {
   return raw || 'http://localhost:5173';
 }
 
-router.post('/register', async (req: Request, res: Response): Promise<void> => {
+router.post('/register', registerLimiter, async (req: Request, res: Response): Promise<void> => {
   const { username, email, password } = req.body;
 
   if (!username || !email || !password) {
     res.status(400).json({ error: 'Username, email, and password are all required' });
     return;
   }
+  if (typeof username !== 'string' || typeof email !== 'string' || typeof password !== 'string') {
+    res.status(400).json({ error: 'Username, email, and password must be strings' });
+    return;
+  }
   if (username.length < 3) {
     res.status(400).json({ error: 'Username must be at least 3 characters' });
     return;
   }
+  if (username.length > MAX_USERNAME_LENGTH) {
+    res.status(400).json({ error: `Username must be ${MAX_USERNAME_LENGTH} characters or fewer` });
+    return;
+  }
   if (!isValidEmail(email)) {
     res.status(400).json({ error: 'Please enter a valid email address' });
+    return;
+  }
+  if (email.length > MAX_EMAIL_LENGTH) {
+    res.status(400).json({ error: `Email must be ${MAX_EMAIL_LENGTH} characters or fewer` });
     return;
   }
   const pwError = validatePassword(password);
@@ -61,7 +93,7 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
     const token = jwt.sign(
       { userId: result.rows[0].id },
       process.env.AUTH_SECRET!,
-      { expiresIn: '30d' }
+      { expiresIn: TOKEN_TTL }
     );
     res.status(201).json({ token });
   } catch (err: unknown) {
@@ -78,7 +110,7 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-router.post('/login', async (req: Request, res: Response): Promise<void> => {
+router.post('/login', loginLimiter, async (req: Request, res: Response): Promise<void> => {
   const { username, password } = req.body;
   if (!username || !password) {
     res.status(400).json({ error: 'Username and password are required' });
@@ -108,7 +140,7 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
     const token = jwt.sign(
       { userId: result.rows[0].id },
       process.env.AUTH_SECRET!,
-      { expiresIn: '30d' }
+      { expiresIn: TOKEN_TTL }
     );
     res.json({ token });
   } catch {
@@ -244,7 +276,7 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
     const token = jwt.sign(
       { userId: result.rows[0].id },
       process.env.AUTH_SECRET!,
-      { expiresIn: '30d' }
+      { expiresIn: TOKEN_TTL }
     );
     res.json({ token });
   } catch {
@@ -473,7 +505,7 @@ router.patch('/profile', requireAuth, async (req: Request, res: Response): Promi
  * Forgot-password — always returns 200 with the same message, regardless of whether
  * the email exists. Prevents email enumeration attacks.
  */
-router.post('/forgot-password', async (req: Request, res: Response): Promise<void> => {
+router.post('/forgot-password', forgotPasswordLimiter, async (req: Request, res: Response): Promise<void> => {
   const { email } = req.body;
   const genericResponse = { message: 'If that email is registered, a reset link has been sent.' };
 
@@ -523,7 +555,7 @@ router.post('/forgot-password', async (req: Request, res: Response): Promise<voi
   }
 });
 
-router.post('/reset-password', async (req: Request, res: Response): Promise<void> => {
+router.post('/reset-password', resetPasswordLimiter, async (req: Request, res: Response): Promise<void> => {
   const { token, newPassword } = req.body;
 
   if (!token || !newPassword) {
