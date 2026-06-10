@@ -12,14 +12,15 @@ const bets: Bet[] = [
     away_team: 'San Antonio Spurs', game_date: '2026-06-10T00:00:00.000Z', selection: 'home',
     line: -2.5, american_odds: -105, description: null, stake: 50, wager_type: 'cash',
     status: 'won', created_at: '2026-06-09T12:00:00Z', settled_at: '2026-06-11T03:00:00Z',
-    net: 47.62,
+    net: 47.62, to_win: 47.62,
   },
   {
     id: 2, market: 'prop', nba_game_id: '401', home_team: 'New York Knicks',
     away_team: 'San Antonio Spurs', game_date: '2026-06-10T00:00:00.000Z', selection: null,
     line: null, american_odds: -115, description: 'Brunson over 28.5 points',
     stake: 25, wager_type: 'bonus_bet',
-    status: 'pending', created_at: '2026-06-09T13:00:00Z', settled_at: null, net: null,
+    status: 'pending', created_at: '2026-06-09T13:00:00Z', settled_at: null,
+    net: null, to_win: 21.74,
   },
   {
     id: 3, market: 'custom', nba_game_id: null, home_team: null,
@@ -72,7 +73,9 @@ describe('BetLedger', () => {
     expect(screen.queryByText(/T00:00:00/)).not.toBeInTheDocument();
     expect(screen.getByText('$50.00')).toBeInTheDocument();
     expect(screen.getByText('(Bonus bet)')).toBeInTheDocument();
+    // settled bets show the actual result; pending bets the projected payout
     expect(screen.getByText('+$47.62')).toBeInTheDocument();
+    expect(screen.getByText('to win $21.74')).toBeInTheDocument();
   });
 
   it('labels straight bets from their fields and text bets from their description', () => {
