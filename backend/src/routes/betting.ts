@@ -9,11 +9,14 @@ import { americanToImpliedProb, combineParlay } from '../services/oddsMath.js';
 import {
   settleBet,
   summarizeLedger,
+  betNet,
   STRAIGHT_MARKETS,
+  WAGER_TYPES,
   type BetMarket,
   type StraightMarket,
   type BetSelection,
   type BetStatus,
+  type WagerType,
 } from '../services/betSettlement.js';
 
 const router = Router();
@@ -350,6 +353,8 @@ interface BetRow {
   line: number | null;
   american_odds: number | null;
   description: string | null;
+  stake: number | null;
+  wager_type: WagerType;
   status: BetStatus;
   created_at: string;
   settled_at: string | null;
@@ -387,6 +392,7 @@ router.get('/bets', requireAuth, async (req: Request, res: Response): Promise<vo
     const result = await query(
       `SELECT id, market, nba_game_id, home_team, away_team, game_date, selection,
               line::float AS line, american_odds, description,
+              stake::float AS stake, wager_type,
               status, created_at, settled_at
        FROM bets
        WHERE user_id = $1
@@ -394,8 +400,13 @@ router.get('/bets', requireAuth, async (req: Request, res: Response): Promise<vo
       [userId]
     );
 
-    const bets = result.rows as BetRow[];
-    res.json({ bets, summary: summarizeLedger(bets) });
+    const bets = (result.rows as BetRow[]).map((b) => ({
+      ...b,
+      net: betNet(b.status, b.wager_type, b.stake, b.american_odds),
+    }));
+    // total money result across bets that recorded a stake and have settled.
+    const net = Math.round(bets.reduce((sum, b) => sum + (b.net ?? 0), 0) * 100) / 100;
+    res.json({ bets, summary: { ...summarizeLedger(bets), net } });
   } catch {
     res.status(500).json({ error: 'Failed to load bets' });
   }
@@ -406,7 +417,7 @@ const TEXT_MARKETS: BetMarket[] = ['prop', 'parlay', 'custom'];
 router.post('/bets', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const userId = (req as AuthRequest).userId;
   try {
-    const { nba_game_id, market, selection, line, american_odds, description } = req.body ?? {};
+    const { nba_game_id, market, selection, line, american_odds, description, stake, wager_type } = req.body ?? {};
 
     const isStraight = (STRAIGHT_MARKETS as string[]).includes(market);
     const isText = (TEXT_MARKETS as string[]).includes(market);
@@ -420,6 +431,19 @@ router.post('/bets', requireAuth, async (req: Request, res: Response): Promise<v
     const hasOdds = american_odds != null;
     if (hasOdds && (!Number.isInteger(american_odds) || Math.abs(american_odds) < 100 || Math.abs(american_odds) > 10000)) {
       res.status(400).json({ error: 'american_odds must be an integer like -110 or +150' });
+      return;
+    }
+
+    // money tracking is optional: note what you put down and whether it was
+    // a normal cash bet, a bonus (free) bet, or an odds boost.
+    const hasStake = stake != null;
+    if (hasStake && (typeof stake !== 'number' || stake <= 0 || stake > 100000)) {
+      res.status(400).json({ error: 'stake must be between 0 and 100000' });
+      return;
+    }
+    const wagerType: WagerType = wager_type ?? 'cash';
+    if (!WAGER_TYPES.includes(wagerType)) {
+      res.status(400).json({ error: 'wager_type must be cash, bonus_bet, or odds_boost' });
       return;
     }
 
@@ -502,10 +526,11 @@ router.post('/bets', requireAuth, async (req: Request, res: Response): Promise<v
     const game = resolvedGame;
     const result = await query(
       `INSERT INTO bets (user_id, market, nba_game_id, home_team, away_team, game_date,
-                         selection, line, american_odds, description)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                         selection, line, american_odds, description, stake, wager_type)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING id, market, nba_game_id, home_team, away_team, game_date, selection,
                  line::float AS line, american_odds, description,
+                 stake::float AS stake, wager_type,
                  status, created_at, settled_at`,
       [
         userId,
@@ -518,6 +543,8 @@ router.post('/bets', requireAuth, async (req: Request, res: Response): Promise<v
         isStraight && market !== 'moneyline' ? line : null,
         hasOdds ? american_odds : null,
         isText ? description.trim() : null,
+        hasStake ? stake : null,
+        wagerType,
       ]
     );
     res.status(201).json(result.rows[0]);

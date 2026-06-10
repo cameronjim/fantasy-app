@@ -158,7 +158,7 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<void>
     }
     const emptyLedger = {
       bets: [],
-      summary: { wins: 0, losses: 0, pushes: 0, pending: 0 },
+      summary: { wins: 0, losses: 0, pushes: 0, pending: 0, net: 0 },
     };
     route.fulfill({ json: opts.bets ?? emptyLedger });
   });
