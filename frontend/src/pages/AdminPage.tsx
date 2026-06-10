@@ -20,10 +20,6 @@ function formatDate(iso: string | null): string {
 }
 
 export const AdminPage = (): JSX.Element => {
-  if (!getAuthToken()) {
-    return <Navigate to="/login" replace state={{ from: '/admin' }} />;
-  }
-
   const [state, setState] = useState<AdminState>({ status: 'loading' });
 
   useEffect(() => {
@@ -49,6 +45,13 @@ export const AdminPage = (): JSX.Element => {
       cancelled = true;
     };
   }, []);
+
+  // the auth guard must come AFTER every hook: an early return above a hook
+  // crashes with react error #300 when the token disappears while the page
+  // is mounted (e.g. signing out from this page).
+  if (!getAuthToken()) {
+    return <Navigate to="/login" replace state={{ from: '/admin' }} />;
+  }
 
   if (state.status === 'loading') {
     return (

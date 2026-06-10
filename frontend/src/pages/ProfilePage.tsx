@@ -20,14 +20,17 @@ export const ProfilePage = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  if (!getAuthToken()) {
-    return <Navigate to="/login" replace state={{ from: '/profile' }} />;
-  }
-
   // remember the active tab in the url hash so refreshes stay put.
   const initialTab: TabKey =
     location.hash === '#password' ? 'password' : 'profile';
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
+
+  // the auth guard must come AFTER every hook: an early return above a hook
+  // crashes with react error #300 when the token disappears while the page
+  // is mounted (e.g. signing out from this page).
+  if (!getAuthToken()) {
+    return <Navigate to="/login" replace state={{ from: '/profile' }} />;
+  }
 
   const switchTab = (key: TabKey): void => {
     setActiveTab(key);
