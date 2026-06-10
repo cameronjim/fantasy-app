@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { getBets, createBet, deleteBet, settleBetStatus } from '../api/client';
 import type { Bet, BetStatus, LedgerSummary, NewBet } from '../types';
 
-const EMPTY_SUMMARY: LedgerSummary = { wins: 0, losses: 0, pushes: 0, pending: 0 };
+const EMPTY_SUMMARY: LedgerSummary = { wins: 0, losses: 0, pushes: 0, pending: 0, net: 0 };
 
 interface UseBetLedger {
   bets: Bet[];

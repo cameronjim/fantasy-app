@@ -164,6 +164,8 @@ export interface BettingPicksResponse {
   no_games?: boolean;
 }
 
+export type WagerType = 'cash' | 'bonus_bet' | 'odds_boost';
+
 export interface Bet {
   id: number;
   market: BetMarket;
@@ -175,9 +177,13 @@ export interface Bet {
   line: number | null;
   american_odds: number | null;
   description: string | null;
+  stake: number | null;
+  wager_type: WagerType;
   status: BetStatus;
   created_at: string;
   settled_at: string | null;
+  // money result, computed server-side: null while pending or without a stake
+  net: number | null;
 }
 
 export interface NewBet {
@@ -187,6 +193,8 @@ export interface NewBet {
   line?: number | null;
   american_odds?: number | null;
   description?: string;
+  stake?: number | null;
+  wager_type?: WagerType;
 }
 
 export interface LedgerSummary {
@@ -194,4 +202,5 @@ export interface LedgerSummary {
   losses: number;
   pushes: number;
   pending: number;
+  net: number;
 }

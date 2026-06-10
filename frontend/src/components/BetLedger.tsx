@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { Trash2 } from 'lucide-react';
-import { formatAmerican, formatLine } from '../utils/formatOdds';
-import type { Bet, BettingGame, BetStatus, NewBet, BetMarket, BetSelection, StraightMarket } from '../types';
+import { formatAmerican, formatLine, formatMoney, formatSignedMoney } from '../utils/formatOdds';
+import type {
+  Bet, BettingGame, BetStatus, LedgerSummary, NewBet,
+  BetMarket, BetSelection, StraightMarket, WagerType,
+} from '../types';
 
 interface BetLedgerProps {
   bets: Bet[];
-  summary: { wins: number; losses: number; pushes: number; pending: number };
+  summary: LedgerSummary;
   loading: boolean;
   error: string;
   games: BettingGame[];
@@ -28,6 +31,12 @@ const MARKET_LABEL: Record<BetMarket, string> = {
   prop: 'Player prop',
   parlay: 'Parlay',
   custom: 'Custom',
+};
+
+const WAGER_LABEL: Record<WagerType, string> = {
+  cash: 'Cash',
+  bonus_bet: 'Bonus bet',
+  odds_boost: 'Odds boost',
 };
 
 // straight bets settle automatically from final scores; everything else is
@@ -57,6 +66,8 @@ const AddBetForm = ({ games, onTrackBet, onDone }: AddBetFormProps) => {
   const [selection, setSelection] = useState<BetSelection>('home');
   const [description, setDescription] = useState('');
   const [oddsText, setOddsText] = useState('');
+  const [stakeText, setStakeText] = useState('');
+  const [wagerType, setWagerType] = useState<WagerType>('cash');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -104,6 +115,15 @@ const AddBetForm = ({ games, onTrackBet, onDone }: AddBetFormProps) => {
     return Number.isNaN(n) ? null : n;
   };
 
+  // money fields apply to every bet type and are always optional.
+  const moneyFields = (): Pick<NewBet, 'stake' | 'wager_type'> => {
+    const n = parseFloat(stakeText.trim());
+    return {
+      stake: Number.isNaN(n) || n <= 0 ? null : n,
+      wager_type: wagerType,
+    };
+  };
+
   const canSubmit = isStraight
     ? !!game && !!resolved
     : description.trim().length >= 3;
@@ -120,6 +140,7 @@ const AddBetForm = ({ games, onTrackBet, onDone }: AddBetFormProps) => {
           selection,
           line: resolved.line,
           american_odds: resolved.odds,
+          ...moneyFields(),
         });
       } else {
         await onTrackBet({
@@ -127,6 +148,7 @@ const AddBetForm = ({ games, onTrackBet, onDone }: AddBetFormProps) => {
           description: description.trim(),
           american_odds: parsedOdds(),
           ...(market === 'prop' && game ? { nba_game_id: game.nba_game_id } : {}),
+          ...moneyFields(),
         });
       }
       onDone();
@@ -205,6 +227,37 @@ const AddBetForm = ({ games, onTrackBet, onDone }: AddBetFormProps) => {
           </div>
         )}
 
+        <div>
+          <label className="text-xs font-semibold block mb-1" htmlFor="addbet-stake">Stake (optional)</label>
+          <label className="input input-bordered input-sm flex items-center gap-1 w-28">
+            $
+            <input
+              id="addbet-stake"
+              type="number"
+              min={0.01}
+              step={0.01}
+              placeholder="10"
+              value={stakeText}
+              onChange={(e) => setStakeText(e.target.value)}
+              className="w-full"
+            />
+          </label>
+        </div>
+
+        <div>
+          <label className="text-xs font-semibold block mb-1" htmlFor="addbet-wager">Wager kind</label>
+          <select
+            id="addbet-wager"
+            className="select select-bordered select-sm"
+            value={wagerType}
+            onChange={(e) => setWagerType(e.target.value as WagerType)}
+          >
+            {(Object.keys(WAGER_LABEL) as WagerType[]).map((w) => (
+              <option key={w} value={w}>{WAGER_LABEL[w]}</option>
+            ))}
+          </select>
+        </div>
+
         <button
           onClick={handleSubmit}
           disabled={!canSubmit || saving}
@@ -266,7 +319,7 @@ export const BetLedger = ({ bets, summary, loading, error, games, onTrackBet, on
     }
   };
 
-  const record = `${summary.wins}-${summary.losses}${summary.pushes > 0 ? `-${summary.pushes}` : ''}`;
+  const hasMoney = bets.some((b) => b.stake != null);
 
   return (
     <div className="card bg-base-200 overflow-hidden">
@@ -292,16 +345,14 @@ export const BetLedger = ({ bets, summary, loading, error, games, onTrackBet, on
           </p>
         ) : (
           <>
-            <div className="stats stats-vertical sm:stats-horizontal shadow bg-base-300 w-full">
-              <div className="stat py-3">
-                <div className="stat-title text-xs">Record</div>
-                <div className="stat-value text-lg">{record}</div>
-              </div>
-              <div className="stat py-3">
-                <div className="stat-title text-xs">Pending</div>
-                <div className="stat-value text-lg">{summary.pending}</div>
-              </div>
-            </div>
+            <p className="text-xs font-semibold">
+              <span>{summary.pending} pending</span>
+              {hasMoney && (
+                <span className={`ml-3 ${summary.net > 0 ? 'text-success' : summary.net < 0 ? 'text-error' : 'opacity-60'}`}>
+                  Net: {formatSignedMoney(summary.net)}
+                </span>
+              )}
+            </p>
 
             <div className="overflow-x-auto">
               <table className="table table-sm">
@@ -312,7 +363,9 @@ export const BetLedger = ({ bets, summary, loading, error, games, onTrackBet, on
                     <th>Bet</th>
                     <th>Game</th>
                     <th>Odds</th>
+                    <th>Stake</th>
                     <th>Status</th>
+                    <th>+/-</th>
                     <th />
                   </tr>
                 </thead>
@@ -321,17 +374,28 @@ export const BetLedger = ({ bets, summary, loading, error, games, onTrackBet, on
                     const manual = !STRAIGHT.includes(bet.market);
                     return (
                       <tr key={bet.id}>
-                        <td className="whitespace-nowrap text-xs opacity-60">
-                          {bet.game_date ?? bet.created_at.slice(0, 10)}
+                        <td className="whitespace-nowrap text-xs">
+                          {(bet.game_date ?? bet.created_at).slice(0, 10)}
                         </td>
-                        <td className="text-xs opacity-60 whitespace-nowrap">{MARKET_LABEL[bet.market]}</td>
+                        <td className="text-xs whitespace-nowrap">
+                          {MARKET_LABEL[bet.market]}
+                          {bet.wager_type !== 'cash' && (
+                            <span className="opacity-60"> ({WAGER_LABEL[bet.wager_type]})</span>
+                          )}
+                        </td>
                         <td className="font-medium text-xs max-w-60">{betLabel(bet)}</td>
                         <td className="text-xs">
                           {bet.home_team ? `${bet.away_team} @ ${bet.home_team}` : ''}
                         </td>
                         <td className="text-xs">{bet.american_odds != null ? formatAmerican(bet.american_odds) : ''}</td>
+                        <td className="text-xs">{bet.stake != null ? formatMoney(bet.stake) : ''}</td>
                         <td>
                           <span className={`badge badge-sm ${STATUS_BADGE[bet.status]}`}>{bet.status}</span>
+                        </td>
+                        <td className={`text-xs font-medium whitespace-nowrap ${
+                          bet.net != null && bet.net > 0 ? 'text-success' : bet.net != null && bet.net < 0 ? 'text-error' : 'opacity-60'
+                        }`}>
+                          {bet.net != null ? formatSignedMoney(bet.net) : ''}
                         </td>
                         <td>
                           <div className="flex items-center gap-1 justify-end">

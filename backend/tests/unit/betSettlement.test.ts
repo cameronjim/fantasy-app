@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   settleBet,
   summarizeLedger,
+  betNet,
   type SettleableBet,
 } from '../../src/services/betSettlement.js';
 
@@ -71,6 +72,30 @@ describe('settleBet — moneyline', () => {
     expect(settleBet(moneyline('home'), 110, 100)).toBe('won');
     expect(settleBet(moneyline('away'), 110, 100)).toBe('lost');
     expect(settleBet(moneyline('away'), 100, 110)).toBe('won');
+  });
+});
+
+describe('betNet', () => {
+  it('returns winnings on a won bet regardless of wager kind', () => {
+    // act + assert — $110 at -110 wins $100; bonus bets pay winnings only too
+    expect(betNet('won', 'cash', 110, -110)).toBeCloseTo(100, 2);
+    expect(betNet('won', 'bonus_bet', 110, -110)).toBeCloseTo(100, 2);
+    expect(betNet('won', 'odds_boost', 100, 150)).toBeCloseTo(150, 2);
+  });
+
+  it('costs the stake on a cash loss but nothing on a bonus-bet loss', () => {
+    // act + assert
+    expect(betNet('lost', 'cash', 50, -110)).toBe(-50);
+    expect(betNet('lost', 'odds_boost', 50, -110)).toBe(-50);
+    expect(betNet('lost', 'bonus_bet', 50, -110)).toBe(0);
+  });
+
+  it('is zero on a push and null while pending or without money noted', () => {
+    // act + assert
+    expect(betNet('push', 'cash', 50, -110)).toBe(0);
+    expect(betNet('pending', 'cash', 50, -110)).toBeNull();
+    expect(betNet('won', 'cash', null, -110)).toBeNull();
+    expect(betNet('won', 'cash', 50, null)).toBeNull();
   });
 });
 

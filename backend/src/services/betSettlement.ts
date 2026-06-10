@@ -1,3 +1,5 @@
+import { profitOnWin } from './oddsMath.js';
+
 /**
  * Pure bet settlement and record math. The line convention matches the bets
  * table: a spread line is stored relative to the SELECTED side (home -6.5
@@ -13,6 +15,9 @@ export type StraightMarket = 'spread' | 'total' | 'moneyline';
 export type BetSelection = 'home' | 'away' | 'over' | 'under';
 export type BetOutcome = 'won' | 'lost' | 'push';
 export type BetStatus = 'pending' | BetOutcome;
+export type WagerType = 'cash' | 'bonus_bet' | 'odds_boost';
+
+export const WAGER_TYPES: WagerType[] = ['cash', 'bonus_bet', 'odds_boost'];
 
 export const STRAIGHT_MARKETS: StraightMarket[] = ['spread', 'total', 'moneyline'];
 
@@ -47,6 +52,25 @@ export function settleBet(bet: SettleableBet, homeScore: number, awayScore: numb
   if (total === line) return 'push';
   const overWon = total > line;
   return (bet.selection === 'over') === overWon ? 'won' : 'lost';
+}
+
+/**
+ * Net money result of a bet, when the user recorded a stake. Null while
+ * pending or when no stake/odds were noted. A bonus bet ("free bet" credit
+ * from the book) pays winnings only and risks no real money, so a loss
+ * costs nothing.
+ */
+export function betNet(
+  status: BetStatus,
+  wagerType: WagerType,
+  stake: number | null,
+  americanOdds: number | null
+): number | null {
+  if (status === 'pending' || stake == null) return null;
+  if (status === 'push') return 0;
+  if (status === 'lost') return wagerType === 'bonus_bet' ? 0 : -stake;
+  if (americanOdds == null) return null;
+  return profitOnWin(stake, americanOdds);
 }
 
 export interface LedgerSummary {

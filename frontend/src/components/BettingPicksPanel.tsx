@@ -11,9 +11,9 @@ interface BettingPicksPanelProps {
 }
 
 const CATEGORY_META = {
-  best_value: { label: 'Best Value', badge: 'badge-success' },
-  safe: { label: 'Safe', badge: 'badge-info' },
-  hail_mary: { label: 'Hail Mary', badge: 'badge-warning' },
+  best_value: { label: 'Best Value' },
+  safe: { label: 'Safe' },
+  hail_mary: { label: 'Hail Mary' },
 } as const;
 
 const PickCard = ({ pick }: { pick: BettingPick }) => {
@@ -127,9 +127,8 @@ export const BettingPicksPanel = ({ picks, loading, refreshing, error, onReload 
           const categoryPicks = picks.picks.filter((p) => p.category === category);
           return (
             <div key={category} className="card bg-base-200 overflow-hidden">
-              <div className="px-4 py-3 border-b border-base-300 flex items-center gap-2">
+              <div className="px-4 py-3 border-b border-base-300">
                 <h2 className="text-sm font-semibold">{meta.label}</h2>
-                <span className={`badge badge-xs ${meta.badge}`} aria-hidden="true" />
               </div>
               <div className="p-3 space-y-3">
                 {categoryPicks.length === 0 ? (
