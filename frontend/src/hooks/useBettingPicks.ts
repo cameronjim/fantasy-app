@@ -5,6 +5,8 @@ import {
   setCachedBettingPicks,
   invalidateBettingClientCache,
 } from '../api/clientCaches';
+import { useCachedResource } from './useCachedResource';
+import { CACHE_KEYS } from '../api/resourceCache';
 import type { BettingGame, BettingPicksResponse } from '../types';
 
 interface UseBettingPicks {
@@ -21,27 +23,30 @@ interface UseBettingPicks {
 
 /**
  * Loads the public odds board for everyone and the AI picks for signed-in
- * users. Picks hydrate from the module-level client cache so tab switches
- * don't re-trigger a slow AI round trip.
+ * users. Both render instantly from cache on tab switches; when the server
+ * reports the picks are stale (lines moved), the previous picks stay on
+ * screen while a regeneration runs in the background.
  */
 export function useBettingPicks(isLoggedIn: boolean): UseBettingPicks {
   const [initialPicks] = useState(() => (isLoggedIn ? getCachedBettingPicks() : null));
-  const [odds, setOdds] = useState<BettingGame[]>([]);
-  const [oddsLoading, setOddsLoading] = useState(true);
-  const [oddsError, setOddsError] = useState('');
+
+  const {
+    data: oddsData,
+    loading: oddsLoading,
+    error: oddsError,
+    reload: reloadOddsResource,
+  } = useCachedResource(CACHE_KEYS.odds, getBettingOdds, {
+    errorMessage: 'Failed to load odds. ESPN may be unavailable — try again in a minute.',
+  });
+  const odds = oddsData?.games ?? [];
+  const reloadOdds = useCallback((): void => {
+    void reloadOddsResource();
+  }, [reloadOddsResource]);
+
   const [picks, setPicks] = useState<BettingPicksResponse | null>(initialPicks);
   const [picksLoading, setPicksLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [picksError, setPicksError] = useState('');
-
-  const reloadOdds = useCallback((): void => {
-    setOddsLoading(true);
-    setOddsError('');
-    getBettingOdds()
-      .then((data) => setOdds(data.games))
-      .catch(() => setOddsError('Failed to load odds. ESPN may be unavailable — try again in a minute.'))
-      .finally(() => setOddsLoading(false));
-  }, []);
 
   const reloadPicks = useCallback(async (refresh = false): Promise<void> => {
     if (refresh) {
@@ -51,24 +56,38 @@ export function useBettingPicks(isLoggedIn: boolean): UseBettingPicks {
       setPicksLoading(true);
     }
     setPicksError('');
+    let data: BettingPicksResponse;
     try {
-      const data = await getBettingPicks(refresh);
-      setPicks(data);
-      // an empty slate isn't worth pinning in the cache — re-ask next visit.
-      if (!data.no_games && data.picks.length > 0) {
-        setCachedBettingPicks(data);
-      }
+      data = await getBettingPicks(refresh);
     } catch {
       setPicksError('Failed to load AI picks');
-    } finally {
       setPicksLoading(false);
       setRefreshing(false);
+      return;
     }
+    setPicks(data);
+    // an empty slate isn't worth pinning, and a stale response is about to
+    // be replaced by the background regeneration below — cache neither.
+    if (!data.no_games && data.picks.length > 0 && !data.stale) {
+      setCachedBettingPicks(data);
+    }
+    setPicksLoading(false);
+    if (!refresh && data.stale) {
+      // lines moved since these picks were generated — they're already on
+      // screen, so regenerate behind the scenes and swap when ready.
+      setRefreshing(true);
+      try {
+        const fresh = await getBettingPicks(true);
+        setPicks(fresh);
+        if (!fresh.no_games && fresh.picks.length > 0) {
+          setCachedBettingPicks(fresh);
+        }
+      } catch {
+        // regeneration failed — the previous picks stay visible.
+      }
+    }
+    setRefreshing(false);
   }, []);
-
-  useEffect(() => {
-    reloadOdds();
-  }, [reloadOdds]);
 
   useEffect(() => {
     if (!isLoggedIn) return;

@@ -283,6 +283,24 @@ router.get('/picks', requireAuth, picksLimiter, async (req: Request, res: Respon
         });
         return;
       }
+
+      // lines moved (the odds hash rotates every time a book shifts a price)
+      // or the ttl lapsed — serve the user's previous picks instantly with a
+      // stale marker; the client regenerates in the background instead of
+      // staring at a spinner for the length of a model call.
+      const stale = await query(
+        `SELECT picks, created_at FROM betting_cache WHERE user_id = $1`,
+        [userId]
+      );
+      if (stale.rows.length > 0) {
+        res.json({
+          ...stale.rows[0].picks,
+          cached: true,
+          stale: true,
+          cached_at: stale.rows[0].created_at,
+        });
+        return;
+      }
     }
 
     const context = await buildBettingContext(bettable);

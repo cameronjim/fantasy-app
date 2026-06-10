@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Search, GitCompare, X } from 'lucide-react';
 import { ScoreboardStrip } from '../components/ScoreboardStrip';
 import { PlayerTable } from '../components/PlayerTable';
@@ -6,37 +6,34 @@ import { TeamTable } from '../components/TeamTable';
 import { PlayerModal } from '../components/PlayerModal';
 import { CompareModal } from '../components/CompareModal';
 import { getPlayers, getTeams } from '../api/client';
+import { useCachedResource } from '../hooks/useCachedResource';
+import { CACHE_KEYS } from '../api/resourceCache';
 import type { Player, Team } from '../types';
 
 const POSITIONS = ['All', 'PG', 'SG', 'SF', 'PF', 'C'];
 
 export const StatsPage = () => {
   const [view, setView] = useState<'players' | 'teams'>('players');
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [teams, setTeams] = useState<Team[]>([]);
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
   const [search, setSearch] = useState('');
   const [teamFilter, setTeamFilter] = useState('');
   const [posFilter, setPosFilter] = useState('All');
-  const [loadingPlayers, setLoadingPlayers] = useState(false);
-  const [loadingTeams, setLoadingTeams] = useState(false);
   const [comparePlayers, setComparePlayers] = useState<Player[]>([]);
   const [showCompare, setShowCompare] = useState(false);
   const [confFilter, setConfFilter] = useState<'All' | 'East' | 'West'>('All');
 
-  useEffect(() => {
-    setLoadingPlayers(true);
-    getPlayers()
-      .then(setPlayers)
-      .catch(() => setPlayers([]))
-      .finally(() => setLoadingPlayers(false));
-
-    setLoadingTeams(true);
-    getTeams()
-      .then(setTeams)
-      .catch(() => setTeams([]))
-      .finally(() => setLoadingTeams(false));
-  }, []);
+  // cached copies render instantly on tab return; a silent background
+  // refetch keeps them current. spinners only appear on the very first load.
+  const { data: playersData, loading: loadingPlayers } = useCachedResource<Player[]>(
+    CACHE_KEYS.players,
+    () => getPlayers()
+  );
+  const { data: teamsData, loading: loadingTeams } = useCachedResource<Team[]>(
+    CACHE_KEYS.teams,
+    getTeams
+  );
+  const players = playersData ?? [];
+  const teams = teamsData ?? [];
 
   const teamNames = [...new Set(players.map((p) => p.team))].sort();
 
