@@ -35,7 +35,7 @@ describe('PATCH /api/preferences', () => {
     const res = await request(app)
       .patch('/api/preferences')
       .set('Authorization', bearerFor(7))
-      .send({ betting: { risk_appetite: 'aggressive', bankroll: 500 } });
+      .send({ betting: { risk_appetite: 'aggressive' } });
 
     // assert — the UPDATE payload keeps the fantasy keys and adds betting
     expect(res.status).toBe(200);
@@ -47,13 +47,13 @@ describe('PATCH /api/preferences', () => {
     const saved = JSON.parse((params as string[])[0]);
     expect(saved.risk_tolerance).toBe('balanced');
     expect(saved.league_size).toBe(12);
-    expect(saved.betting).toEqual({ risk_appetite: 'aggressive', bankroll: 500 });
+    expect(saved.betting).toEqual({ risk_appetite: 'aggressive' });
     expect((params as unknown[])[1]).toBe(7);
   });
 
   it('preserves stored betting prefs when a fantasy-only patch arrives', async () => {
     // arrange
-    const stored = { betting: { risk_appetite: 'conservative', bankroll: 200 } };
+    const stored = { betting: { risk_appetite: 'conservative' } };
     queryMock
       .mockResolvedValueOnce(pgResult([{ ai_preferences: stored }]))
       .mockResolvedValueOnce(pgResult([]))
@@ -72,7 +72,7 @@ describe('PATCH /api/preferences', () => {
     );
     const saved = JSON.parse((updateCall![1] as string[])[0]);
     expect(saved.risk_tolerance).toBe('high_upside');
-    expect(saved.betting).toEqual({ risk_appetite: 'conservative', bankroll: 200 });
+    expect(saved.betting).toEqual({ risk_appetite: 'conservative' });
   });
 
   it('strips junk from the betting sub-object', async () => {
@@ -90,8 +90,6 @@ describe('PATCH /api/preferences', () => {
         betting: {
           risk_appetite: 'yolo', // invalid enum
           preferred_markets: ['spread', 'crypto', 'parlay'], // one junk entry
-          bankroll: -50, // invalid
-          unit_size: 25.999, // rounded to cents
           extra_notes: '  I like unders  ',
           hacker_field: 'nope',
         },
@@ -105,7 +103,6 @@ describe('PATCH /api/preferences', () => {
     const saved = JSON.parse((updateCall![1] as string[])[0]);
     expect(saved.betting).toEqual({
       preferred_markets: ['spread', 'parlay'],
-      unit_size: 26,
       extra_notes: 'I like unders',
     });
   });

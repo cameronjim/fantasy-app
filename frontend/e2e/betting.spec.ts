@@ -6,22 +6,33 @@ import type { BettingGame, BettingPicksResponse } from '../src/types';
 // the betting page never hits real ESPN or anthropic in e2e — fixtures return
 // canned odds and picks so every ui branch is deterministic.
 
-const ODDS_FIXTURE: BettingGame[] = [
-  {
-    nba_game_id: '401859966',
-    home_team: 'New York Knicks',
-    away_team: 'San Antonio Spurs',
-    home_abbrev: 'NY',
-    away_abbrev: 'SA',
-    game_date: '2026-06-10',
-    tipoff: '6/10 - 8:30 PM EDT',
-    provider: 'Draft Kings',
-    markets: {
-      spread: { home_line: -2.5, away_line: 2.5, home_price: -105, away_price: -115, home_implied: 0.5122, away_implied: 0.5349 },
-      total: { line: 216.5, over_price: -112, under_price: -108, over_implied: 0.5283, under_implied: 0.5192 },
-      moneyline: { home: -130, away: 105, home_implied: 0.5652, away_implied: 0.4878 },
-    },
+const makeGame = (id: string, home: string, away: string): BettingGame => ({
+  nba_game_id: id,
+  home_team: home,
+  away_team: away,
+  home_abbrev: home.slice(0, 2).toUpperCase(),
+  away_abbrev: away.slice(0, 2).toUpperCase(),
+  game_date: '2026-06-10',
+  tipoff: '6/10 - 8:30 PM EDT',
+  provider: 'Draft Kings',
+  markets: {
+    spread: { home_line: -2.5, away_line: 2.5, home_price: -105, away_price: -115, home_implied: 0.5122, away_implied: 0.5349 },
+    total: { line: 216.5, over_price: -112, under_price: -108, over_implied: 0.5283, under_implied: 0.5192 },
+    moneyline: { home: -130, away: 105, home_implied: 0.5652, away_implied: 0.4878 },
   },
+});
+
+const ODDS_FIXTURE: BettingGame[] = [
+  makeGame('401859966', 'New York Knicks', 'San Antonio Spurs'),
+];
+
+// five games so the board collapses behind the See more button.
+const MANY_GAMES: BettingGame[] = [
+  makeGame('1', 'New York Knicks', 'San Antonio Spurs'),
+  makeGame('2', 'Boston Celtics', 'Miami Heat'),
+  makeGame('3', 'Denver Nuggets', 'Phoenix Suns'),
+  makeGame('4', 'Dallas Mavericks', 'Houston Rockets'),
+  makeGame('5', 'Orlando Magic', 'Atlanta Hawks'),
 ];
 
 const PICKS_FIXTURE: BettingPicksResponse = {
@@ -33,7 +44,6 @@ const PICKS_FIXTURE: BettingPicksResponse = {
       line: -2.5, american_odds: -105, implied_prob: 0.5122,
       estimated_win_prob: 0.58, edge: 0.0678,
       rationale: 'Rest advantage and a top-five defense at home.', confidence: 'medium',
-      kelly: { full: 0.06, quarter: 0.015, suggested_stake: 15 },
     },
     {
       game_id: '401859966', category: 'safe', market: 'moneyline', selection: 'home',
@@ -42,7 +52,6 @@ const PICKS_FIXTURE: BettingPicksResponse = {
       line: null, american_odds: -130, implied_prob: 0.5652,
       estimated_win_prob: 0.62, edge: 0.0548,
       rationale: 'Better team straight up.', confidence: 'high',
-      kelly: { full: 0.05, quarter: 0.0125, suggested_stake: 12.5 },
     },
   ],
   parlay: {
@@ -52,8 +61,8 @@ const PICKS_FIXTURE: BettingPicksResponse = {
     ],
     combined_american: 271,
     combined_implied_prob: 0.2695,
-    rationale: 'Two correlated slow-pace plays.',
-    ev_note: 'Parlays multiply the house edge — keep the stake small.',
+    rationale: 'Two slow-pace plays.',
+    ev_note: 'Parlays multiply the house edge, so treat this as entertainment.',
   },
   summary: 'One strong value play on a thin slate.',
 };
@@ -65,22 +74,39 @@ const signIn = async (page: import('@playwright/test').Page): Promise<void> => {
 };
 
 test.describe('Betting page', () => {
-  test('signed-out visitors see the disclaimer, odds board, and glossary with a sign-in prompt', async ({ page }) => {
+  test('signed-out visitors see the odds board, chat, glossary, and a sign-in prompt', async ({ page }) => {
     await mockApi(page, { bettingOdds: ODDS_FIXTURE });
 
     const betting = new BettingPage(page);
     await betting.goto();
 
-    await expect(betting.disclaimer().first()).toBeVisible();
+    await expect(betting.disclaimer()).toBeVisible();
     await expect(betting.signInPrompt()).toBeVisible();
     await expect(betting.oddsBoardHeading()).toBeVisible();
     await expect(betting.glossaryHeading()).toBeVisible();
+    await expect(betting.chatHeading()).toBeVisible();
     // odds render with implied-probability badges
     await expect(page.getByText('New York Knicks').first()).toBeVisible();
     await expect(page.getByText('56.5%').first()).toBeVisible();
   });
 
-  test('signed-in users see categorized AI picks and the parlay with its -EV note', async ({ page }) => {
+  test('odds board collapses to three games with a See more toggle', async ({ page }) => {
+    await mockApi(page, { bettingOdds: MANY_GAMES });
+
+    const betting = new BettingPage(page);
+    await betting.goto();
+
+    // three of five games visible before expanding
+    await expect(page.getByText('Denver Nuggets')).toBeVisible();
+    await expect(page.getByText('Orlando Magic')).not.toBeVisible();
+
+    await betting.seeMoreButton().click();
+
+    await expect(page.getByText('Orlando Magic')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'See less' })).toBeVisible();
+  });
+
+  test('signed-in users see categorized AI picks and the parlay with its value note', async ({ page }) => {
     await mockApi(page, { bettingOdds: ODDS_FIXTURE, bettingPicks: PICKS_FIXTURE });
     await signIn(page);
 
@@ -91,11 +117,12 @@ test.describe('Betting page', () => {
     await expect(betting.categoryHeading('Safe')).toBeVisible();
     await expect(betting.categoryHeading('Hail Mary')).toBeVisible();
     await expect(page.getByText('New York Knicks ML (-130)')).toBeVisible();
+    await expect(page.getByText('medium confidence')).toBeVisible();
     await expect(betting.parlayHeading()).toBeVisible();
     await expect(page.getByText(/Parlays multiply the house edge/i)).toBeVisible();
   });
 
-  test('tracking a pick posts the bet and the ledger shows it', async ({ page }) => {
+  test('adding a custom bet posts it and the ledger shows it', async ({ page }) => {
     await mockApi(page, { bettingOdds: ODDS_FIXTURE, bettingPicks: PICKS_FIXTURE });
     await signIn(page);
 
@@ -107,13 +134,10 @@ test.describe('Betting page', () => {
         const body = route.request().postDataJSON() as Record<string, unknown>;
         tracked.push({
           id: tracked.length + 1,
-          home_team: 'New York Knicks',
-          away_team: 'San Antonio Spurs',
-          game_date: '2026-06-10',
-          status: 'pending',
-          created_at: '2026-06-09T12:00:00Z',
-          settled_at: null,
-          profit: 0,
+          nba_game_id: null, home_team: null, away_team: null, game_date: null,
+          selection: null, line: null,
+          status: 'pending', created_at: '2026-06-09T12:00:00Z', settled_at: null,
+          american_odds: null, description: null,
           ...body,
         });
         route.fulfill({ status: 201, json: tracked[tracked.length - 1] });
@@ -122,11 +146,7 @@ test.describe('Betting page', () => {
       route.fulfill({
         json: {
           bets: tracked,
-          summary: {
-            wins: 0, losses: 0, pushes: 0, pending: tracked.length,
-            total_staked: tracked.reduce((sum, b) => sum + (b.stake as number), 0),
-            profit: 0, roi: 0,
-          },
+          summary: { wins: 0, losses: 0, pushes: 0, pending: tracked.length },
         },
       });
     });
@@ -134,12 +154,16 @@ test.describe('Betting page', () => {
     const betting = new BettingPage(page);
     await betting.goto();
 
-    await betting.trackBetButton().first().click();
+    await betting.addBetButton().click();
+    await page.getByLabel('Bet type').selectOption('custom');
+    await page.getByLabel('Describe the bet').fill('First basket: Wembanyama');
+    await page.getByLabel('Odds (optional)').fill('+900');
+    await page.getByRole('button', { name: 'Add bet' }).click();
 
-    await expect(page.getByText('Added to your ledger ✓')).toBeVisible();
-    // the ledger re-fetched and now lists the tracked spread bet
-    await expect(betting.ledgerHeading()).toBeVisible();
-    await expect(page.getByRole('cell', { name: 'New York Knicks -2.5', exact: true })).toBeVisible();
+    // the ledger re-fetched and now lists the custom bet with settle buttons
+    await expect(page.getByRole('cell', { name: 'First basket: Wembanyama', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Won' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Lost' })).toBeVisible();
   });
 
   test('saving betting preferences re-runs the analysis with refresh=true', async ({ page }) => {
@@ -165,8 +189,8 @@ test.describe('Betting page', () => {
     const betting = new BettingPage(page);
     await betting.goto();
 
-    await betting.glossaryToggle('Moneyline').check();
+    await betting.glossaryToggle('Parlays').check();
 
-    await expect(page.getByText(/pick which team wins the game/i)).toBeVisible();
+    await expect(page.getByText(/ALL legs must win/i)).toBeVisible();
   });
 });

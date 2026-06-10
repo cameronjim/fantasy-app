@@ -131,7 +131,24 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<void>
       const body = route.request().postDataJSON() as Record<string, unknown>;
       route.fulfill({
         status: 201,
-        json: { id: 1, status: 'pending', created_at: '2026-05-24T12:00:00Z', settled_at: null, ...body },
+        json: {
+          id: 1, nba_game_id: null, home_team: null, away_team: null, game_date: null,
+          selection: null, line: null, american_odds: null, description: null,
+          status: 'pending', created_at: '2026-05-24T12:00:00Z', settled_at: null,
+          ...body,
+        },
+      });
+      return;
+    }
+    if (method === 'PATCH') {
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      route.fulfill({
+        json: {
+          id: 1, market: 'custom', nba_game_id: null, home_team: null, away_team: null,
+          game_date: null, selection: null, line: null, american_odds: null,
+          description: 'mock bet', status: body.status,
+          created_at: '2026-05-24T12:00:00Z', settled_at: '2026-05-24T13:00:00Z',
+        },
       });
       return;
     }
@@ -141,7 +158,7 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<void>
     }
     const emptyLedger = {
       bets: [],
-      summary: { wins: 0, losses: 0, pushes: 0, pending: 0, total_staked: 0, profit: 0, roi: 0 },
+      summary: { wins: 0, losses: 0, pushes: 0, pending: 0 },
     };
     route.fulfill({ json: opts.bets ?? emptyLedger });
   });

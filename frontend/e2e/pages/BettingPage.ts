@@ -13,7 +13,7 @@ export class BettingPage {
   }
 
   disclaimer(): Locator {
-    return this.page.getByText(/not financial advice/i);
+    return this.page.getByText(/1-800-GAMBLER/);
   }
 
   signInPrompt(): Locator {
@@ -42,12 +42,12 @@ export class BettingPage {
     return this.page.getByRole('heading', { name: /Suggested Parlay/i });
   }
 
-  trackBetButton(): Locator {
-    return this.page.getByRole('button', { name: /Track this bet/i });
-  }
-
   ledgerHeading(): Locator {
     return this.page.getByRole('heading', { name: 'My Bets' });
+  }
+
+  addBetButton(): Locator {
+    return this.page.getByRole('button', { name: '+ Add bet' });
   }
 
   prefsToggle(): Locator {
@@ -56,5 +56,13 @@ export class BettingPage {
 
   savePrefsButton(): Locator {
     return this.page.getByRole('button', { name: /Save & Re-analyze/i });
+  }
+
+  chatHeading(): Locator {
+    return this.page.getByText('AI Assistant', { exact: true });
+  }
+
+  seeMoreButton(): Locator {
+    return this.page.getByRole('button', { name: /See more/ });
   }
 }

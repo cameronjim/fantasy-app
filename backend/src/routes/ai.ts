@@ -1,9 +1,10 @@
 import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
 import { query } from '../db.js';
-import { callClaude, buildTeamContext, buildWaiverContext, extractJSON } from '../services/ai.js';
-import { getUserPreferences, buildPreferencesPromptBlock } from '../services/preferences.js';
+import { callClaude, buildTeamContext, buildWaiverContext, buildBettingContext, extractJSON } from '../services/ai.js';
+import { getUserPreferences, buildPreferencesPromptBlock, buildBettingPromptBlock } from '../services/preferences.js';
 import { getCurrentBenchmarks, formatBenchmarksLine } from '../services/benchmarks.js';
+import { getUpcomingOdds } from '../services/odds.js';
 import type { AuthRequest } from '../middleware/auth.js';
 
 const router = Router();
@@ -32,13 +33,28 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
     }
 
     const prefs = await getUserPreferences(userId);
-    const prefsBlock = buildPreferencesPromptBlock(prefs);
 
     let context = '';
-    if (context_type === 'myteam') context = await buildTeamContext(userId);
-    else if (context_type === 'waiver') context = await buildWaiverContext(userId, prefs.league_size);
+    let persona: string;
+    let prefsBlock: string;
+    if (context_type === 'betting') {
+      // betting chat reuses the picks context: posted markets, ratings,
+      // last-10 form, head-to-head, injuries. espn being down just means
+      // the assistant answers without game context instead of erroring.
+      persona = 'You are an expert NBA betting analyst. You help users understand betting markets and find value in upcoming games. Be honest about uncertainty: lines are efficient and big edges are rare. Plain text only, no markdown headers, and never use em dashes.';
+      prefsBlock = buildBettingPromptBlock(prefs);
+      try {
+        const games = (await getUpcomingOdds()).filter((g) => Object.keys(g.markets).length > 0);
+        if (games.length > 0) context = await buildBettingContext(games);
+      } catch { /* espn unavailable — chat continues without game context */ }
+    } else {
+      persona = 'You are an expert fantasy basketball assistant for 9-category leagues (PTS, REB, AST, STL, BLK, FG%, FT%, 3PM, TO). You help users analyze their roster and make strategic decisions.';
+      prefsBlock = buildPreferencesPromptBlock(prefs);
+      if (context_type === 'myteam') context = await buildTeamContext(userId);
+      else if (context_type === 'waiver') context = await buildWaiverContext(userId, prefs.league_size);
+    }
 
-    const systemPrompt = `You are an expert fantasy basketball assistant for 9-category leagues (PTS, REB, AST, STL, BLK, FG%, FT%, 3PM, TO). You help users analyze their roster and make strategic decisions.${prefsBlock}\n\n${context ? `Current context:\n\n${context}` : 'No roster context.'}\n\nProvide concise, actionable advice. Reference specific player stats. Be direct.`;
+    const systemPrompt = `${persona}${prefsBlock}\n\n${context ? `Current context:\n\n${context}` : 'No additional context.'}\n\nProvide concise, actionable advice. Reference specific stats. Be direct.`;
 
     const messages: Array<{ role: string; content: string }> = [];
     if (history && Array.isArray(history)) {

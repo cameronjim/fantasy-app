@@ -26,25 +26,27 @@ beforeEach(() => {
   picksMock.mockResolvedValue({ picks: [], parlay: null, summary: '', no_games: true });
   betsMock.mockResolvedValue({
     bets: [],
-    summary: { wins: 0, losses: 0, pushes: 0, pending: 0, total_staked: 0, profit: 0, roi: 0 },
+    summary: { wins: 0, losses: 0, pushes: 0, pending: 0 },
   });
   prefsMock.mockResolvedValue({});
 });
 
 describe('BettingPage', () => {
-  it('always shows the responsible-gambling disclaimer', async () => {
+  it('shows the responsible-gambling footer without the old banner', async () => {
     render(<BettingPage isLoggedIn={false} />);
 
-    expect(await screen.findByText(/not financial advice/i)).toBeInTheDocument();
-    expect(screen.getByText(/1-800-GAMBLER/)).toBeInTheDocument();
+    expect(await screen.findByText(/1-800-GAMBLER/)).toBeInTheDocument();
+    // the alert banner was removed — only the single footer line remains
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('shows the sign-in prompt, odds board, and glossary when logged out', async () => {
+  it('shows the sign-in prompt, odds board, chat, and glossary when logged out', async () => {
     render(<BettingPage isLoggedIn={false} />);
 
     expect(await screen.findByText(/Sign in to unlock AI betting picks/i)).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /Upcoming Games & Odds/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /New to betting\? Start here/i })).toBeInTheDocument();
+    expect(screen.getByText('AI Assistant')).toBeInTheDocument();
     // ai endpoints are never called for signed-out visitors
     expect(picksMock).not.toHaveBeenCalled();
     expect(betsMock).not.toHaveBeenCalled();

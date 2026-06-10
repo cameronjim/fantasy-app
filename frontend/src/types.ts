@@ -75,7 +75,8 @@ export interface TeamAnalysis {
   suggestions: string[];
 }
 
-export type BetMarket = 'spread' | 'total' | 'moneyline';
+export type BetMarket = 'spread' | 'total' | 'moneyline' | 'prop' | 'parlay' | 'custom';
+export type StraightMarket = 'spread' | 'total' | 'moneyline';
 export type BetSelection = 'home' | 'away' | 'over' | 'under';
 export type BetStatus = 'pending' | 'won' | 'lost' | 'push';
 
@@ -119,16 +120,10 @@ export interface BettingGame {
   };
 }
 
-export interface KellySuggestion {
-  full: number;
-  quarter: number;
-  suggested_stake: number;
-}
-
 export interface BettingPick {
   game_id: string;
   category: 'best_value' | 'safe' | 'hail_mary';
-  market: BetMarket;
+  market: StraightMarket;
   selection: BetSelection;
   matchup: string;
   game_date: string;
@@ -141,12 +136,11 @@ export interface BettingPick {
   edge: number;
   rationale: string;
   confidence: 'low' | 'medium' | 'high';
-  kelly?: KellySuggestion | null;
 }
 
 export interface ParlayLeg {
   game_id: string;
-  market: BetMarket;
+  market: StraightMarket;
   selection: BetSelection;
   selection_label: string;
   matchup: string;
@@ -172,28 +166,27 @@ export interface BettingPicksResponse {
 
 export interface Bet {
   id: number;
-  nba_game_id: string;
-  home_team: string;
-  away_team: string;
-  game_date: string;
   market: BetMarket;
-  selection: BetSelection;
+  nba_game_id: string | null;
+  home_team: string | null;
+  away_team: string | null;
+  game_date: string | null;
+  selection: BetSelection | null;
   line: number | null;
-  american_odds: number;
-  stake: number;
+  american_odds: number | null;
+  description: string | null;
   status: BetStatus;
   created_at: string;
   settled_at: string | null;
-  profit: number;
 }
 
 export interface NewBet {
-  nba_game_id: string;
   market: BetMarket;
-  selection: BetSelection;
-  line: number | null;
-  american_odds: number;
-  stake: number;
+  nba_game_id?: string;
+  selection?: BetSelection;
+  line?: number | null;
+  american_odds?: number | null;
+  description?: string;
 }
 
 export interface LedgerSummary {
@@ -201,7 +194,4 @@ export interface LedgerSummary {
   losses: number;
   pushes: number;
   pending: number;
-  total_staked: number;
-  profit: number;
-  roi: number;
 }

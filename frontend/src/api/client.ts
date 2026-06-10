@@ -1,7 +1,7 @@
 import axios from 'axios';
 import type {
   Player, Team, Game, RosterPlayer, ChatMessage, TeamAnalysis,
-  BettingGame, BettingPicksResponse, Bet, NewBet, LedgerSummary,
+  BettingGame, BettingPicksResponse, Bet, NewBet, LedgerSummary, BetStatus,
 } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL
@@ -104,8 +104,6 @@ export async function updateProfile(updates: ProfileUpdate): Promise<CurrentUser
 export interface BettingPreferences {
   risk_appetite?: 'conservative' | 'balanced' | 'aggressive';
   preferred_markets?: Array<'spread' | 'total' | 'moneyline' | 'parlay'>;
-  bankroll?: number;
-  unit_size?: number;
   extra_notes?: string;
 }
 
@@ -224,6 +222,11 @@ export async function getBets(): Promise<{ bets: Bet[]; summary: LedgerSummary }
 
 export async function createBet(bet: NewBet): Promise<Bet> {
   const { data } = await api.post('/betting/bets', bet);
+  return data;
+}
+
+export async function settleBetStatus(id: number, status: BetStatus): Promise<Bet> {
+  const { data } = await api.patch(`/betting/bets/${id}`, { status });
   return data;
 }
 

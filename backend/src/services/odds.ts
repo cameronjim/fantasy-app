@@ -13,7 +13,12 @@ import { americanToImpliedProb } from './oddsMath.js';
 // odds move, but a personal app doesn't need tick-level freshness; 10 minutes
 // keeps us polite to ESPN while staying current enough to bet on.
 const ODDS_CACHE_TTL = 10 * 60_000;
-const FUTURE_WINDOW_DAYS = 7;
+
+// a rolling 3-day window (today plus two more days). during the regular
+// season a wider window would surface 30+ games at once, which is noise:
+// books barely post lines that far out and the AI can't say anything useful
+// about a game four days away.
+const FUTURE_WINDOW_DAYS = 2;
 
 // spread/total prices fall back to the books' standard juice when ESPN gives
 // us only the line. surfaced in the response so the UI can show it honestly.
@@ -229,8 +234,11 @@ export function parseEventOdds(event: EspnEvent): BettingGame | null {
 let oddsCache: { data: BettingGame[]; fetchedAt: number } = { data: [], fetchedAt: 0 };
 
 /**
- * Scheduled games for the next week with parsed odds. In-memory cache, 10-min
- * TTL. Throws on ESPN failure — callers map that to 502/504 like games.ts.
+ * Scheduled games for the rolling window with parsed odds. In-memory cache,
+ * 10-min TTL. Throws on ESPN failure — callers map that to 502/504 like
+ * games.ts. Only games that have not tipped off are returned, which is also
+ * what makes the AI picks cache safe: once a game goes live it drops out of
+ * the snapshot, the odds hash changes, and cached picks for it expire.
  */
 export async function getUpcomingOdds(): Promise<BettingGame[]> {
   if (Date.now() - oddsCache.fetchedAt < ODDS_CACHE_TTL && oddsCache.data.length > 0) {

@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { ChevronDown, ChevronUp, SlidersHorizontal } from 'lucide-react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import { getPreferences, updatePreferences, type BettingPreferences } from '../api/client';
 import { invalidateBettingClientCache } from '../api/clientCaches';
 
 interface BettingPrefsPanelProps {
   // called after a successful save so the page can re-run the AI analysis
   // with the new preferences.
-  onSaved: (prefs: BettingPreferences) => void;
+  onSaved: () => void;
 }
 
 const RISK_CHOICES = [
@@ -24,7 +24,7 @@ const MARKET_CHOICES = [
 
 /**
  * Inline, collapsible betting preferences. Lives on the betting page (not a
- * separate questionnaire) so the change → re-analyze loop is immediate.
+ * separate questionnaire) so the change-then-reanalyze loop is immediate.
  */
 export const BettingPrefsPanel = ({ onSaved }: BettingPrefsPanelProps) => {
   const [open, setOpen] = useState(false);
@@ -48,11 +48,6 @@ export const BettingPrefsPanel = ({ onSaved }: BettingPrefsPanelProps) => {
     setPrefs({ ...prefs, preferred_markets: next });
   };
 
-  const handleNumber = (key: 'bankroll' | 'unit_size', value: string): void => {
-    const n = parseFloat(value);
-    setPrefs({ ...prefs, [key]: Number.isNaN(n) ? undefined : n });
-  };
-
   const handleSave = async (): Promise<void> => {
     setSaving(true);
     setError('');
@@ -62,7 +57,7 @@ export const BettingPrefsPanel = ({ onSaved }: BettingPrefsPanelProps) => {
       // prefs are part of the server's picks cache key — wipe the local cache
       // and let the page kick off a fresh analysis.
       invalidateBettingClientCache();
-      onSaved(updated.betting ?? {});
+      onSaved();
     } catch {
       setError('Failed to save');
     } finally {
@@ -77,13 +72,7 @@ export const BettingPrefsPanel = ({ onSaved }: BettingPrefsPanelProps) => {
         className="px-4 py-3 flex items-center justify-between w-full text-left"
         aria-expanded={open}
       >
-        <span className="flex items-center gap-2 text-sm font-semibold">
-          <SlidersHorizontal size={16} className="text-primary" />
-          Betting Preferences
-          <span className="text-xs opacity-40 font-normal hidden sm:inline">
-            risk, bet types, bankroll — picks are tailored to these
-          </span>
-        </span>
+        <span className="text-sm font-semibold">Betting Preferences</span>
         {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
       </button>
 
@@ -126,45 +115,6 @@ export const BettingPrefsPanel = ({ onSaved }: BettingPrefsPanelProps) => {
                       {choice.label}
                     </label>
                   ))}
-                </div>
-              </div>
-
-              <div className="flex flex-wrap gap-4">
-                <div>
-                  <label className="text-xs font-semibold block mb-1" htmlFor="betting-bankroll">
-                    Bankroll
-                    <span className="opacity-50 font-normal ml-1">(money you're playing with — enables stake sizing)</span>
-                  </label>
-                  <label className="input input-bordered input-sm flex items-center gap-1 w-36">
-                    $
-                    <input
-                      id="betting-bankroll"
-                      type="number"
-                      min={1}
-                      value={prefs.bankroll ?? ''}
-                      onChange={(e) => handleNumber('bankroll', e.target.value)}
-                      className="w-full"
-                      placeholder="500"
-                    />
-                  </label>
-                </div>
-                <div>
-                  <label className="text-xs font-semibold block mb-1" htmlFor="betting-unit">
-                    Typical bet size
-                    <span className="opacity-50 font-normal ml-1">(your default stake)</span>
-                  </label>
-                  <label className="input input-bordered input-sm flex items-center gap-1 w-36">
-                    $
-                    <input
-                      id="betting-unit"
-                      type="number"
-                      min={1}
-                      value={prefs.unit_size ?? ''}
-                      onChange={(e) => handleNumber('unit_size', e.target.value)}
-                      className="w-full"
-                      placeholder="10"
-                    />
-                  </label>
                 </div>
               </div>
 
