@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
 import { query } from '../db.js';
-import { callClaude, buildTeamContext, buildWaiverContext } from '../services/ai.js';
+import { callClaude, buildTeamContext, buildWaiverContext, extractJSON } from '../services/ai.js';
 import { getUserPreferences, buildPreferencesPromptBlock } from '../services/preferences.js';
 import { getCurrentBenchmarks, formatBenchmarksLine } from '../services/benchmarks.js';
 import type { AuthRequest } from '../middleware/auth.js';
@@ -12,14 +12,6 @@ const router = Router();
 // meaningfully — old cache entries hashed without this won't collide so they
 // get re-prompted on next request.
 const PROMPT_VERSION = 'v5-fp-formula';
-
-function extractJSON(text: string): string {
-  const fenced = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
-  if (fenced) return fenced[1].trim();
-  const braceMatch = text.match(/\{[\s\S]*\}/);
-  if (braceMatch) return braceMatch[0];
-  return text;
-}
 
 async function getRosterHash(userId: number): Promise<string> {
   const result = await query(

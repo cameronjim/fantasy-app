@@ -1,0 +1,112 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import request from 'supertest';
+import { app } from '../../src/app.js';
+import { query } from '../../src/db.js';
+import { bearerFor } from '../helpers/authToken.js';
+import { pgResult } from '../helpers/mockDb.js';
+
+const queryMock = vi.mocked(query);
+
+beforeEach(() => {
+  queryMock.mockReset();
+});
+
+describe('PATCH /api/preferences', () => {
+  it('rejects requests without a token', async () => {
+    // act
+    const res = await request(app).patch('/api/preferences').send({});
+
+    // assert
+    expect(res.status).toBe(401);
+  });
+
+  it('merges a betting-only patch over existing fantasy preferences', async () => {
+    // arrange — stored prefs have fantasy answers but no betting key
+    const stored = { risk_tolerance: 'balanced', league_size: 12 };
+    queryMock
+      // setUserPreferences → getUserPreferences (load existing)
+      .mockResolvedValueOnce(pgResult([{ ai_preferences: stored }]))
+      // setUserPreferences → UPDATE
+      .mockResolvedValueOnce(pgResult([]))
+      // route → getUserPreferences (return updated)
+      .mockResolvedValueOnce(pgResult([{ ai_preferences: {} }]));
+
+    // act
+    const res = await request(app)
+      .patch('/api/preferences')
+      .set('Authorization', bearerFor(7))
+      .send({ betting: { risk_appetite: 'aggressive', bankroll: 500 } });
+
+    // assert — the UPDATE payload keeps the fantasy keys and adds betting
+    expect(res.status).toBe(200);
+    const updateCall = queryMock.mock.calls.find(([sql]) =>
+      (sql as string).includes('UPDATE users SET ai_preferences')
+    );
+    expect(updateCall).toBeDefined();
+    const [, params] = updateCall!;
+    const saved = JSON.parse((params as string[])[0]);
+    expect(saved.risk_tolerance).toBe('balanced');
+    expect(saved.league_size).toBe(12);
+    expect(saved.betting).toEqual({ risk_appetite: 'aggressive', bankroll: 500 });
+    expect((params as unknown[])[1]).toBe(7);
+  });
+
+  it('preserves stored betting prefs when a fantasy-only patch arrives', async () => {
+    // arrange
+    const stored = { betting: { risk_appetite: 'conservative', bankroll: 200 } };
+    queryMock
+      .mockResolvedValueOnce(pgResult([{ ai_preferences: stored }]))
+      .mockResolvedValueOnce(pgResult([]))
+      .mockResolvedValueOnce(pgResult([{ ai_preferences: {} }]));
+
+    // act
+    const res = await request(app)
+      .patch('/api/preferences')
+      .set('Authorization', bearerFor(7))
+      .send({ risk_tolerance: 'high_upside' });
+
+    // assert
+    expect(res.status).toBe(200);
+    const updateCall = queryMock.mock.calls.find(([sql]) =>
+      (sql as string).includes('UPDATE users SET ai_preferences')
+    );
+    const saved = JSON.parse((updateCall![1] as string[])[0]);
+    expect(saved.risk_tolerance).toBe('high_upside');
+    expect(saved.betting).toEqual({ risk_appetite: 'conservative', bankroll: 200 });
+  });
+
+  it('strips junk from the betting sub-object', async () => {
+    // arrange
+    queryMock
+      .mockResolvedValueOnce(pgResult([{ ai_preferences: {} }]))
+      .mockResolvedValueOnce(pgResult([]))
+      .mockResolvedValueOnce(pgResult([{ ai_preferences: {} }]));
+
+    // act
+    const res = await request(app)
+      .patch('/api/preferences')
+      .set('Authorization', bearerFor(7))
+      .send({
+        betting: {
+          risk_appetite: 'yolo', // invalid enum
+          preferred_markets: ['spread', 'crypto', 'parlay'], // one junk entry
+          bankroll: -50, // invalid
+          unit_size: 25.999, // rounded to cents
+          extra_notes: '  I like unders  ',
+          hacker_field: 'nope',
+        },
+      });
+
+    // assert
+    expect(res.status).toBe(200);
+    const updateCall = queryMock.mock.calls.find(([sql]) =>
+      (sql as string).includes('UPDATE users SET ai_preferences')
+    );
+    const saved = JSON.parse((updateCall![1] as string[])[0]);
+    expect(saved.betting).toEqual({
+      preferred_markets: ['spread', 'parlay'],
+      unit_size: 26,
+      extra_notes: 'I like unders',
+    });
+  });
+});

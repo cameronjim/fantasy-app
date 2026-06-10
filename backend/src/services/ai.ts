@@ -1,10 +1,20 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { query } from '../db.js';
 import { getRankedPlayers } from './fantasyScore.js';
+import type { BettingGame } from './odds.js';
 
 const client = new Anthropic();
 
 const HAIKU = 'claude-haiku-4-5-20251001';
+
+/** Pulls the JSON payload out of a model reply that may be fenced or chatty. */
+export function extractJSON(text: string): string {
+  const fenced = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+  if (fenced) return fenced[1].trim();
+  const braceMatch = text.match(/\{[\s\S]*\}/);
+  if (braceMatch) return braceMatch[0];
+  return text;
+}
 
 export async function callClaude(
   systemPrompt: string,
@@ -157,4 +167,96 @@ function shuffleInPlace<T>(arr: T[]): void {
     const j = Math.floor(Math.random() * (i + 1));
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
+}
+
+const pct = (p: number): string => `${(p * 100).toFixed(1)}%`;
+
+function formatMarketLines(game: BettingGame): string[] {
+  const lines: string[] = [];
+  const s = game.markets.spread;
+  if (s) {
+    lines.push(
+      `  SPREAD: home ${s.home_line > 0 ? '+' : ''}${s.home_line} (${s.home_price}, implied ${pct(s.home_implied)}) / ` +
+      `away ${s.away_line > 0 ? '+' : ''}${s.away_line} (${s.away_price}, implied ${pct(s.away_implied)})`
+    );
+  }
+  const t = game.markets.total;
+  if (t) {
+    lines.push(
+      `  TOTAL: ${t.line} — over (${t.over_price}, implied ${pct(t.over_implied)}) / ` +
+      `under (${t.under_price}, implied ${pct(t.under_implied)})`
+    );
+  }
+  const m = game.markets.moneyline;
+  if (m) {
+    lines.push(
+      `  MONEYLINE: home ${m.home > 0 ? '+' : ''}${m.home} (implied ${pct(m.home_implied)}) / ` +
+      `away ${m.away > 0 ? '+' : ''}${m.away} (implied ${pct(m.away_implied)})`
+    );
+  }
+  return lines;
+}
+
+/**
+ * Builds the AI context for betting picks: each upcoming game's posted
+ * markets with implied probabilities, both teams' records and ratings, and
+ * the injury report for rotation players on the involved teams.
+ */
+export async function buildBettingContext(games: BettingGame[]): Promise<string> {
+  const teamNames = [...new Set(games.flatMap((g) => [g.home_team, g.away_team]))];
+
+  const teamsResult = await query(
+    `SELECT name, abbreviation, wins, losses,
+            offensive_rating, defensive_rating, net_rating
+     FROM teams
+     WHERE name = ANY($1)`,
+    [teamNames]
+  );
+  const teamByName = new Map<string, Record<string, unknown>>(
+    teamsResult.rows.map((t: Record<string, unknown>) => [t.name as string, t])
+  );
+
+  // rotation players only (15+ mpg) — a two-way player's ankle doesn't move a line.
+  const injuriesResult = await query(
+    `SELECT p.name, p.team, p.injury_status, p.injury_detail, p.points_per_game
+     FROM players p
+     JOIN teams t ON t.abbreviation = p.team
+     WHERE p.injury_status IS NOT NULL
+       AND p.minutes_per_game >= 15
+       AND t.name = ANY($1)
+     ORDER BY p.points_per_game DESC`,
+    [teamNames]
+  );
+  const injuriesByAbbrev = new Map<string, string[]>();
+  for (const row of injuriesResult.rows) {
+    const list = injuriesByAbbrev.get(row.team) ?? [];
+    list.push(`${row.name} (${row.points_per_game} ppg) — ${row.injury_status}${row.injury_detail ? `: ${row.injury_detail}` : ''}`);
+    injuriesByAbbrev.set(row.team, list);
+  }
+
+  const teamLine = (name: string): string => {
+    const t = teamByName.get(name);
+    if (!t) return `  ${name}: no team stats available`;
+    return `  ${name}: ${t.wins}-${t.losses}, ORtg ${t.offensive_rating}, DRtg ${t.defensive_rating}, Net ${t.net_rating}`;
+  };
+
+  const injuryLines = (name: string, abbrev: string): string[] => {
+    const list = injuriesByAbbrev.get(abbrev);
+    if (!list || list.length === 0) return [];
+    return [`  ${name} injuries:`, ...list.map((l) => `    - ${l}`)];
+  };
+
+  const blocks = games.map((g) => {
+    const lines = [
+      `GAME ${g.nba_game_id}: ${g.away_team} @ ${g.home_team} (${g.game_date}, ${g.tipoff})`,
+      ...formatMarketLines(g),
+      teamLine(g.home_team),
+      teamLine(g.away_team),
+      ...injuryLines(g.home_team, g.home_abbrev),
+      ...injuryLines(g.away_team, g.away_abbrev),
+    ];
+    return lines.join('\n');
+  });
+
+  return `UPCOMING GAMES WITH POSTED ODDS (${games.length}):\n\n${blocks.join('\n\n')}`;
 }
