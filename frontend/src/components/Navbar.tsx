@@ -1,7 +1,9 @@
+import { useEffect, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { BarChart3, Users, TrendingUp, Dices, LogIn, User, Sun, Moon } from 'lucide-react';
 import { useTheme } from '../hooks/useTheme';
 import { StatusBadge } from './StatusBadge';
+import { getCurrentUser } from '../api/client';
 
 interface NavbarProps {
   isLoggedIn: boolean;
@@ -20,6 +22,27 @@ export function Navbar({ isLoggedIn, onLogout }: NavbarProps): JSX.Element {
   const location = useLocation();
   const { theme, toggle: toggleTheme } = useTheme();
   const isDark = theme === 'business';
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  // the flag only gates the nav link — the admin api re-checks server-side,
+  // so a failed lookup just hides the shortcut.
+  useEffect(() => {
+    if (!isLoggedIn) {
+      setIsAdmin(false);
+      return;
+    }
+    let cancelled = false;
+    getCurrentUser()
+      .then((user) => {
+        if (!cancelled) setIsAdmin(user.is_admin);
+      })
+      .catch(() => {
+        if (!cancelled) setIsAdmin(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoggedIn]);
 
   const goToSignIn = (): void => {
     navigate('/login', { state: { from: location.pathname } });
@@ -96,6 +119,13 @@ export function Navbar({ isLoggedIn, onLogout }: NavbarProps): JSX.Element {
                   </span>
                 </button>
               </li>
+              {isAdmin && (
+                <li className="border-t border-base-300 mt-1 pt-1">
+                  <button onClick={() => goAndBlur('/admin')}>
+                    Developer Tools
+                  </button>
+                </li>
+              )}
               <li className="border-t border-base-300 mt-1 pt-1">
                 <button onClick={() => goAndBlur('/about')}>
                   About
