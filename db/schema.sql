@@ -68,6 +68,8 @@ CREATE TABLE IF NOT EXISTS users (
     google_id VARCHAR(64) UNIQUE,
     name VARCHAR(100),
     phone VARCHAR(30),
+    -- server-enforced admin role; granted manually, never via signup.
+    is_admin BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -149,6 +151,21 @@ CREATE TABLE IF NOT EXISTS chat_history (
     message TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT NOW()
 );
+
+-- one row per SPA navigation, posted by the frontend tracker. user_id is null
+-- for logged-out visitors; ON DELETE SET NULL keeps history if a user is removed.
+-- only the pathname is stored (never query strings — reset tokens live there).
+CREATE TABLE IF NOT EXISTS page_views (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    path VARCHAR(300) NOT NULL,
+    referrer VARCHAR(300),
+    user_agent VARCHAR(300),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_page_views_created ON page_views(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_page_views_user ON page_views(user_id, created_at DESC);
 
 -- fixed-window request counters backing the app-level rate limiter. one row
 -- per (bucket, window_start); buckets are scope-prefixed, e.g. 'login:1.2.3.4'.
