@@ -123,10 +123,13 @@ const AddBetForm = ({ games, onTrackBet, onDone }: AddBetFormProps) => {
 
   const canSubmit =
     parsedStake() != null &&
-    (isStraight ? !!game && !!resolved : description.trim().length >= 3);
+    (isStraight
+      ? !!game && !!resolved
+      : description.trim().length >= 3 && parsedOdds() != null);
 
   const handleSubmit = async (): Promise<void> => {
     const stake = parsedStake();
+    const odds = parsedOdds();
     if (!canSubmit || stake == null || saving) return;
     setSaving(true);
     setError('');
@@ -147,11 +150,11 @@ const AddBetForm = ({ games, onTrackBet, onDone }: AddBetFormProps) => {
           stake,
           wager_type: wagerType,
         }, gameRef);
-      } else {
+      } else if (odds != null) {
         await onTrackBet({
           market,
           description: description.trim(),
-          american_odds: parsedOdds(),
+          american_odds: odds,
           stake,
           wager_type: wagerType,
           ...(market === 'prop' && game ? { nba_game_id: game.nba_game_id } : {}),
@@ -221,7 +224,7 @@ const AddBetForm = ({ games, onTrackBet, onDone }: AddBetFormProps) => {
 
         {!isStraight && (
           <div>
-            <label className="text-xs font-semibold block mb-1" htmlFor="addbet-odds">Odds (optional)</label>
+            <label className="text-xs font-semibold block mb-1" htmlFor="addbet-odds">Odds</label>
             <input
               id="addbet-odds"
               type="text"

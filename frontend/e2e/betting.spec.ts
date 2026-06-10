@@ -157,7 +157,7 @@ test.describe('Betting page', () => {
     await betting.addBetButton().click();
     await page.getByLabel('Bet type').selectOption('custom');
     await page.getByLabel('Describe the bet').fill('First basket: Wembanyama');
-    await page.getByLabel('Odds (optional)').fill('+900');
+    await page.getByLabel('Odds', { exact: true }).fill('+900');
     // stake is mandatory — the add button stays disabled until it's filled
     await expect(page.getByRole('button', { name: 'Add bet' })).toBeDisabled();
     await page.getByLabel('Stake', { exact: true }).fill('10');
