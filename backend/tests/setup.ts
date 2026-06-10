@@ -8,7 +8,9 @@ import { vi } from 'vitest';
 // it, the pg pool would throw immediately on first query, surfacing the bug
 // loudly instead of silently hitting a real database.
 process.env.NODE_ENV = 'test';
-process.env.AUTH_SECRET = process.env.AUTH_SECRET ?? 'test-auth-secret-not-for-prod';
+// at least 32 chars and not a known placeholder so validateAuthSecret (run at
+// app import) passes when the api tests load the app.
+process.env.AUTH_SECRET = process.env.AUTH_SECRET ?? 'test-auth-secret-not-for-prod-0123456789';
 process.env.GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? 'test-google-client-id';
 
 // global module mocks installed once for every test file. each test pulls

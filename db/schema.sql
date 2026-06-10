@@ -150,6 +150,17 @@ CREATE TABLE IF NOT EXISTS chat_history (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
+-- fixed-window request counters backing the app-level rate limiter. one row
+-- per (bucket, window_start); buckets are scope-prefixed, e.g. 'login:1.2.3.4'.
+CREATE TABLE IF NOT EXISTS rate_limits (
+    bucket TEXT NOT NULL,
+    window_start TIMESTAMPTZ NOT NULL,
+    count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (bucket, window_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rate_limits_window ON rate_limits(window_start);
+
 CREATE INDEX IF NOT EXISTS idx_players_team ON players(team);
 CREATE INDEX IF NOT EXISTS idx_players_position ON players(position);
 CREATE INDEX IF NOT EXISTS idx_players_name ON players(name);

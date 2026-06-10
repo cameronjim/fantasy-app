@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
 import { query } from '../db.js';
 import { requireAuth, AuthRequest } from '../middleware/auth.js';
+import { rateLimit } from '../middleware/rateLimit.js';
 import { callClaude, buildBettingContext, extractJSON } from '../services/ai.js';
 import { getUserPreferences, buildBettingPromptBlock } from '../services/preferences.js';
 import { getUpcomingOdds, computeOddsHash, type BettingGame } from '../services/odds.js';
@@ -31,6 +32,15 @@ const BETTING_PROMPT_VERSION = 'betting-v2';
 const PICKS_TTL = '90 minutes';
 
 const PICKS_PER_CATEGORY = 2;
+
+// per-user daily ceiling on AI-generated picks (the one Claude-backed betting
+// endpoint), keyed by userId. bounds API spend if an account is scripted.
+const picksLimiter = rateLimit({
+  scope: 'betting-picks',
+  limit: 60,
+  windowSeconds: 86_400,
+  keyFor: (req) => String((req as AuthRequest).userId),
+});
 
 const PARLAY_EV_NOTE =
   'Parlays multiply the house edge. The combined price is usually worse value than betting the legs individually, so treat this as entertainment.';
@@ -230,7 +240,7 @@ router.get('/odds', async (_req: Request, res: Response): Promise<void> => {
   }
 });
 
-router.get('/picks', requireAuth, async (req: Request, res: Response): Promise<void> => {
+router.get('/picks', requireAuth, picksLimiter, async (req: Request, res: Response): Promise<void> => {
   const userId = (req as AuthRequest).userId;
   try {
     let games: BettingGame[];

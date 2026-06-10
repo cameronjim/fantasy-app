@@ -5,6 +5,7 @@ import { callClaude, buildTeamContext, buildWaiverContext, buildBettingContext, 
 import { getUserPreferences, buildPreferencesPromptBlock, buildBettingPromptBlock } from '../services/preferences.js';
 import { getCurrentBenchmarks, formatBenchmarksLine } from '../services/benchmarks.js';
 import { getUpcomingOdds } from '../services/odds.js';
+import { sanitizeChatHistory, MAX_MESSAGE_LENGTH } from '../services/chatHistory.js';
 import type { AuthRequest } from '../middleware/auth.js';
 
 const router = Router();
@@ -26,9 +27,13 @@ async function getRosterHash(userId: number): Promise<string> {
 router.post('/chat', async (req: Request, res: Response): Promise<void> => {
   const userId = (req as AuthRequest).userId;
   try {
-    const { message, context_type, history } = req.body;
-    if (!message) {
+    const { message, context_type, history } = req.body ?? {};
+    if (typeof message !== 'string' || message.trim().length === 0) {
       res.status(400).json({ error: 'message is required' });
+      return;
+    }
+    if (message.length > MAX_MESSAGE_LENGTH) {
+      res.status(400).json({ error: `message must be ${MAX_MESSAGE_LENGTH} characters or fewer` });
       return;
     }
 
@@ -56,11 +61,10 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
 
     const systemPrompt = `${persona}${prefsBlock}\n\n${context ? `Current context:\n\n${context}` : 'No additional context.'}\n\nProvide concise, actionable advice. Reference specific stats. Be direct.`;
 
-    const messages: Array<{ role: string; content: string }> = [];
-    if (history && Array.isArray(history)) {
-      for (const h of history) messages.push({ role: h.role, content: h.message || h.content });
-    }
-    messages.push({ role: 'user', content: message });
+    const messages: Array<{ role: string; content: string }> = [
+      ...sanitizeChatHistory(history),
+      { role: 'user', content: message },
+    ];
 
     const reply = await callClaude(systemPrompt, messages, { model: 'claude-sonnet-4-6', maxTokens: 1024 });
     res.json({ reply });
