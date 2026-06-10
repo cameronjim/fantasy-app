@@ -5,12 +5,13 @@ import { requireAuth, AuthRequest } from '../middleware/auth.js';
 import { callClaude, buildBettingContext, extractJSON } from '../services/ai.js';
 import { getUserPreferences, buildBettingPromptBlock } from '../services/preferences.js';
 import { getUpcomingOdds, computeOddsHash, type BettingGame } from '../services/odds.js';
-import { americanToImpliedProb, combineParlay, kellyFraction, kellyStake } from '../services/oddsMath.js';
+import { americanToImpliedProb, combineParlay } from '../services/oddsMath.js';
 import {
   settleBet,
-  betProfit,
   summarizeLedger,
+  STRAIGHT_MARKETS,
   type BetMarket,
+  type StraightMarket,
   type BetSelection,
   type BetStatus,
 } from '../services/betSettlement.js';
@@ -19,18 +20,17 @@ const router = Router();
 
 // bump when the betting system prompt changes meaningfully — entries cached
 // under the old version stop colliding and get re-prompted.
-const BETTING_PROMPT_VERSION = 'betting-v1';
+const BETTING_PROMPT_VERSION = 'betting-v2';
 
 // shorter than the waiver cache's 4 hours because lines move. an odds change
-// also rotates the cache key itself, so this TTL is the slow-path bound.
+// also rotates the cache key itself (and games drop out of the snapshot the
+// moment they tip off), so this TTL is just the slow-path bound.
 const PICKS_TTL = '90 minutes';
 
-// quarter-kelly: full kelly assumes the win-probability estimate is exact,
-// which an AI estimate never is. quarter is the standard humility discount.
-const KELLY_FRACTION = 0.25;
+const PICKS_PER_CATEGORY = 2;
 
 const PARLAY_EV_NOTE =
-  'Parlays multiply the house edge — the combined price is usually worse value than betting the legs individually. Treat this as entertainment and keep the stake small.';
+  'Parlays multiply the house edge. The combined price is usually worse value than betting the legs individually, so treat this as entertainment.';
 
 type PickCategory = 'best_value' | 'safe' | 'hail_mary';
 
@@ -53,7 +53,7 @@ interface RawParlayLeg {
 interface EnrichedPick {
   game_id: string;
   category: PickCategory;
-  market: BetMarket;
+  market: StraightMarket;
   selection: BetSelection;
   matchup: string;
   game_date: string;
@@ -66,7 +66,6 @@ interface EnrichedPick {
   edge: number;
   rationale: string;
   confidence: 'low' | 'medium' | 'high';
-  kelly?: { full: number; quarter: number; suggested_stake: number } | null;
 }
 
 /**
@@ -76,7 +75,7 @@ interface EnrichedPick {
  */
 function resolveSelection(
   game: BettingGame,
-  market: BetMarket,
+  market: StraightMarket,
   selection: BetSelection
 ): { line: number | null; odds: number; implied: number; label: string } | null {
   if (market === 'spread' && (selection === 'home' || selection === 'away')) {
@@ -124,24 +123,30 @@ const CONFIDENCES = ['low', 'medium', 'high'];
 /**
  * Validates the model's picks against the odds snapshot and re-attaches every
  * number (line, price, implied probability) from the snapshot — a hallucinated
- * line can never reach the UI. Picks naming unknown games/markets are dropped.
+ * line can never reach the UI. Picks naming unknown games/markets are dropped,
+ * and each category is capped at PICKS_PER_CATEGORY in model order.
  */
 function enrichPicks(rawPicks: RawPick[], gamesById: Map<string, BettingGame>): EnrichedPick[] {
   const picks: EnrichedPick[] = [];
+  const perCategory: Record<PickCategory, number> = { best_value: 0, safe: 0, hail_mary: 0 };
+
   for (const raw of rawPicks) {
     const game = raw.game_id ? gamesById.get(raw.game_id) : undefined;
     if (!game) continue;
     if (!CATEGORIES.includes(raw.category as PickCategory)) continue;
-    const market = raw.market as BetMarket;
+    const category = raw.category as PickCategory;
+    if (perCategory[category] >= PICKS_PER_CATEGORY) continue;
+    const market = raw.market as StraightMarket;
     const selection = raw.selection as BetSelection;
     const resolved = resolveSelection(game, market, selection);
     if (!resolved) continue;
     if (typeof raw.estimated_win_prob !== 'number') continue;
 
     const estimated = Math.min(0.95, Math.max(0.05, raw.estimated_win_prob));
+    perCategory[category] += 1;
     picks.push({
       game_id: game.nba_game_id,
-      category: raw.category as PickCategory,
+      category,
       market,
       selection,
       matchup: `${game.away_team} @ ${game.home_team}`,
@@ -163,7 +168,7 @@ function enrichPicks(rawPicks: RawPick[], gamesById: Map<string, BettingGame>): 
 }
 
 interface ParlaySuggestion {
-  legs: Array<{ game_id: string; market: BetMarket; selection: BetSelection; selection_label: string; matchup: string; american_odds: number }>;
+  legs: Array<{ game_id: string; market: StraightMarket; selection: BetSelection; selection_label: string; matchup: string; american_odds: number }>;
   combined_american: number;
   combined_implied_prob: number;
   rationale: string;
@@ -205,22 +210,6 @@ function enrichParlay(
   };
 }
 
-/** Stake sizing is recomputed at serve time so bankroll edits skip the AI. */
-function attachKelly(picks: EnrichedPick[], bankroll: number | undefined): EnrichedPick[] {
-  return picks.map((pick) => {
-    if (!bankroll || bankroll <= 0) return { ...pick, kelly: null };
-    const full = kellyFraction(pick.estimated_win_prob, pick.american_odds);
-    return {
-      ...pick,
-      kelly: {
-        full: Math.round(full * 10000) / 10000,
-        quarter: Math.round(full * KELLY_FRACTION * 10000) / 10000,
-        suggested_stake: kellyStake(pick.estimated_win_prob, pick.american_odds, bankroll, KELLY_FRACTION),
-      },
-    };
-  });
-}
-
 function sendEspnError(res: Response, err: unknown): void {
   const isAbort = err instanceof Error && err.name === 'AbortError';
   res.status(isAbort ? 504 : 502).json({
@@ -259,10 +248,7 @@ router.get('/picks', requireAuth, async (req: Request, res: Response): Promise<v
 
     const prefs = await getUserPreferences(userId);
     const prefsBlock = buildBettingPromptBlock(prefs);
-    const bankroll = prefs.betting?.bankroll;
 
-    // bankroll/unit_size are excluded from the key (they're not in the prompt
-    // block) — editing them must not burn an AI call.
     const oddsHash = computeOddsHash(bettable);
     const cacheKey = crypto
       .createHash('md5')
@@ -277,10 +263,8 @@ router.get('/picks', requireAuth, async (req: Request, res: Response): Promise<v
         [userId, cacheKey]
       );
       if (cached.rows.length > 0) {
-        const stored = cached.rows[0].picks;
         res.json({
-          ...stored,
-          picks: attachKelly(stored.picks ?? [], bankroll),
+          ...cached.rows[0].picks,
           cached: true,
           cached_at: cached.rows[0].created_at,
         });
@@ -292,26 +276,26 @@ router.get('/picks', requireAuth, async (req: Request, res: Response): Promise<v
 
     // numbers are deliberately NOT requested back from the model — the server
     // re-attaches lines/odds from the snapshot so hallucinated prices die here.
-    const systemPrompt = `You are an expert NBA betting analyst. You are given upcoming games with their posted betting markets (spread, total, moneyline), each with the sportsbook's implied probability, plus team records, offensive/defensive/net ratings, and injury reports.${prefsBlock}
+    const systemPrompt = `You are an expert NBA betting analyst. You are given upcoming games with their posted betting markets (spread, total, moneyline), each with the sportsbook's implied probability, plus team records, offensive/defensive/net ratings, recent form over the last 10 games, head-to-head results between the two teams, and injury reports.${prefsBlock}
 
-Your job is to estimate the TRUE win probability of selections and find value relative to the implied probability. Rules:
+Your job is to estimate the TRUE win probability of selections and find value relative to the implied probability. Weigh recent form and head-to-head history heavily: a team's last 10 games and its history against this specific opponent are often better signals than season-long ratings. Rules:
 - Only reference the provided games, by their exact game_id. Never invent games, lines, or odds.
 - Take the posted lines and odds as given; your output is your estimated win probability and reasoning.
-- Be honest and calibrated: estimated_win_prob must be between 0.30 and 0.80. Real edges over 8 percentage points are rare — most lines are efficient.
-- Use the injury report and ratings to justify each pick. The "rationale" field is plain text only — no markdown.
-- Provide 4 to 6 picks total across these categories:
+- Be honest and calibrated: estimated_win_prob must be between 0.30 and 0.80. Real edges over 8 percentage points are rare; most lines are efficient.
+- Use the injury report, recent form, and head-to-head results to justify each pick. The "rationale" field is plain text only: no markdown and never use em dashes.
+- Provide EXACTLY 2 picks in each category (6 picks total). If the slate is thin, still provide 2 per category and reflect the weaker conviction in lower confidence and honest rationale. The same game may appear in multiple picks only with different markets.
   - "best_value": the largest gaps between your estimated probability and the implied probability.
   - "safe": high estimated win probability, even if the payout is modest.
   - "hail_mary": a longshot (plus-money) with a plausible path to hitting.
-- Also build one parlay of 2-3 legs chosen from your own picks, each leg from a DIFFERENT game.
-- End with a 2-3 sentence plain-text summary of the slate.
+- Also build one parlay of 2-3 legs chosen from your own picks, each leg from a DIFFERENT game. If only one game is available, return null for the parlay.
+- End with a 2-3 sentence plain-text summary of the slate. Never use em dashes anywhere in your response.
 
 Return ONLY a JSON object with this exact shape (no prose, no markdown):
 {
   "picks": [
     { "game_id": "<id>", "category": "best_value" | "safe" | "hail_mary", "market": "spread" | "total" | "moneyline", "selection": "home" | "away" | "over" | "under", "estimated_win_prob": <number 0-1>, "rationale": "<plain text>", "confidence": "low" | "medium" | "high" }
   ],
-  "parlay": { "legs": [ { "game_id": "<id>", "market": "...", "selection": "..." } ], "rationale": "<plain text>" },
+  "parlay": { "legs": [ { "game_id": "<id>", "market": "...", "selection": "..." } ], "rationale": "<plain text>" } | null,
   "summary": "<plain text>"
 }
 
@@ -323,7 +307,7 @@ Return ONLY valid JSON.`;
     try {
       const raw = JSON.parse(extractJSON(reply)) as {
         picks?: RawPick[];
-        parlay?: { legs?: RawParlayLeg[]; rationale?: string };
+        parlay?: { legs?: RawParlayLeg[]; rationale?: string } | null;
         summary?: string;
       };
 
@@ -337,7 +321,6 @@ Return ONLY valid JSON.`;
         return;
       }
 
-      // cache WITHOUT kelly so a later bankroll edit reprices stakes on read.
       await query(
         `INSERT INTO betting_cache (user_id, odds_hash, picks, created_at)
          VALUES ($1, $2, $3, NOW())
@@ -347,7 +330,7 @@ Return ONLY valid JSON.`;
            created_at = NOW()`,
         [userId, cacheKey, JSON.stringify({ picks, parlay, summary })]
       );
-      res.json({ picks: attachKelly(picks, bankroll), parlay, summary });
+      res.json({ picks, parlay, summary });
     } catch {
       res.json({ picks: [], parlay: null, summary: '', raw: reply });
     }
@@ -358,15 +341,15 @@ Return ONLY valid JSON.`;
 
 interface BetRow {
   id: number;
-  nba_game_id: string;
-  home_team: string;
-  away_team: string;
-  game_date: string;
   market: BetMarket;
-  selection: BetSelection;
+  nba_game_id: string | null;
+  home_team: string | null;
+  away_team: string | null;
+  game_date: string | null;
+  selection: BetSelection | null;
   line: number | null;
-  american_odds: number;
-  stake: number;
+  american_odds: number | null;
+  description: string | null;
   status: BetStatus;
   created_at: string;
   settled_at: string | null;
@@ -375,14 +358,16 @@ interface BetRow {
 router.get('/bets', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const userId = (req as AuthRequest).userId;
   try {
-    // lazy settlement: any pending bet whose game has gone Final gets graded
-    // now. no cron needed — the ledger is only stale while nobody looks at it.
+    // lazy settlement: any pending straight bet whose game has gone Final
+    // gets graded now. prop/parlay/custom bets settle manually. no cron
+    // needed — the ledger is only stale while nobody looks at it.
     const settleable = await query(
       `SELECT b.id, b.market, b.selection, b.line::float AS line,
               g.home_score, g.away_score
        FROM bets b
        JOIN games g ON g.nba_game_id = b.nba_game_id
        WHERE b.user_id = $1 AND b.status = 'pending'
+         AND b.market IN ('spread', 'total', 'moneyline')
          AND g.status = 'Final'
          AND g.home_score IS NOT NULL AND g.away_score IS NOT NULL`,
       [userId]
@@ -400,8 +385,8 @@ router.get('/bets', requireAuth, async (req: Request, res: Response): Promise<vo
     }
 
     const result = await query(
-      `SELECT id, nba_game_id, home_team, away_team, game_date, market, selection,
-              line::float AS line, american_odds, stake::float AS stake,
+      `SELECT id, market, nba_game_id, home_team, away_team, game_date, selection,
+              line::float AS line, american_odds, description,
               status, created_at, settled_at
        FROM bets
        WHERE user_id = $1
@@ -409,107 +394,169 @@ router.get('/bets', requireAuth, async (req: Request, res: Response): Promise<vo
       [userId]
     );
 
-    const bets = (result.rows as BetRow[]).map((b) => ({
-      ...b,
-      profit: betProfit(b.status, b.stake, b.american_odds),
-    }));
+    const bets = result.rows as BetRow[];
     res.json({ bets, summary: summarizeLedger(bets) });
   } catch {
     res.status(500).json({ error: 'Failed to load bets' });
   }
 });
 
+const TEXT_MARKETS: BetMarket[] = ['prop', 'parlay', 'custom'];
+
 router.post('/bets', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const userId = (req as AuthRequest).userId;
   try {
-    const { nba_game_id, market, selection, line, american_odds, stake } = req.body ?? {};
+    const { nba_game_id, market, selection, line, american_odds, description } = req.body ?? {};
 
-    if (typeof nba_game_id !== 'string' || nba_game_id.length === 0 || nba_game_id.length > 20) {
-      res.status(400).json({ error: 'nba_game_id is required' });
+    const isStraight = (STRAIGHT_MARKETS as string[]).includes(market);
+    const isText = (TEXT_MARKETS as string[]).includes(market);
+    if (!isStraight && !isText) {
+      res.status(400).json({ error: 'Invalid market' });
       return;
     }
-    const validSelections: Record<string, string[]> = {
-      spread: ['home', 'away'],
-      total: ['over', 'under'],
-      moneyline: ['home', 'away'],
-    };
-    if (!(market in validSelections) || !validSelections[market].includes(selection)) {
-      res.status(400).json({ error: 'Invalid market or selection' });
-      return;
-    }
-    if (market === 'moneyline') {
-      if (line != null) {
-        res.status(400).json({ error: 'Moneyline bets have no line' });
-        return;
-      }
-    } else {
-      if (typeof line !== 'number') {
-        res.status(400).json({ error: 'line is required for spread and total bets' });
-        return;
-      }
-      if (market === 'spread' && (line < -60 || line > 60)) {
-        res.status(400).json({ error: 'Spread line out of range' });
-        return;
-      }
-      if (market === 'total' && (line < 150 || line > 350)) {
-        res.status(400).json({ error: 'Total line out of range' });
-        return;
-      }
-    }
-    if (!Number.isInteger(american_odds) || Math.abs(american_odds) < 100 || Math.abs(american_odds) > 10000) {
+
+    // odds are optional for text bets (you might not know the price on an
+    // exotic), required for straight bets where settlement implies a price.
+    const hasOdds = american_odds != null;
+    if (hasOdds && (!Number.isInteger(american_odds) || Math.abs(american_odds) < 100 || Math.abs(american_odds) > 10000)) {
       res.status(400).json({ error: 'american_odds must be an integer like -110 or +150' });
       return;
     }
-    if (typeof stake !== 'number' || stake <= 0 || stake > 100000) {
-      res.status(400).json({ error: 'stake must be between 0 and 100000' });
-      return;
-    }
 
-    // resolve teams/date from the odds snapshot (covers games not yet in the
-    // db), falling back to the games table for older or live games.
-    let homeTeam: string | undefined;
-    let awayTeam: string | undefined;
-    let gameDate: string | undefined;
-    try {
-      const games = await getUpcomingOdds();
-      const game = games.find((g) => g.nba_game_id === nba_game_id);
-      if (game) {
-        homeTeam = game.home_team;
-        awayTeam = game.away_team;
-        gameDate = game.game_date;
+    interface GameRef { home_team: string; away_team: string; game_date: string }
+    let resolvedGame: GameRef | null = null;
+    const resolveGame = async (): Promise<GameRef | null> => {
+      try {
+        const games = await getUpcomingOdds();
+        const game = games.find((g) => g.nba_game_id === nba_game_id);
+        if (game) {
+          return { home_team: game.home_team, away_team: game.away_team, game_date: game.game_date };
+        }
+      } catch {
+        // ESPN being down shouldn't block logging a bet on a known game.
       }
-    } catch {
-      // ESPN being down shouldn't block logging a bet on a known game.
-    }
-    if (!homeTeam) {
       const dbGame = await query(
         `SELECT home_team, away_team, game_date FROM games WHERE nba_game_id = $1`,
         [nba_game_id]
       );
-      if (dbGame.rows.length > 0) {
-        homeTeam = dbGame.rows[0].home_team;
-        awayTeam = dbGame.rows[0].away_team;
-        gameDate = dbGame.rows[0].game_date;
+      return dbGame.rows.length > 0 ? (dbGame.rows[0] as GameRef) : null;
+    };
+
+    if (isStraight) {
+      const validSelections: Record<string, string[]> = {
+        spread: ['home', 'away'],
+        total: ['over', 'under'],
+        moneyline: ['home', 'away'],
+      };
+      if (typeof nba_game_id !== 'string' || nba_game_id.length === 0 || nba_game_id.length > 20) {
+        res.status(400).json({ error: 'nba_game_id is required' });
+        return;
+      }
+      if (!validSelections[market].includes(selection)) {
+        res.status(400).json({ error: 'Invalid selection for this market' });
+        return;
+      }
+      if (market === 'moneyline') {
+        if (line != null) {
+          res.status(400).json({ error: 'Moneyline bets have no line' });
+          return;
+        }
+      } else {
+        if (typeof line !== 'number') {
+          res.status(400).json({ error: 'line is required for spread and total bets' });
+          return;
+        }
+        if (market === 'spread' && (line < -60 || line > 60)) {
+          res.status(400).json({ error: 'Spread line out of range' });
+          return;
+        }
+        if (market === 'total' && (line < 150 || line > 350)) {
+          res.status(400).json({ error: 'Total line out of range' });
+          return;
+        }
+      }
+      if (!hasOdds) {
+        res.status(400).json({ error: 'american_odds is required for this market' });
+        return;
+      }
+      resolvedGame = await resolveGame();
+      if (!resolvedGame) {
+        res.status(400).json({ error: 'Unknown game' });
+        return;
+      }
+    } else {
+      if (typeof description !== 'string' || description.trim().length < 3 || description.trim().length > 300) {
+        res.status(400).json({ error: 'description is required (3-300 characters)' });
+        return;
+      }
+      if (selection != null || line != null) {
+        res.status(400).json({ error: 'selection and line only apply to spread/total/moneyline bets' });
+        return;
+      }
+      // a prop can optionally be tied to a game so it shows the matchup.
+      if (typeof nba_game_id === 'string' && nba_game_id.length > 0 && nba_game_id.length <= 20) {
+        resolvedGame = await resolveGame();
       }
     }
-    if (!homeTeam || !awayTeam || !gameDate) {
-      res.status(400).json({ error: 'Unknown game' });
-      return;
-    }
 
+    const game = resolvedGame;
     const result = await query(
-      `INSERT INTO bets (user_id, nba_game_id, home_team, away_team, game_date,
-                         market, selection, line, american_odds, stake)
+      `INSERT INTO bets (user_id, market, nba_game_id, home_team, away_team, game_date,
+                         selection, line, american_odds, description)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       RETURNING id, nba_game_id, home_team, away_team, game_date, market, selection,
-                 line::float AS line, american_odds, stake::float AS stake,
+       RETURNING id, market, nba_game_id, home_team, away_team, game_date, selection,
+                 line::float AS line, american_odds, description,
                  status, created_at, settled_at`,
-      [userId, nba_game_id, homeTeam, awayTeam, gameDate, market, selection,
-       market === 'moneyline' ? null : line, american_odds, stake]
+      [
+        userId,
+        market,
+        game ? nba_game_id : null,
+        game?.home_team ?? null,
+        game?.away_team ?? null,
+        game?.game_date ?? null,
+        isStraight ? selection : null,
+        isStraight && market !== 'moneyline' ? line : null,
+        hasOdds ? american_odds : null,
+        isText ? description.trim() : null,
+      ]
     );
     res.status(201).json(result.rows[0]);
   } catch {
     res.status(500).json({ error: 'Failed to save bet' });
+  }
+});
+
+// manual settlement for prop/parlay/custom bets (and corrections on straight
+// bets). 'pending' is allowed so a mis-click can be undone.
+router.patch('/bets/:id', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const userId = (req as AuthRequest).userId;
+  try {
+    const id = parseInt(String(req.params.id), 10);
+    if (Number.isNaN(id)) {
+      res.status(400).json({ error: 'Invalid bet id' });
+      return;
+    }
+    const { status } = req.body ?? {};
+    if (!['pending', 'won', 'lost', 'push'].includes(status)) {
+      res.status(400).json({ error: 'status must be pending, won, lost, or push' });
+      return;
+    }
+    const result = await query(
+      `UPDATE bets
+       SET status = $1, settled_at = CASE WHEN $1 = 'pending' THEN NULL ELSE NOW() END
+       WHERE id = $2 AND user_id = $3
+       RETURNING id, market, nba_game_id, home_team, away_team, game_date, selection,
+                 line::float AS line, american_odds, description,
+                 status, created_at, settled_at`,
+      [status, id, userId]
+    );
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: 'Bet not found' });
+      return;
+    }
+    res.json(result.rows[0]);
+  } catch {
+    res.status(500).json({ error: 'Failed to update bet' });
   }
 });
 

@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   settleBet,
-  betProfit,
   summarizeLedger,
   type SettleableBet,
 } from '../../src/services/betSettlement.js';
@@ -75,60 +74,26 @@ describe('settleBet — moneyline', () => {
   });
 });
 
-describe('betProfit', () => {
-  it('returns payout on a win, negative stake on a loss, zero otherwise', () => {
-    // act + assert
-    expect(betProfit('won', 110, -110)).toBeCloseTo(100, 2);
-    expect(betProfit('won', 100, +150)).toBeCloseTo(150, 2);
-    expect(betProfit('lost', 50, -110)).toBe(-50);
-    expect(betProfit('push', 50, -110)).toBe(0);
-    expect(betProfit('pending', 50, -110)).toBe(0);
-  });
-});
-
 describe('summarizeLedger', () => {
-  it('aggregates record, profit, and roi over settled stake only', () => {
-    // arrange — won 100 @ +150 (+150), lost 50 (-50), push 25 (0), pending 75
+  it('counts the record across statuses', () => {
+    // arrange
     const bets = [
-      { status: 'won' as const, stake: 100, american_odds: 150 },
-      { status: 'lost' as const, stake: 50, american_odds: -110 },
-      { status: 'push' as const, stake: 25, american_odds: -110 },
-      { status: 'pending' as const, stake: 75, american_odds: -110 },
+      { status: 'won' as const },
+      { status: 'won' as const },
+      { status: 'lost' as const },
+      { status: 'push' as const },
+      { status: 'pending' as const },
     ];
 
     // act
     const summary = summarizeLedger(bets);
 
     // assert
-    expect(summary.wins).toBe(1);
-    expect(summary.losses).toBe(1);
-    expect(summary.pushes).toBe(1);
-    expect(summary.pending).toBe(1);
-    expect(summary.total_staked).toBe(250);
-    expect(summary.profit).toBeCloseTo(100, 2);
-    // settled stake = 175; roi = 100 / 175
-    expect(summary.roi).toBeCloseTo(0.5714, 3);
-  });
-
-  it('guards roi when nothing has settled', () => {
-    // act
-    const summary = summarizeLedger([
-      { status: 'pending', stake: 100, american_odds: -110 },
-    ]);
-
-    // assert
-    expect(summary.roi).toBe(0);
-    expect(summary.profit).toBe(0);
+    expect(summary).toEqual({ wins: 2, losses: 1, pushes: 1, pending: 1 });
   });
 
   it('returns all zeros for an empty ledger', () => {
-    // act
-    const summary = summarizeLedger([]);
-
-    // assert
-    expect(summary).toEqual({
-      wins: 0, losses: 0, pushes: 0, pending: 0,
-      total_staked: 0, profit: 0, roi: 0,
-    });
+    // act + assert
+    expect(summarizeLedger([])).toEqual({ wins: 0, losses: 0, pushes: 0, pending: 0 });
   });
 });

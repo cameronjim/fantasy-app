@@ -4,8 +4,8 @@ import { pgResult } from '../helpers/mockDb.js';
 import { bearerFor } from '../helpers/authToken.js';
 
 // mock the anthropic boundary: tests never hit the real api. buildBettingContext
-// is also mocked because it queries teams/players — those joins are exercised
-// implicitly by the prompt content and aren't the contract under test here.
+// is also mocked because it queries teams/players/games — those joins are
+// exercised implicitly by the prompt content and aren't the contract here.
 vi.mock('../../src/services/ai.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/services/ai.js')>();
   return {
@@ -147,7 +147,7 @@ describe('GET /api/betting/picks', () => {
     expect(res.status).toBe(401);
   });
 
-  it('serves cached picks with kelly stakes computed from current bankroll', async () => {
+  it('serves cached picks without calling the model', async () => {
     // arrange — odds come from the snapshot cached by the success test above.
     // db call order: getUserPreferences, then the betting_cache lookup.
     const cachedPicks = {
@@ -164,37 +164,6 @@ describe('GET /api/betting/picks', () => {
       summary: 'One strong play tonight.',
     };
     queryMock
-      .mockResolvedValueOnce(pgResult([{ ai_preferences: { betting: { bankroll: 1000 } } }]))
-      .mockResolvedValueOnce(pgResult([{ picks: cachedPicks, created_at: '2026-06-09T12:00:00Z' }]));
-
-    // act
-    const res = await request(app)
-      .get('/api/betting/picks')
-      .set('Authorization', bearerFor(5));
-
-    // assert
-    expect(res.status).toBe(200);
-    expect(res.body.cached).toBe(true);
-    expect(claudeMock).not.toHaveBeenCalled();
-    const pick = res.body.picks[0];
-    expect(pick.kelly).not.toBeNull();
-    expect(pick.kelly.suggested_stake).toBeGreaterThan(0);
-  });
-
-  it('returns kelly: null on cached picks when no bankroll is set', async () => {
-    // arrange
-    const cachedPicks = {
-      picks: [{
-        game_id: '401859966', category: 'safe', market: 'moneyline', selection: 'home',
-        matchup: 'San Antonio Spurs @ New York Knicks', game_date: '2026-06-10',
-        tipoff: '6/10 - 8:30 PM EDT', selection_label: 'New York Knicks ML (-130)',
-        line: null, american_odds: -130, implied_prob: 0.5652,
-        estimated_win_prob: 0.62, edge: 0.0548, rationale: 'better team', confidence: 'high',
-      }],
-      parlay: null,
-      summary: '',
-    };
-    queryMock
       .mockResolvedValueOnce(pgResult([{ ai_preferences: {} }]))
       .mockResolvedValueOnce(pgResult([{ picks: cachedPicks, created_at: '2026-06-09T12:00:00Z' }]));
 
@@ -205,25 +174,29 @@ describe('GET /api/betting/picks', () => {
 
     // assert
     expect(res.status).toBe(200);
-    expect(res.body.picks[0].kelly).toBeNull();
+    expect(res.body.cached).toBe(true);
+    expect(res.body.picks).toHaveLength(1);
+    expect(claudeMock).not.toHaveBeenCalled();
   });
 
-  it('generates fresh picks, re-attaches snapshot odds, and caches the result', async () => {
+  it('generates fresh picks, re-attaches snapshot odds, and caps each category at 2', async () => {
     // arrange — refresh=true skips the cache read; db: prefs, then cache upsert
     queryMock
-      .mockResolvedValueOnce(pgResult([{ ai_preferences: { betting: { bankroll: 500 } } }]))
+      .mockResolvedValueOnce(pgResult([{ ai_preferences: {} }]))
       .mockResolvedValueOnce(pgResult([]));
+    const pick = (market: string, selection: string, category: string) => ({
+      game_id: '401859966', category, market, selection,
+      estimated_win_prob: 0.58, rationale: 'edge', confidence: 'medium',
+    });
     claudeMock.mockResolvedValue(JSON.stringify({
       picks: [
-        {
-          game_id: '401859966', category: 'best_value', market: 'spread', selection: 'home',
-          estimated_win_prob: 0.58, rationale: 'home edge', confidence: 'medium',
-        },
-        {
-          // hallucinated game — must be dropped by enrichment
-          game_id: '999999', category: 'safe', market: 'moneyline', selection: 'away',
-          estimated_win_prob: 0.6, rationale: 'ghost game', confidence: 'high',
-        },
+        pick('spread', 'home', 'best_value'),
+        pick('total', 'over', 'best_value'),
+        // third best_value must be dropped by the per-category cap
+        pick('moneyline', 'home', 'best_value'),
+        pick('moneyline', 'away', 'safe'),
+        // hallucinated game — must be dropped entirely
+        { game_id: '999999', category: 'hail_mary', market: 'moneyline', selection: 'away', estimated_win_prob: 0.4, rationale: 'ghost', confidence: 'low' },
       ],
       parlay: { legs: [{ game_id: '401859966', market: 'spread', selection: 'home' }], rationale: 'one leg only' },
       summary: 'Take the home side.',
@@ -237,24 +210,24 @@ describe('GET /api/betting/picks', () => {
 
     // assert
     expect(res.status).toBe(200);
-    expect(res.body.picks).toHaveLength(1);
-    const pick = res.body.picks[0];
+    const categories = res.body.picks.map((p: { category: string }) => p.category);
+    expect(categories.filter((c: string) => c === 'best_value')).toHaveLength(2);
+    expect(categories.filter((c: string) => c === 'safe')).toHaveLength(1);
+    expect(categories.filter((c: string) => c === 'hail_mary')).toHaveLength(0);
     // numbers come from the snapshot, not the model
-    expect(pick.american_odds).toBe(-105);
-    expect(pick.line).toBe(-2.5);
-    expect(pick.implied_prob).toBeCloseTo(0.5122, 3);
-    expect(pick.edge).toBeCloseTo(0.58 - 0.5122, 3);
-    expect(pick.selection_label).toBe('New York Knicks -2.5');
-    expect(pick.kelly.suggested_stake).toBeGreaterThan(0);
+    const spreadPick = res.body.picks[0];
+    expect(spreadPick.american_odds).toBe(-105);
+    expect(spreadPick.line).toBe(-2.5);
+    expect(spreadPick.implied_prob).toBeCloseTo(0.5122, 3);
+    expect(spreadPick.edge).toBeCloseTo(0.58 - 0.5122, 3);
+    expect(spreadPick.selection_label).toBe('New York Knicks -2.5');
     // a 1-leg parlay is rejected
     expect(res.body.parlay).toBeNull();
-    // result was cached (without kelly fields)
+    // result was cached
     const upsert = queryMock.mock.calls.find(([sql]) =>
       (sql as string).includes('INSERT INTO betting_cache')
     );
     expect(upsert).toBeDefined();
-    const storedJson = JSON.parse((upsert![1] as string[])[2]);
-    expect(storedJson.picks[0].kelly).toBeUndefined();
   });
 
   it('surfaces an empty result without caching when every pick fails validation', async () => {
@@ -283,7 +256,7 @@ describe('GET /api/betting/picks', () => {
 });
 
 describe('GET /api/betting/bets', () => {
-  it('settles pending bets whose games went final, then returns the ledger', async () => {
+  it('auto-settles pending straight bets whose games went final', async () => {
     // arrange — one pending home -2.5 bet; home won by 10 → 'won'.
     queryMock
       // settlement join
@@ -295,10 +268,16 @@ describe('GET /api/betting/bets', () => {
       // the final ledger SELECT
       .mockResolvedValueOnce(pgResult([
         {
-          id: 42, nba_game_id: '401859966', home_team: 'New York Knicks',
-          away_team: 'San Antonio Spurs', game_date: '2026-06-10', market: 'spread',
-          selection: 'home', line: -2.5, american_odds: -105, stake: 50,
+          id: 42, market: 'spread', nba_game_id: '401859966', home_team: 'New York Knicks',
+          away_team: 'San Antonio Spurs', game_date: '2026-06-10',
+          selection: 'home', line: -2.5, american_odds: -105, description: null,
           status: 'won', created_at: '2026-06-09T12:00:00Z', settled_at: '2026-06-11T04:00:00Z',
+        },
+        {
+          id: 43, market: 'custom', nba_game_id: null, home_team: null,
+          away_team: null, game_date: null,
+          selection: null, line: null, american_odds: 600, description: 'Haliburton triple double',
+          status: 'pending', created_at: '2026-06-09T13:00:00Z', settled_at: null,
         },
       ]));
 
@@ -307,16 +286,17 @@ describe('GET /api/betting/bets', () => {
       .get('/api/betting/bets')
       .set('Authorization', bearerFor(9));
 
-    // assert — the UPDATE carries the computed outcome bound to the jwt user
+    // assert — the settlement query is scoped to straight markets, and the
+    // UPDATE carries the computed outcome bound to the jwt user
+    const [settleSql] = queryMock.mock.calls[0];
+    expect(settleSql).toMatch(/b\.market IN \('spread', 'total', 'moneyline'\)/);
     const [updateSql, updateParams] = queryMock.mock.calls[1];
     expect(updateSql).toMatch(/UPDATE bets SET status/);
     expect(updateParams).toEqual(['won', 42, 9]);
 
     expect(res.status).toBe(200);
-    expect(res.body.bets).toHaveLength(1);
-    expect(res.body.bets[0].profit).toBeCloseTo(47.62, 2);
-    expect(res.body.summary.wins).toBe(1);
-    expect(res.body.summary.roi).toBeCloseTo(0.9524, 3);
+    expect(res.body.bets).toHaveLength(2);
+    expect(res.body.summary).toEqual({ wins: 1, losses: 0, pushes: 0, pending: 1 });
   });
 
   it('binds every query to the jwt user id', async () => {
@@ -336,16 +316,15 @@ describe('GET /api/betting/bets', () => {
 });
 
 describe('POST /api/betting/bets', () => {
-  const validBet = {
+  const straightBet = {
     nba_game_id: '888777',
     market: 'spread',
     selection: 'home',
     line: -4.5,
     american_odds: -110,
-    stake: 25,
   };
 
-  it('creates a bet, resolving game details from the db when not in the snapshot', async () => {
+  it('creates a straight bet, resolving game details from the db when not in the snapshot', async () => {
     // arrange — game id is not in the odds snapshot, so the route falls back
     // to the games table, then inserts.
     queryMock
@@ -353,14 +332,14 @@ describe('POST /api/betting/bets', () => {
         { home_team: 'Boston Celtics', away_team: 'Miami Heat', game_date: '2026-06-12' },
       ]))
       .mockResolvedValueOnce(pgResult([
-        { id: 1, ...validBet, home_team: 'Boston Celtics', away_team: 'Miami Heat', game_date: '2026-06-12', status: 'pending', created_at: '2026-06-09T12:00:00Z', settled_at: null },
+        { id: 1, ...straightBet, home_team: 'Boston Celtics', away_team: 'Miami Heat', game_date: '2026-06-12', description: null, status: 'pending', created_at: '2026-06-09T12:00:00Z', settled_at: null },
       ]));
 
     // act
     const res = await request(app)
       .post('/api/betting/bets')
       .set('Authorization', bearerFor(9))
-      .send(validBet);
+      .send(straightBet);
 
     // assert
     expect(res.status).toBe(201);
@@ -369,15 +348,66 @@ describe('POST /api/betting/bets', () => {
     expect(insertCall![1]![0]).toBe(9); // user_id from jwt
   });
 
+  it('creates a custom bet from a description with no game reference', async () => {
+    // arrange
+    queryMock.mockResolvedValueOnce(pgResult([
+      {
+        id: 2, market: 'custom', nba_game_id: null, home_team: null, away_team: null,
+        game_date: null, selection: null, line: null, american_odds: 600,
+        description: 'SGA 40+ points and OKC wins', status: 'pending',
+        created_at: '2026-06-09T12:00:00Z', settled_at: null,
+      },
+    ]));
+
+    // act
+    const res = await request(app)
+      .post('/api/betting/bets')
+      .set('Authorization', bearerFor(9))
+      .send({ market: 'custom', description: 'SGA 40+ points and OKC wins', american_odds: 600 });
+
+    // assert
+    expect(res.status).toBe(201);
+    expect(res.body.description).toBe('SGA 40+ points and OKC wins');
+    // game/selection/line params are all null for a custom bet
+    const insertCall = queryMock.mock.calls.find(([sql]) => (sql as string).includes('INSERT INTO bets'));
+    const params = insertCall![1] as unknown[];
+    expect(params[2]).toBeNull(); // nba_game_id
+    expect(params[6]).toBeNull(); // selection
+  });
+
+  it('creates a parlay bet without odds', async () => {
+    // arrange
+    queryMock.mockResolvedValueOnce(pgResult([
+      {
+        id: 3, market: 'parlay', nba_game_id: null, home_team: null, away_team: null,
+        game_date: null, selection: null, line: null, american_odds: null,
+        description: 'Knicks ML + Under 216.5 + Celtics -3', status: 'pending',
+        created_at: '2026-06-09T12:00:00Z', settled_at: null,
+      },
+    ]));
+
+    // act
+    const res = await request(app)
+      .post('/api/betting/bets')
+      .set('Authorization', bearerFor(9))
+      .send({ market: 'parlay', description: 'Knicks ML + Under 216.5 + Celtics -3' });
+
+    // assert
+    expect(res.status).toBe(201);
+    expect(res.body.american_odds).toBeNull();
+  });
+
   it.each([
-    [{ ...validBet, market: 'props' }, 'Invalid market or selection'],
-    [{ ...validBet, market: 'total', selection: 'home' }, 'Invalid market or selection'],
-    [{ ...validBet, market: 'moneyline', line: -4.5 }, 'Moneyline bets have no line'],
-    [{ ...validBet, line: undefined }, 'line is required for spread and total bets'],
-    [{ ...validBet, line: 99 }, 'Spread line out of range'],
-    [{ ...validBet, market: 'total', selection: 'over', line: 500 }, 'Total line out of range'],
-    [{ ...validBet, american_odds: -50 }, 'american_odds must be an integer like -110 or +150'],
-    [{ ...validBet, stake: 0 }, 'stake must be between 0 and 100000'],
+    [{ ...straightBet, market: 'lottery' }, 'Invalid market'],
+    [{ ...straightBet, market: 'total', selection: 'home' }, 'Invalid selection for this market'],
+    [{ ...straightBet, market: 'moneyline', line: -4.5 }, 'Moneyline bets have no line'],
+    [{ ...straightBet, line: undefined }, 'line is required for spread and total bets'],
+    [{ ...straightBet, line: 99 }, 'Spread line out of range'],
+    [{ ...straightBet, market: 'total', selection: 'over', line: 500 }, 'Total line out of range'],
+    [{ ...straightBet, american_odds: -50 }, 'american_odds must be an integer like -110 or +150'],
+    [{ ...straightBet, american_odds: undefined }, 'american_odds is required for this market'],
+    [{ market: 'prop', description: 'x' }, 'description is required (3-300 characters)'],
+    [{ market: 'custom', description: 'valid words here', selection: 'home' }, 'selection and line only apply to spread/total/moneyline bets'],
   ])('rejects invalid payload %#', async (payload, message) => {
     // act
     const res = await request(app)
@@ -390,7 +420,7 @@ describe('POST /api/betting/bets', () => {
     expect(res.body.error).toBe(message);
   });
 
-  it('returns 400 for a game neither ESPN nor the db knows', async () => {
+  it('returns 400 for a straight bet on a game neither ESPN nor the db knows', async () => {
     // arrange — db lookup comes back empty
     queryMock.mockResolvedValueOnce(pgResult([]));
 
@@ -398,11 +428,63 @@ describe('POST /api/betting/bets', () => {
     const res = await request(app)
       .post('/api/betting/bets')
       .set('Authorization', bearerFor(9))
-      .send(validBet);
+      .send(straightBet);
 
     // assert
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('Unknown game');
+  });
+});
+
+describe('PATCH /api/betting/bets/:id', () => {
+  it('settles a bet manually and stamps settled_at', async () => {
+    // arrange
+    queryMock.mockResolvedValueOnce(pgResult([
+      {
+        id: 5, market: 'custom', nba_game_id: null, home_team: null, away_team: null,
+        game_date: null, selection: null, line: null, american_odds: 600,
+        description: 'weird exotic', status: 'won',
+        created_at: '2026-06-09T12:00:00Z', settled_at: '2026-06-10T03:00:00Z',
+      },
+    ]));
+
+    // act
+    const res = await request(app)
+      .patch('/api/betting/bets/5')
+      .set('Authorization', bearerFor(9))
+      .send({ status: 'won' });
+
+    // assert
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('won');
+    const [sql, params] = queryMock.mock.calls[0];
+    expect(sql).toMatch(/UPDATE bets/);
+    expect(params).toEqual(['won', 5, 9]);
+  });
+
+  it('rejects an invalid status', async () => {
+    // act
+    const res = await request(app)
+      .patch('/api/betting/bets/5')
+      .set('Authorization', bearerFor(9))
+      .send({ status: 'maybe' });
+
+    // assert
+    expect(res.status).toBe(400);
+  });
+
+  it("404s when the bet doesn't exist or belongs to someone else", async () => {
+    // arrange
+    queryMock.mockResolvedValueOnce(pgResult([]));
+
+    // act
+    const res = await request(app)
+      .patch('/api/betting/bets/5')
+      .set('Authorization', bearerFor(9))
+      .send({ status: 'lost' });
+
+    // assert
+    expect(res.status).toBe(404);
   });
 });
 

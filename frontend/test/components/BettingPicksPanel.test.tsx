@@ -19,7 +19,6 @@ const makePick = (overrides: Partial<BettingPick> = {}): BettingPick => ({
   edge: 0.0678,
   rationale: 'Home team has the rest advantage.',
   confidence: 'medium',
-  kelly: { full: 0.06, quarter: 0.015, suggested_stake: 15 },
   ...overrides,
 });
 
@@ -37,13 +36,11 @@ const makeResponse = (overrides: Partial<BettingPicksResponse> = {}): BettingPic
     combined_american: 271,
     combined_implied_prob: 0.2695,
     rationale: 'Both legs lean on slow pace.',
-    ev_note: 'Parlays multiply the house edge — keep the stake small.',
+    ev_note: 'Parlays multiply the house edge, so treat this as entertainment.',
   },
   summary: 'A thin slate with one strong value play.',
   ...overrides,
 });
-
-const noop = (): Promise<void> => Promise.resolve();
 
 describe('BettingPicksPanel', () => {
   it('renders the three category sections with their picks', () => {
@@ -54,7 +51,6 @@ describe('BettingPicksPanel', () => {
         refreshing={false}
         error=""
         onReload={vi.fn()}
-        onTrackBet={noop}
       />
     );
 
@@ -67,7 +63,7 @@ describe('BettingPicksPanel', () => {
     expect(screen.getByText('San Antonio Spurs ML (+105)')).toBeInTheDocument();
   });
 
-  it('shows implied probability, AI estimate, and a signed edge for a pick', () => {
+  it('shows implied probability, AI estimate, a signed edge, and the confidence badge', () => {
     render(
       <BettingPicksPanel
         picks={makeResponse({ picks: [makePick()], parlay: null })}
@@ -75,33 +71,19 @@ describe('BettingPicksPanel', () => {
         refreshing={false}
         error=""
         onReload={vi.fn()}
-        onTrackBet={noop}
       />
     );
 
     expect(screen.getByText('51.2%')).toBeInTheDocument();
     expect(screen.getByText('58.0%')).toBeInTheDocument();
     expect(screen.getByText('+6.8%')).toBeInTheDocument();
-    expect(screen.getByText('Suggested stake:')).toBeInTheDocument();
-    expect(screen.getByText('$15.00')).toBeInTheDocument();
+    // confidence renders inside a single non-wrapping badge element
+    const badge = screen.getByText('medium confidence');
+    expect(badge.className).toContain('badge');
+    expect(badge.className).toContain('whitespace-nowrap');
   });
 
-  it('nudges the user to set a bankroll when kelly is null', () => {
-    render(
-      <BettingPicksPanel
-        picks={makeResponse({ picks: [makePick({ kelly: null })], parlay: null })}
-        loading={false}
-        refreshing={false}
-        error=""
-        onReload={vi.fn()}
-        onTrackBet={noop}
-      />
-    );
-
-    expect(screen.getByText(/Set a bankroll in Betting Preferences/i)).toBeInTheDocument();
-  });
-
-  it('renders the parlay with combined odds and the -EV warning', () => {
+  it('renders the parlay with combined odds and the value warning', () => {
     render(
       <BettingPicksPanel
         picks={makeResponse()}
@@ -109,7 +91,6 @@ describe('BettingPicksPanel', () => {
         refreshing={false}
         error=""
         onReload={vi.fn()}
-        onTrackBet={noop}
       />
     );
 
@@ -127,7 +108,6 @@ describe('BettingPicksPanel', () => {
         refreshing={false}
         error=""
         onReload={vi.fn()}
-        onTrackBet={noop}
       />
     );
 

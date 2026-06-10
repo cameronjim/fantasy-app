@@ -183,7 +183,7 @@ function formatMarketLines(game: BettingGame): string[] {
   const t = game.markets.total;
   if (t) {
     lines.push(
-      `  TOTAL: ${t.line} — over (${t.over_price}, implied ${pct(t.over_implied)}) / ` +
+      `  TOTAL: ${t.line}: over (${t.over_price}, implied ${pct(t.over_implied)}) / ` +
       `under (${t.under_price}, implied ${pct(t.under_implied)})`
     );
   }
@@ -197,10 +197,73 @@ function formatMarketLines(game: BettingGame): string[] {
   return lines;
 }
 
+interface FinalGameRow {
+  home_team: string;
+  away_team: string;
+  home_score: number;
+  away_score: number;
+  game_date: string;
+}
+
+interface TeamForm {
+  record: string;
+  avgScored: string;
+  avgAllowed: string;
+}
+
+/** win-loss record and scoring averages over a team's last `n` finals */
+function recentForm(finals: FinalGameRow[], team: string, n = 10): TeamForm | null {
+  const games = finals
+    .filter((g) => g.home_team === team || g.away_team === team)
+    .slice(0, n);
+  if (games.length === 0) return null;
+
+  let wins = 0;
+  let scored = 0;
+  let allowed = 0;
+  for (const g of games) {
+    const isHome = g.home_team === team;
+    const us = isHome ? g.home_score : g.away_score;
+    const them = isHome ? g.away_score : g.home_score;
+    if (us > them) wins += 1;
+    scored += us;
+    allowed += them;
+  }
+  return {
+    record: `${wins}-${games.length - wins}`,
+    avgScored: (scored / games.length).toFixed(1),
+    avgAllowed: (allowed / games.length).toFixed(1),
+  };
+}
+
+/** head-to-head summary lines between two teams from the stored finals */
+function headToHead(finals: FinalGameRow[], teamA: string, teamB: string, maxGames = 5): string[] {
+  const meetings = finals.filter(
+    (g) =>
+      (g.home_team === teamA && g.away_team === teamB) ||
+      (g.home_team === teamB && g.away_team === teamA)
+  );
+  if (meetings.length === 0) return [`  Head-to-head: no prior meetings in our database.`];
+
+  const aWins = meetings.filter((g) => {
+    const aIsHome = g.home_team === teamA;
+    return aIsHome ? g.home_score > g.away_score : g.away_score > g.home_score;
+  }).length;
+
+  const lines = [
+    `  Head-to-head (${meetings.length} meetings on record): ${teamA} ${aWins} wins, ${teamB} ${meetings.length - aWins} wins`,
+  ];
+  for (const g of meetings.slice(0, maxGames)) {
+    lines.push(`    ${g.game_date}: ${g.away_team} ${g.away_score} at ${g.home_team} ${g.home_score}`);
+  }
+  return lines;
+}
+
 /**
  * Builds the AI context for betting picks: each upcoming game's posted
- * markets with implied probabilities, both teams' records and ratings, and
- * the injury report for rotation players on the involved teams.
+ * markets with implied probabilities, both teams' records and ratings,
+ * recent form (last 10), head-to-head results, and the injury report for
+ * rotation players on the involved teams.
  */
 export async function buildBettingContext(games: BettingGame[]): Promise<string> {
   const teamNames = [...new Set(games.flatMap((g) => [g.home_team, g.away_team]))];
@@ -216,6 +279,22 @@ export async function buildBettingContext(games: BettingGame[]): Promise<string>
     teamsResult.rows.map((t: Record<string, unknown>) => [t.name as string, t])
   );
 
+  // completed games involving any team on the slate, newest first. feeds both
+  // last-10 form and head-to-head. capped to keep the scan bounded; 400 rows
+  // comfortably covers 10+ games for every team plus all season meetings.
+  const finalsResult = await query(
+    `SELECT home_team, away_team, home_score, away_score,
+            TO_CHAR(game_date, 'YYYY-MM-DD') AS game_date
+     FROM games
+     WHERE status = 'Final'
+       AND home_score IS NOT NULL AND away_score IS NOT NULL
+       AND (home_team = ANY($1) OR away_team = ANY($1))
+     ORDER BY game_date DESC
+     LIMIT 400`,
+    [teamNames]
+  );
+  const finals = finalsResult.rows as FinalGameRow[];
+
   // rotation players only (15+ mpg) — a two-way player's ankle doesn't move a line.
   const injuriesResult = await query(
     `SELECT p.name, p.team, p.injury_status, p.injury_detail, p.points_per_game
@@ -230,14 +309,18 @@ export async function buildBettingContext(games: BettingGame[]): Promise<string>
   const injuriesByAbbrev = new Map<string, string[]>();
   for (const row of injuriesResult.rows) {
     const list = injuriesByAbbrev.get(row.team) ?? [];
-    list.push(`${row.name} (${row.points_per_game} ppg) — ${row.injury_status}${row.injury_detail ? `: ${row.injury_detail}` : ''}`);
+    list.push(`${row.name} (${row.points_per_game} ppg), ${row.injury_status}${row.injury_detail ? `: ${row.injury_detail}` : ''}`);
     injuriesByAbbrev.set(row.team, list);
   }
 
   const teamLine = (name: string): string => {
     const t = teamByName.get(name);
-    if (!t) return `  ${name}: no team stats available`;
-    return `  ${name}: ${t.wins}-${t.losses}, ORtg ${t.offensive_rating}, DRtg ${t.defensive_rating}, Net ${t.net_rating}`;
+    const base = t
+      ? `  ${name}: ${t.wins}-${t.losses}, ORtg ${t.offensive_rating}, DRtg ${t.defensive_rating}, Net ${t.net_rating}`
+      : `  ${name}: no team stats available`;
+    const form = recentForm(finals, name);
+    if (!form) return base;
+    return `${base}\n  ${name} last 10: ${form.record}, avg ${form.avgScored} scored, ${form.avgAllowed} allowed`;
   };
 
   const injuryLines = (name: string, abbrev: string): string[] => {
@@ -252,6 +335,7 @@ export async function buildBettingContext(games: BettingGame[]): Promise<string>
       ...formatMarketLines(g),
       teamLine(g.home_team),
       teamLine(g.away_team),
+      ...headToHead(finals, g.home_team, g.away_team),
       ...injuryLines(g.home_team, g.home_abbrev),
       ...injuryLines(g.away_team, g.away_abbrev),
     ];

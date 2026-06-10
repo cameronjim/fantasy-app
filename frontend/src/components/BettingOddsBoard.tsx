@@ -1,4 +1,4 @@
-import { CalendarClock } from 'lucide-react';
+import { useState } from 'react';
 import { formatAmerican, formatPercent, formatLine } from '../utils/formatOdds';
 import type { BettingGame } from '../types';
 
@@ -8,6 +8,10 @@ interface BettingOddsBoardProps {
   error: string;
   onRetry: () => void;
 }
+
+// regular-season slates can run 10+ games a night; show a few and let the
+// user expand instead of flooding the page.
+const VISIBLE_GAMES = 3;
 
 interface OddsRowProps {
   label: string;
@@ -21,12 +25,12 @@ const OddsRow = ({ label, cells }: OddsRowProps) => (
       cell ? (
         <span key={i} className="flex items-center gap-1.5">
           <span className="font-medium">{cell.text}</span>
-          <span className="badge badge-ghost badge-xs" title="Implied probability — the chance the sportsbook's price says this outcome has">
+          <span className="badge badge-ghost badge-xs whitespace-nowrap" title="Implied probability: the chance the sportsbook's price says this outcome has">
             {formatPercent(cell.implied)}
           </span>
         </span>
       ) : (
-        <span key={i} className="opacity-30">—</span>
+        <span key={i} className="opacity-30">-</span>
       )
     )}
   </div>
@@ -45,10 +49,7 @@ const GameCard = ({ game }: { game: BettingGame }) => {
             <div className="text-xs opacity-50">at</div>
             <div className="font-semibold text-sm">{game.home_team}</div>
           </div>
-          <span className="text-xs opacity-50 flex items-center gap-1 whitespace-nowrap">
-            <CalendarClock size={12} />
-            {game.tipoff}
-          </span>
+          <span className="text-xs opacity-50 whitespace-nowrap">{game.tipoff}</span>
         </div>
 
         {hasMarkets ? (
@@ -104,6 +105,8 @@ const GameCard = ({ game }: { game: BettingGame }) => {
 };
 
 export const BettingOddsBoard = ({ games, loading, error, onRetry }: BettingOddsBoardProps) => {
+  const [expanded, setExpanded] = useState(false);
+
   if (loading) {
     return (
       <div className="card bg-base-200">
@@ -131,17 +134,29 @@ export const BettingOddsBoard = ({ games, loading, error, onRetry }: BettingOdds
       <div className="card bg-base-200">
         <div className="card-body flex flex-col items-center py-12 gap-2 text-center">
           <p className="font-semibold text-sm">No upcoming games</p>
-          <p className="text-xs opacity-60">There are no NBA games scheduled in the next week.</p>
+          <p className="text-xs opacity-60">There are no NBA games scheduled in the next few days.</p>
         </div>
       </div>
     );
   }
 
+  const visible = expanded ? games : games.slice(0, VISIBLE_GAMES);
+  const hiddenCount = games.length - VISIBLE_GAMES;
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-      {games.map((game) => (
-        <GameCard key={game.nba_game_id} game={game} />
-      ))}
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {visible.map((game) => (
+          <GameCard key={game.nba_game_id} game={game} />
+        ))}
+      </div>
+      {hiddenCount > 0 && (
+        <div className="flex justify-center">
+          <button onClick={() => setExpanded(!expanded)} className="btn btn-ghost btn-sm">
+            {expanded ? 'See less' : `See more (${hiddenCount})`}
+          </button>
+        </div>
+      )}
     </div>
   );
 };

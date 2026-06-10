@@ -1,6 +1,10 @@
 import '@testing-library/jest-dom/vitest';
-import { afterEach, beforeEach } from 'vitest';
+import { afterEach, beforeEach, vi } from 'vitest';
 import { cleanup } from '@testing-library/react';
+
+// jsdom doesn't implement scrollIntoView; ChatBox calls it on every message
+// change, so tests that render the page would crash without this shim.
+window.HTMLElement.prototype.scrollIntoView = vi.fn();
 
 // react testing library doesn't auto-cleanup with vitest, so we wire it up
 // once here instead of repeating in every test file.
