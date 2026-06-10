@@ -114,6 +114,12 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<void>
     route.fulfill({ status: 401, json: { error: 'Unauthorized' } }),
   );
 
+  // pageview beacon fires on every route change — ack it so specs never
+  // depend on an unmocked request hitting a real backend.
+  await page.route('**/api/track/pageview', (route) =>
+    route.fulfill({ status: 204, body: '' }),
+  );
+
   // betting page first-paint endpoints. defaults are safe empties; tests opt
   // into picks/odds/ledger content via the options above.
   await page.route('**/api/betting/odds', (route) =>
