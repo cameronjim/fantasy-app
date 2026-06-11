@@ -74,10 +74,6 @@ const BENCH_CHOICES: Choice<NonNullable<AIPreferences['bench_philosophy']>>[] = 
 const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
 
 export const PreferencesPage = () => {
-  if (!getAuthToken()) {
-    return <Navigate to="/login" replace state={{ from: '/preferences' }} />;
-  }
-
   const [prefs, setPrefs] = useState<AIPreferences>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -91,6 +87,13 @@ export const PreferencesPage = () => {
       .catch(() => setError('Failed to load preferences'))
       .finally(() => setLoading(false));
   }, []);
+
+  // the auth guard must come AFTER every hook: an early return above a hook
+  // crashes with react error #300 when the token disappears while the page
+  // is mounted (e.g. signing out from this page).
+  if (!getAuthToken()) {
+    return <Navigate to="/login" replace state={{ from: '/preferences' }} />;
+  }
 
   const togglePuntCategory = (cat: string): void => {
     const current = prefs.punt_categories ?? [];
