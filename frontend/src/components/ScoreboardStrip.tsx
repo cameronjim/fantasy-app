@@ -7,6 +7,9 @@ import type { Game } from '../types';
 let gamesCache: Game[] = [];
 let cacheFetchedAt = 0;
 
+// gap left of the anchor group so it clears the left scroll button.
+const LEFT_GAP = 36;
+
 function periodLabel(period: number): string {
   if (period <= 4) return `Q${period}`;
   return `OT${period - 4 > 1 ? period - 4 : ''}`;
@@ -19,6 +22,8 @@ export const ScoreboardStrip = () => {
   // don't keep yanking the strip back to today while the user is manually
   // scrolling through past or upcoming games.
   const autoScrolledForDay = useRef<string | null>(null);
+  // trailing spacer whose width is set imperatively (see layoutScoreboard).
+  const spacerRef = useRef<HTMLDivElement>(null);
 
   const fetchGames = useCallback(async (): Promise<void> => {
     try {
@@ -92,29 +97,79 @@ export const ScoreboardStrip = () => {
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
-  // auto-scroll the strip so today's group sits near the left of the viewport,
-  // so the user lands on today rather than weeks in the past. this runs only
-  // ONCE per day: re-running on every `games` update would fight the user,
-  // snapping them back to today each time the 2-min poll or the live overlay
-  // refreshes the data while they're scrolling through other games. the ref
-  // re-arms when the date rolls over so it still re-centers across midnight.
+  // place "today" in the SECOND slot — one recent past day to its left, today
+  // next to it — and size the trailing spacer so the strip can't be scrolled
+  // past that anchor into empty space.
+  const layoutScoreboard = useCallback((): void => {
+    const container = document.getElementById('scoreboard-scroll');
+    if (!container) return;
+    const groups = Array.from(container.querySelectorAll<HTMLElement>('[data-date]'));
+    const todayIdx = groups.findIndex((el) => el.dataset.date === todayIso);
+    if (todayIdx === -1) return;
+    const todayGroup = groups[todayIdx];
+    // anchor on the group before today so today is second; if today is the
+    // first group (no past games), it leads.
+    const anchor = groups[Math.max(0, todayIdx - 1)];
+    const hasFuture = todayIdx < groups.length - 1;
+
+    // trailing spacer: when today is the last group, fill the rest of the
+    // viewport to its right so today can reach the second slot AND the max
+    // scroll stops exactly there (no scrolling further into blank space).
+    // when future games exist there's real content to the right, so no spacer.
+    if (spacerRef.current) {
+      if (hasFuture) {
+        spacerRef.current.style.width = '0px';
+      } else {
+        const slotsSpan =
+          todayGroup.offsetLeft + todayGroup.offsetWidth - anchor.offsetLeft;
+        const room = Math.max(0, container.clientWidth - slotsSpan - LEFT_GAP);
+        spacerRef.current.style.width = `${room}px`;
+      }
+    }
+
+    // bring the anchor group flush-left (today lands second). reading the live
+    // rects also flushes the spacer width change above. clamping at the new
+    // max scroll keeps today pinned to its anchor when it's the last group.
+    const delta =
+      anchor.getBoundingClientRect().left - container.getBoundingClientRect().left;
+    container.scrollLeft += delta - LEFT_GAP;
+  }, [todayIso]);
+
+  // run the layout once per day. re-running on every `games` update would
+  // fight the user — snapping them back each time the 2-min poll or the live
+  // overlay refreshes the data while they scroll. the ref re-arms across
+  // midnight. double rAF waits until the strip has actually painted (card
+  // widths settled) before measuring, which is what was off in prod.
   useEffect(() => {
     if (games.length === 0) return;
     if (autoScrolledForDay.current === todayIso) return;
-    // requestAnimationFrame ensures the elements are laid out before we measure.
-    const raf = requestAnimationFrame(() => {
-      const container = document.getElementById('scoreboard-scroll');
-      const todayEl = container?.querySelector<HTMLElement>(`[data-date="${todayIso}"]`);
-      if (container && todayEl) {
-        // position today's group ~80px from the left edge of the visible area
-        // (just past the left scroll button), showing past games trailing behind.
-        const offsetLeft = todayEl.offsetLeft - container.offsetLeft - 80;
-        container.scrollTo({ left: Math.max(0, offsetLeft), behavior: 'auto' });
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        layoutScoreboard();
         autoScrolledForDay.current = todayIso;
-      }
+      });
     });
-    return () => cancelAnimationFrame(raf);
-  }, [games, todayIso]);
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
+  }, [games, todayIso, layoutScoreboard]);
+
+  // the spacer width and anchor position both depend on the viewport width,
+  // so re-fit when it changes.
+  useEffect(() => {
+    let raf = 0;
+    const onResize = (): void => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(layoutScoreboard);
+    };
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      cancelAnimationFrame(raf);
+    };
+  }, [layoutScoreboard]);
 
   const grouped = games.reduce<Record<string, Game[]>>((acc, g) => {
     const date = g.game_date?.split('T')[0] || 'Unknown';
@@ -203,6 +258,11 @@ export const ScoreboardStrip = () => {
             <div className="w-px h-12 bg-base-300 flex-shrink-0" />
           </div>
         ))}
+
+        {/* trailing scroll room, width set in layoutScoreboard: fills the
+            viewport to today's right only when today is the last group, so
+            today reaches the second slot but the scroll can't go past it. */}
+        <div ref={spacerRef} aria-hidden className="flex-shrink-0" style={{ width: 0 }} />
       </div>
 
       <button
