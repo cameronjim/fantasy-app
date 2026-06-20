@@ -116,6 +116,10 @@ router.get('/live', async (_req: Request, res: Response) => {
 
       const dateStr = String(g.GAME_DATE_EST ?? '').slice(0, 10);
 
+      const period = g.LIVE_PERIOD != null ? Number(g.LIVE_PERIOD) : undefined;
+      const rawClock = g.LIVE_PC_TIME != null ? String(g.LIVE_PC_TIME).trim() : undefined;
+      const game_clock = rawClock && rawClock !== '' && rawClock !== '0:00' ? rawClock : undefined;
+
       return {
         id: gameId,
         nba_game_id: gameId,
@@ -125,6 +129,8 @@ router.get('/live', async (_req: Request, res: Response) => {
         home_score: gameScores[homeTeamId] ?? null,
         away_score: gameScores[awayTeamId] ?? null,
         status,
+        ...(period ? { period } : {}),
+        ...(game_clock ? { game_clock } : {}),
       };
     });
 
