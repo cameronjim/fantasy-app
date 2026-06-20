@@ -45,7 +45,6 @@ services:
     schedule: "0 */6 * * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python run_scraper.py
-    plan: free
     envVars:
       - key: DATABASE_URL
         sync: false   # same Neon connection string as the API service
