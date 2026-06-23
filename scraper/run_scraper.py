@@ -22,9 +22,8 @@ load_dotenv(dotenv_path=env_path)
 from nba_api.stats.endpoints import (
     leaguedashplayerstats,
     leaguedashteamstats,
+    scoreboardv3,
 )
-from nba_api.live.nba.endpoints import scoreboard as live_scoreboard
-from nba_api.stats.endpoints import scoreboardv2
 from nba_api.stats.static import teams as nba_teams
 from datetime import datetime
 
@@ -145,17 +144,39 @@ def _fetch_cbs_positions():
     return position_map
 
 
-# Fallback: map NBA API broad positions to specific ones
-_NBA_POS_FALLBACK = {
-    "G": "PG", "G-F": "SG", "F-G": "SG",
-    "F": "SF", "F-C": "PF", "C-F": "PF", "C": "C",
+# Maps NBA broad positions to specific positions for multi-position support
+_BROAD_TO_SPECIFIC = {
+    "G": ["PG", "SG"],
+    "G-F": ["SG", "SF"],
+    "F-G": ["SG", "SF"],
+    "F": ["SF", "PF"],
+    "F-C": ["PF", "C"],
+    "C-F": ["PF", "C"],
+    "C": ["C"],
 }
 
 
+def resolve_positions(cbs_pos, nba_broad_pos):
+    """Combine CBS specific position with NBA broad position for multi-position support."""
+    specific_from_broad = _BROAD_TO_SPECIFIC.get(nba_broad_pos, [])
+
+    if cbs_pos:
+        positions = [cbs_pos]
+        for p in specific_from_broad:
+            if p != cbs_pos:
+                positions.append(p)
+        return ",".join(positions)
+
+    if specific_from_broad:
+        return ",".join(specific_from_broad)
+
+    return ""
+
+
 def _fetch_nba_positions():
-    """Fetch positions from NBA playerindex as fallback (broad G/F/C)."""
+    """Fetch raw broad positions (G, G-F, F, C, etc.) from NBA playerindex as fallback."""
     from nba_api.stats.endpoints import playerindex
-    position_map = {}  # nba_player_id (str) -> position abbreviation
+    position_map = {}  # nba_player_id (str) -> raw broad position
     try:
         pi = playerindex.PlayerIndex(season=SEASON, league_id="00", timeout=60)
         df = pi.get_data_frames()[0]
@@ -163,7 +184,7 @@ def _fetch_nba_positions():
             pid = str(row.get("PERSON_ID", ""))
             pos = str(row.get("POSITION", "")).strip()
             if pid and pos:
-                position_map[pid] = _NBA_POS_FALLBACK.get(pos, pos)
+                position_map[pid] = pos
     except Exception as e:
         print(f"  WARNING: Could not fetch NBA playerindex positions: {e}")
     return position_map
@@ -216,7 +237,10 @@ def scrape_players(conn):
             player_id,
             row["PLAYER_NAME"],
             row.get("TEAM_ABBREVIATION", ""),
-            cbs_positions.get(_normalize_name(row["PLAYER_NAME"]), "") or nba_positions.get(player_id, ""),
+            resolve_positions(
+                cbs_positions.get(_normalize_name(row["PLAYER_NAME"]), ""),
+                nba_positions.get(player_id, ""),
+            ),
             safe_float(row.get("PTS")),
             safe_float(row.get("REB")),
             safe_float(row.get("AST")),
@@ -247,7 +271,7 @@ def scrape_players(conn):
 
 def scrape_teams(conn):
     print("Fetching team stats...")
-    time.sleep(2)  # rate limit
+    time.sleep(2)
     try:
         stats = leaguedashteamstats.LeagueDashTeamStats(
             season=SEASON,
@@ -261,18 +285,44 @@ def scrape_teams(conn):
         print(f"  ERROR fetching team stats: {e}")
         return
 
+    # Fetch advanced ratings (DEF/OFF/NET)
+    time.sleep(2)
+    adv_ratings = {}
+    try:
+        adv_stats = leaguedashteamstats.LeagueDashTeamStats(
+            season=SEASON,
+            per_mode_detailed="PerGame",
+            measure_type_detailed_defense="Advanced",
+            season_type_all_star="Regular Season",
+            timeout=60,
+        )
+        adv_df = adv_stats.get_data_frames()[0]
+        for _, row in adv_df.iterrows():
+            tid = str(row["TEAM_ID"])
+            adv_ratings[tid] = {
+                "def_rating": safe_float(row.get("DEF_RATING")),
+                "off_rating": safe_float(row.get("OFF_RATING")),
+                "net_rating": safe_float(row.get("NET_RATING")),
+            }
+        print(f"  Got advanced ratings for {len(adv_ratings)} teams")
+    except Exception as e:
+        print(f"  WARNING: Could not fetch advanced team stats: {e}")
+
     cur = conn.cursor()
     count = 0
     for _, row in df.iterrows():
         team_id = str(row["TEAM_ID"])
         abbr = row.get("TEAM_ABBREVIATION", "")
         meta = TEAM_META.get(abbr, {})
+        ratings = adv_ratings.get(team_id, {})
 
         cur.execute("""
             INSERT INTO teams (nba_id, name, abbreviation, conference, division,
                                wins, losses, ppg, rpg, apg, spg, bpg,
-                               fg_pct, three_pct, ft_pct, tov, logo_url, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                               fg_pct, three_pct, ft_pct, tov,
+                               def_rating, off_rating, net_rating,
+                               logo_url, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
             ON CONFLICT (nba_id) DO UPDATE SET
                 name = EXCLUDED.name, abbreviation = EXCLUDED.abbreviation,
                 conference = EXCLUDED.conference, division = EXCLUDED.division,
@@ -280,7 +330,9 @@ def scrape_teams(conn):
                 ppg = EXCLUDED.ppg, rpg = EXCLUDED.rpg, apg = EXCLUDED.apg,
                 spg = EXCLUDED.spg, bpg = EXCLUDED.bpg, fg_pct = EXCLUDED.fg_pct,
                 three_pct = EXCLUDED.three_pct, ft_pct = EXCLUDED.ft_pct,
-                tov = EXCLUDED.tov, logo_url = EXCLUDED.logo_url, updated_at = NOW()
+                tov = EXCLUDED.tov, def_rating = EXCLUDED.def_rating,
+                off_rating = EXCLUDED.off_rating, net_rating = EXCLUDED.net_rating,
+                logo_url = EXCLUDED.logo_url, updated_at = NOW()
         """, (
             team_id,
             row.get("TEAM_NAME", meta.get("full_name", "")),
@@ -298,6 +350,9 @@ def scrape_teams(conn):
             pct(row.get("FG3_PCT")),
             pct(row.get("FT_PCT")),
             safe_float(row.get("TOV")),
+            ratings.get("def_rating", 0.0),
+            ratings.get("off_rating", 0.0),
+            ratings.get("net_rating", 0.0),
             f"https://cdn.nba.com/logos/nba/{team_id}/global/L/logo.svg",
         ))
         count += 1
@@ -313,75 +368,71 @@ def scrape_teams(conn):
 
 
 def _fetch_scoreboard_for_date(conn, date_str, cur):
-    """Fetch and upsert games for a single date. Returns count of games upserted."""
+    """Fetch and upsert games for a single date using ScoreboardV3. Returns count upserted."""
     try:
-        sb = scoreboardv2.ScoreboardV2(
+        sb = scoreboardv3.ScoreboardV3(
             game_date=date_str,
             league_id="00",
             timeout=60,
         )
-        frames = sb.get_data_frames()
-        game_header = frames[0] if len(frames) > 0 else None
-        line_score = frames[1] if len(frames) > 1 else None
+        data = sb.get_dict()
+        games_data = data.get("scoreboard", {}).get("games", [])
     except Exception as e:
         print(f"    ERROR fetching {date_str}: {e}")
         return 0
 
-    if game_header is None or game_header.empty:
+    if not games_data:
         return 0
 
-    # Build team info lookup from LineScore (DataFrame 1):
-    #   TEAM_ID -> { name: "City Name", abbr: "ABR", pts: score }
-    team_info = {}  # team_id -> { "name": str, "pts": int|None }
-    score_map = {}  # game_id -> { team_id: pts }
-    if line_score is not None and not line_score.empty:
-        for _, s in line_score.iterrows():
-            gid = str(s.get("GAME_ID", ""))
-            tid = str(s.get("TEAM_ID", ""))
-            city = str(s.get("TEAM_CITY_NAME", "")).strip()
-            nickname = str(s.get("TEAM_NAME", "")).strip()
-            full_name = f"{city} {nickname}" if city and nickname else (city or nickname or "Unknown")
-            pts = s.get("PTS")
-            team_info[tid] = full_name
-            if gid not in score_map:
-                score_map[gid] = {}
-            score_map[gid][tid] = pts
-
     count = 0
-    for _, g in game_header.iterrows():
-        game_id = str(g.get("GAME_ID", ""))
-        home_team_id = str(g.get("HOME_TEAM_ID", ""))
-        away_team_id = str(g.get("VISITOR_TEAM_ID", ""))
-        scores = score_map.get(game_id, {})
+    for g in games_data:
+        game_id = str(g.get("gameId", ""))
 
-        home_team_name = team_info.get(home_team_id, "Unknown")
-        away_team_name = team_info.get(away_team_id, "Unknown")
+        home = g.get("homeTeam", {})
+        away = g.get("awayTeam", {})
 
-        status_id = g.get("GAME_STATUS_ID", 1)
-        status_text = str(g.get("GAME_STATUS_TEXT", "")).strip()
-        if status_id == 1:
-            status = status_text if status_text else "Scheduled"
-        elif status_id == 2:
+        home_city = home.get("teamCity", "")
+        home_name = home.get("teamName", "")
+        away_city = away.get("teamCity", "")
+        away_name = away.get("teamName", "")
+
+        home_team_name = f"{home_city} {home_name}".strip() or "Unknown"
+        away_team_name = f"{away_city} {away_name}".strip() or "Unknown"
+
+        # gameStatus: 1=scheduled, 2=live, 3=final
+        game_status = g.get("gameStatus", 1)
+        game_status_text = str(g.get("gameStatusText", "")).strip()
+
+        if game_status == 1:
+            status = game_status_text if game_status_text else "Scheduled"
+        elif game_status == 2:
             status = "In Progress"
         else:
             status = "Final"
 
-        game_date_val = str(g.get("GAME_DATE_EST", ""))[:10]
+        # Parse game date from gameTimeUTC
+        game_time_utc = g.get("gameTimeUTC", "") or g.get("gameEt", "")
         try:
-            game_date_val = datetime.strptime(game_date_val, "%Y-%m-%d").strftime("%Y-%m-%d")
+            game_date_val = datetime.strptime(game_time_utc[:10], "%Y-%m-%d").strftime("%Y-%m-%d")
         except (ValueError, TypeError):
-            game_date_val = datetime.now().strftime("%Y-%m-%d")
+            try:
+                game_date_val = datetime.strptime(date_str, "%m/%d/%Y").strftime("%Y-%m-%d")
+            except ValueError:
+                game_date_val = datetime.now().strftime("%Y-%m-%d")
 
-        home_score = scores.get(home_team_id)
-        away_score = scores.get(away_team_id)
-        try:
-            home_score = int(home_score) if home_score is not None else None
-        except (ValueError, TypeError):
+        # Don't store score for unstarted games
+        if game_status == 1:
             home_score = None
-        try:
-            away_score = int(away_score) if away_score is not None else None
-        except (ValueError, TypeError):
             away_score = None
+        else:
+            try:
+                home_score = int(home.get("score", 0))
+            except (ValueError, TypeError):
+                home_score = None
+            try:
+                away_score = int(away.get("score", 0))
+            except (ValueError, TypeError):
+                away_score = None
 
         cur.execute("""
             INSERT INTO games (nba_game_id, home_team, away_team, game_date,
@@ -400,7 +451,7 @@ def _fetch_scoreboard_for_date(conn, date_str, cur):
             home_score,
             away_score,
             status,
-            str(g.get("ARENA_NAME", "")),
+            "",
         ))
         count += 1
 
