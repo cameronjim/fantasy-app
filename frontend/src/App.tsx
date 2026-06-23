@@ -8,7 +8,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('stats');
 
   return (
-    <div className="min-h-screen bg-[#0f1117] text-[#e5e7eb]">
+    <div className="min-h-screen bg-base-100 text-base-content">
       <Navbar activeTab={activeTab} onTabChange={setActiveTab} />
       <main>
         {activeTab === 'stats' && <StatsPage />}

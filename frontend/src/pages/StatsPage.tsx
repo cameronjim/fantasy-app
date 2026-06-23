@@ -63,49 +63,37 @@ export default function StatsPage() {
       <div className="max-w-[1400px] mx-auto px-4 py-6">
         {/* View Toggle */}
         <div className="flex items-center gap-4 mb-5">
-          <div className="flex rounded-lg bg-[#1a1d29] border border-[#2a2d3a] overflow-hidden">
+          <div className="tabs tabs-boxed">
             <button
               onClick={() => setView('players')}
-              className={`px-5 py-2 text-sm font-medium transition-colors cursor-pointer ${
-                view === 'players'
-                  ? 'bg-[#3b82f6] text-white'
-                  : 'text-[#9ca3af] hover:text-white hover:bg-[#252836]'
-              }`}
+              className={`tab ${view === 'players' ? 'tab-active' : ''}`}
             >
               Players
             </button>
             <button
               onClick={() => setView('teams')}
-              className={`px-5 py-2 text-sm font-medium transition-colors cursor-pointer ${
-                view === 'teams'
-                  ? 'bg-[#3b82f6] text-white'
-                  : 'text-[#9ca3af] hover:text-white hover:bg-[#252836]'
-              }`}
+              className={`tab ${view === 'teams' ? 'tab-active' : ''}`}
             >
               Teams
             </button>
           </div>
 
           {view === 'players' && (
-            <span className="text-xs text-[#6b7280]">
+            <span className="text-sm opacity-40">
               {filteredPlayers.length} player{filteredPlayers.length !== 1 ? 's' : ''}
             </span>
           )}
 
           {view === 'teams' && (
-            <div className="flex rounded-lg bg-[#1a1d29] border border-[#2a2d3a] overflow-hidden">
+            <div className="join">
               {(['All', 'East', 'West'] as const).map((conf) => (
                 <button
                   key={conf}
                   onClick={() => setConfFilter(conf)}
-                  className={`px-4 py-2 text-xs font-medium transition-colors cursor-pointer ${
+                  className={`btn btn-sm join-item ${
                     confFilter === conf
-                      ? conf === 'East'
-                        ? 'bg-[#1d4ed8] text-white'
-                        : conf === 'West'
-                        ? 'bg-[#b45309] text-white'
-                        : 'bg-[#3b82f6] text-white'
-                      : 'text-[#9ca3af] hover:text-white hover:bg-[#252836]'
+                      ? conf === 'East' ? 'btn-info' : conf === 'West' ? 'btn-warning' : 'btn-primary'
+                      : ''
                   }`}
                 >
                   {conf}
@@ -118,46 +106,37 @@ export default function StatsPage() {
         {/* Player Filters */}
         {view === 'players' && (
           <div className="flex flex-wrap items-center gap-3 mb-5">
-            {/* Search */}
-            <div className="relative flex-1 min-w-[200px] max-w-[360px]">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6b7280]" />
+            <label className="input input-bordered input-sm flex items-center gap-2 flex-1 min-w-[200px] max-w-[360px]">
+              <Search size={14} className="opacity-50" />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search players..."
-                className="w-full bg-[#1a1d29] border border-[#2a2d3a] rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-[#6b7280] focus:outline-none focus:border-[#3b82f6] transition-colors"
+                className="grow"
               />
-            </div>
+            </label>
 
-            {/* Team Filter */}
-            <div className="relative">
-              <Filter size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6b7280]" />
+            <label className="input input-bordered input-sm flex items-center gap-2">
+              <Filter size={14} className="opacity-50" />
               <select
                 value={teamFilter}
                 onChange={(e) => setTeamFilter(e.target.value)}
-                className="appearance-none bg-[#1a1d29] border border-[#2a2d3a] rounded-lg pl-8 pr-8 py-2 text-sm text-white focus:outline-none focus:border-[#3b82f6] transition-colors cursor-pointer"
+                className="select select-ghost select-sm p-0 focus:outline-none"
               >
                 <option value="">All Teams</option>
                 {teamNames.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
+                  <option key={t} value={t}>{t}</option>
                 ))}
               </select>
-            </div>
+            </label>
 
-            {/* Position Filter */}
-            <div className="flex rounded-lg bg-[#1a1d29] border border-[#2a2d3a] overflow-hidden">
+            <div className="join">
               {POSITIONS.map((pos) => (
                 <button
                   key={pos}
                   onClick={() => setPosFilter(pos)}
-                  className={`px-3 py-2 text-xs font-medium transition-colors cursor-pointer ${
-                    posFilter === pos
-                      ? 'bg-[#3b82f6] text-white'
-                      : 'text-[#9ca3af] hover:text-white hover:bg-[#252836]'
-                  }`}
+                  className={`btn btn-xs join-item ${posFilter === pos ? 'btn-primary' : ''}`}
                 >
                   {pos}
                 </button>
@@ -170,7 +149,7 @@ export default function StatsPage() {
         {view === 'players' ? (
           loadingPlayers ? (
             <div className="flex items-center justify-center py-20">
-              <div className="w-8 h-8 border-2 border-[#3b82f6] border-t-transparent rounded-full animate-spin" />
+              <span className="loading loading-spinner loading-lg" />
             </div>
           ) : (
             <PlayerTable
@@ -182,7 +161,7 @@ export default function StatsPage() {
           )
         ) : loadingTeams ? (
           <div className="flex items-center justify-center py-20">
-            <div className="w-8 h-8 border-2 border-[#3b82f6] border-t-transparent rounded-full animate-spin" />
+            <span className="loading loading-spinner loading-lg" />
           </div>
         ) : (
           <TeamTable
@@ -193,25 +172,23 @@ export default function StatsPage() {
 
       {/* Sticky compare bar */}
       {comparePlayers.length >= 1 && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-[#1a1d29] border-t border-[#2a2d3a] px-4 py-3 flex items-center justify-between shadow-2xl">
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-base-200 border-t border-base-300 px-4 py-3 flex items-center justify-between shadow-2xl">
           <div className="flex items-center gap-3">
-            <span className="text-xs text-[#9ca3af]">
-              {comparePlayers.length}/3 selected
-            </span>
+            <span className="text-xs opacity-50">{comparePlayers.length}/3 selected</span>
             <div className="flex items-center gap-2">
               {comparePlayers.map((p) => (
-                <div key={p.id} className="flex items-center gap-1.5 bg-[#252836] rounded-full pl-1 pr-2.5 py-1">
-                  <img
-                    src={p.headshot_url || ''}
-                    alt=""
-                    className="w-5 h-5 rounded-full object-cover object-top bg-[#2a2d3a]"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                  />
-                  <span className="text-xs text-white">{p.name.split(' ').pop()}</span>
-                  <button
-                    onClick={() => handleToggleCompare(p)}
-                    className="ml-0.5 text-[#6b7280] hover:text-white cursor-pointer"
-                  >
+                <div key={p.id} className="flex items-center gap-1.5 bg-base-300 rounded-full pl-1 pr-2.5 py-1">
+                  <div className="avatar">
+                    <div className="w-5 rounded-full">
+                      <img
+                        src={p.headshot_url || ''}
+                        alt=""
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                      />
+                    </div>
+                  </div>
+                  <span className="text-xs">{p.name.split(' ').pop()}</span>
+                  <button onClick={() => handleToggleCompare(p)} className="ml-0.5 opacity-40 hover:opacity-100">
                     <X size={10} />
                   </button>
                 </div>
@@ -219,16 +196,13 @@ export default function StatsPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => setComparePlayers([])}
-              className="px-3 py-1.5 text-xs text-[#9ca3af] hover:text-white transition-colors cursor-pointer"
-            >
+            <button onClick={() => setComparePlayers([])} className="btn btn-ghost btn-sm">
               Clear
             </button>
             <button
               onClick={() => setShowCompare(true)}
               disabled={comparePlayers.length < 2}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-medium bg-[#3b82f6] text-white hover:bg-[#2563eb] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              className="btn btn-primary btn-sm gap-1.5"
             >
               <GitCompare size={14} />
               Compare {comparePlayers.length >= 2 ? comparePlayers.length : ''} Players
@@ -237,16 +211,9 @@ export default function StatsPage() {
         </div>
       )}
 
-      {/* Modals */}
-      <PlayerModal
-        player={selectedPlayer}
-        onClose={() => setSelectedPlayer(null)}
-      />
+      <PlayerModal player={selectedPlayer} onClose={() => setSelectedPlayer(null)} />
       {showCompare && (
-        <CompareModal
-          players={comparePlayers}
-          onClose={() => setShowCompare(false)}
-        />
+        <CompareModal players={comparePlayers} onClose={() => setShowCompare(false)} />
       )}
     </div>
   );
