@@ -25,7 +25,7 @@ router.get('/', async (req: Request, res: Response) => {
     }
 
     if (position) {
-      conditions.push(`position = $${paramIndex}`);
+      conditions.push(`$${paramIndex} = ANY(string_to_array(position, ','))`);
       params.push(position);
       paramIndex++;
     }

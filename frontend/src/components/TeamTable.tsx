@@ -9,7 +9,8 @@ interface TeamTableProps {
 type SortKey = keyof Team;
 
 const columns: { key: SortKey; label: string; format?: (v: number) => string }[] = [
-  { key: 'name', label: 'Name' },
+  { key: 'name', label: 'Team' },
+  { key: 'conference', label: 'Conf' },
   { key: 'wins', label: 'W' },
   { key: 'losses', label: 'L' },
   { key: 'ppg', label: 'PPG', format: (v) => Number(v).toFixed(1) },
@@ -21,6 +22,9 @@ const columns: { key: SortKey; label: string; format?: (v: number) => string }[]
   { key: 'three_pct', label: '3P%', format: (v) => Number(v).toFixed(1) },
   { key: 'ft_pct', label: 'FT%', format: (v) => Number(v).toFixed(1) },
   { key: 'tov', label: 'TOV', format: (v) => Number(v).toFixed(1) },
+  { key: 'off_rating', label: 'OFF RTG', format: (v) => Number(v).toFixed(1) },
+  { key: 'def_rating', label: 'DEF RTG', format: (v) => Number(v).toFixed(1) },
+  { key: 'net_rating', label: 'NET RTG', format: (v) => Number(v).toFixed(1) },
 ];
 
 export default function TeamTable({ teams }: TeamTableProps) {
@@ -32,11 +36,11 @@ export default function TeamTable({ teams }: TeamTableProps) {
       setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
     } else {
       setSortKey(key);
-      setSortDir(key === 'name' ? 'asc' : 'desc');
+      setSortDir(key === 'name' || key === 'conference' ? 'asc' : 'desc');
     }
   };
 
-  const numericKeys = new Set(['wins','losses','ppg','rpg','apg','spg','bpg','fg_pct','three_pct','ft_pct','tov']);
+  const numericKeys = new Set(['wins','losses','ppg','rpg','apg','spg','bpg','fg_pct','three_pct','ft_pct','tov','def_rating','off_rating','net_rating']);
 
   const sorted = [...teams].sort((a, b) => {
     const aVal = a[sortKey];
@@ -81,18 +85,46 @@ export default function TeamTable({ teams }: TeamTableProps) {
                 i % 2 === 0 ? 'bg-[#0f1117]' : 'bg-[#151822]'
               }`}
             >
-              {columns.map((col) => (
-                <td
-                  key={col.key}
-                  className={`px-3 py-2.5 whitespace-nowrap ${
-                    col.key === 'name' ? 'font-medium text-white' : 'text-[#d1d5db]'
-                  }`}
-                >
-                  {col.format && team[col.key] != null
-                    ? col.format(team[col.key] as number)
-                    : String(team[col.key] ?? '-')}
-                </td>
-              ))}
+              {columns.map((col) => {
+                if (col.key === 'conference') {
+                  const conf = team.conference;
+                  return (
+                    <td key={col.key} className="px-3 py-2.5 whitespace-nowrap">
+                      {conf && (
+                        <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                          conf === 'East'
+                            ? 'bg-[#1d4ed8]/20 text-[#60a5fa]'
+                            : 'bg-[#b45309]/20 text-[#fbbf24]'
+                        }`}>
+                          {conf}
+                        </span>
+                      )}
+                    </td>
+                  );
+                }
+                if (col.key === 'net_rating') {
+                  const val = Number(team.net_rating ?? 0);
+                  return (
+                    <td key={col.key} className={`px-3 py-2.5 whitespace-nowrap font-medium ${
+                      val > 0 ? 'text-[#4ade80]' : val < 0 ? 'text-[#f87171]' : 'text-[#d1d5db]'
+                    }`}>
+                      {val > 0 ? '+' : ''}{val.toFixed(1)}
+                    </td>
+                  );
+                }
+                return (
+                  <td
+                    key={col.key}
+                    className={`px-3 py-2.5 whitespace-nowrap ${
+                      col.key === 'name' ? 'font-medium text-white' : 'text-[#d1d5db]'
+                    }`}
+                  >
+                    {col.format && team[col.key] != null
+                      ? col.format(team[col.key] as number)
+                      : String(team[col.key] ?? '-')}
+                  </td>
+                );
+              })}
             </tr>
           ))}
           {sorted.length === 0 && (

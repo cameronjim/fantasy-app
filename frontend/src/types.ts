@@ -24,6 +24,8 @@ export interface Team {
   id: number;
   name: string;
   abbreviation: string;
+  conference: string;
+  division: string;
   wins: number;
   losses: number;
   ppg: number;
@@ -35,6 +37,9 @@ export interface Team {
   three_pct: number;
   ft_pct: number;
   tov: number;
+  def_rating: number;
+  off_rating: number;
+  net_rating: number;
 }
 
 export interface Game {
