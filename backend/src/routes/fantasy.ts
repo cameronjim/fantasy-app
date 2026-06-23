@@ -1,30 +1,33 @@
 import { Router, Request, Response } from 'express';
 import { query } from '../db.js';
+import type { AuthRequest } from '../middleware/auth.js';
 
 const router = Router();
 
-// GET /roster — get my roster with player stats
-router.get('/roster', async (_req: Request, res: Response) => {
+router.get('/roster', async (req: Request, res: Response): Promise<void> => {
+  const userId = (req as AuthRequest).userId;
   try {
     const result = await query(
       `SELECT mr.id, mr.player_id, mr.added_at,
               p.id, p.nba_id, p.name, p.team, p.position,
-              p.ppg, p.rpg, p.apg, p.spg, p.bpg,
-              p.fg_pct, p.three_pct, p.ft_pct, p.three_pm, p.tov, p.mpg, p.gp,
+              p.points_per_game, p.rebounds_per_game, p.assists_per_game, p.steals_per_game, p.blocks_per_game,
+              p.field_goal_percentage, p.three_point_percentage, p.free_throw_percentage, p.three_pointers_made,
+              p.turnovers_per_game, p.minutes_per_game, p.games_played,
               p.injury_status, p.injury_detail, p.headshot_url
        FROM my_roster mr
        JOIN players p ON mr.player_id = p.id
-       ORDER BY p.ppg DESC`
+       WHERE mr.user_id = $1
+       ORDER BY p.points_per_game DESC`,
+      [userId]
     );
     res.json(result.rows);
   } catch (error) {
-    console.error('Error fetching roster:', error);
     res.status(500).json({ error: 'Failed to fetch roster' });
   }
 });
 
-// POST /roster — add player to my roster
-router.post('/roster', async (req: Request, res: Response) => {
+router.post('/roster', async (req: Request, res: Response): Promise<void> => {
+  const userId = (req as AuthRequest).userId;
   try {
     const { player_id } = req.body;
     if (!player_id) {
@@ -32,9 +35,8 @@ router.post('/roster', async (req: Request, res: Response) => {
       return;
     }
     const result = await query(
-      `INSERT INTO my_roster (player_id) VALUES ($1)
-       RETURNING id, player_id, added_at`,
-      [player_id]
+      `INSERT INTO my_roster (player_id, user_id) VALUES ($1, $2) RETURNING id, player_id, added_at`,
+      [player_id, userId]
     );
     res.status(201).json(result.rows[0]);
   } catch (error: unknown) {
@@ -42,18 +44,17 @@ router.post('/roster', async (req: Request, res: Response) => {
       res.status(409).json({ error: 'Player is already on your roster' });
       return;
     }
-    console.error('Error adding to roster:', error);
     res.status(500).json({ error: 'Failed to add player' });
   }
 });
 
-// DELETE /roster/:playerId — remove player from my roster
-router.delete('/roster/:playerId', async (req: Request, res: Response) => {
+router.delete('/roster/:playerId', async (req: Request, res: Response): Promise<void> => {
+  const userId = (req as AuthRequest).userId;
   try {
     const { playerId } = req.params;
     const result = await query(
-      `DELETE FROM my_roster WHERE player_id = $1 RETURNING id`,
-      [playerId]
+      `DELETE FROM my_roster WHERE player_id = $1 AND user_id = $2 RETURNING id`,
+      [playerId, userId]
     );
     if (result.rows.length === 0) {
       res.status(404).json({ error: 'Player not on roster' });
@@ -61,9 +62,8 @@ router.delete('/roster/:playerId', async (req: Request, res: Response) => {
     }
     res.json({ message: 'Player removed' });
   } catch (error) {
-    console.error('Error removing from roster:', error);
     res.status(500).json({ error: 'Failed to remove player' });
   }
 });
 
-export default router;
+export { router as fantasyRouter };

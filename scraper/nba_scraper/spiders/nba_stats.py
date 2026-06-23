@@ -1,16 +1,16 @@
 import json
 import logging
 from datetime import datetime
+from typing import Generator
 
 import scrapy
-from nba_scraper.items import PlayerItem, TeamItem, GameItem, InjuryItem
+from scrapy.http import Request, Response
+
+from nba_scraper.items import GameItem, InjuryItem, PlayerItem, TeamItem
 
 logger = logging.getLogger(__name__)
 
-# --------------------------------------------------------------------------
-# NBA team metadata -- used to fill in conference / division / logo_url
-# since the leaguedashteamstats endpoint doesn't include them.
-# --------------------------------------------------------------------------
+# fills in conference / division / logo_url — leaguedashteamstats doesn't include them
 TEAM_META = {
     "ATL": {"conference": "East", "division": "Southeast", "full_name": "Atlanta Hawks"},
     "BOS": {"conference": "East", "division": "Atlantic", "full_name": "Boston Celtics"},
@@ -44,7 +44,7 @@ TEAM_META = {
     "WAS": {"conference": "East", "division": "Southeast", "full_name": "Washington Wizards"},
 }
 
-# Headers required by stats.nba.com to avoid 403 errors
+# required by stats.nba.com to avoid 403 errors
 NBA_API_HEADERS = {
     "Host": "stats.nba.com",
     "Referer": "https://www.nba.com/",
@@ -65,11 +65,9 @@ class NbaStatsSpider(scrapy.Spider):
     name = "nba_stats"
     allowed_domains = ["stats.nba.com", "www.cbssports.com"]
 
-    # Current season in NBA API format
     SEASON = "2025-26"
 
-    def start_requests(self):
-        # 1. Player bio stats (for positions) — chains into player stats
+    def start_requests(self) -> Generator[Request, None, None]:
         yield scrapy.Request(
             url=(
                 "https://stats.nba.com/stats/leaguedashplayerbiostats"
@@ -90,7 +88,6 @@ class NbaStatsSpider(scrapy.Spider):
             meta={"endpoint": "player_bio"},
         )
 
-        # 2. Team stats
         yield scrapy.Request(
             url=(
                 "https://stats.nba.com/stats/leaguedashteamstats"
@@ -111,7 +108,6 @@ class NbaStatsSpider(scrapy.Spider):
             meta={"endpoint": "team_stats"},
         )
 
-        # 3. Today's scoreboard
         today = datetime.now().strftime("%m/%d/%Y")
         yield scrapy.Request(
             url=(
@@ -124,7 +120,7 @@ class NbaStatsSpider(scrapy.Spider):
             meta={"endpoint": "scoreboard"},
         )
 
-        # 4. Injuries from CBS Sports (more reliable than NBA.com)
+        # CBS Sports injury data is more reliable than NBA.com
         yield scrapy.Request(
             url="https://www.cbssports.com/nba/injuries/",
             callback=self.parse_injuries,
@@ -132,36 +128,31 @@ class NbaStatsSpider(scrapy.Spider):
             meta={"endpoint": "injuries"},
         )
 
-    # ------------------------------------------------------------------
-    # Helper: turn NBA.com resultSets into a list of dicts
-    # ------------------------------------------------------------------
     @staticmethod
-    def _result_set_to_dicts(result_set):
-        """Convert an NBA stats API resultSet into a list of row dicts."""
+    def _result_set_to_dicts(result_set: dict) -> list[dict]:
+        """convert an NBA stats API resultSet into a list of row dicts."""
         headers = result_set["headers"]
         rows = result_set["rowSet"]
         return [dict(zip(headers, row)) for row in rows]
 
-    # ------------------------------------------------------------------
-    # Parse player bio stats (for positions), then chain to player stats
-    # ------------------------------------------------------------------
-    def parse_player_bio(self, response):
+    def parse_player_bio(
+        self, response: Response
+    ) -> Generator[Request, None, None]:
         data = json.loads(response.text)
         result_sets = data.get("resultSets", [])
 
-        position_map = {}
+        position_map: dict[str, str] = {}
         if result_sets:
             players = self._result_set_to_dicts(result_sets[0])
-            logger.info("Parsed positions for %d players from biostats", len(players))
+            logger.info("parsed positions for %d players from biostats", len(players))
             for p in players:
                 pid = str(p.get("PLAYER_ID", ""))
                 pos = p.get("PLAYER_POSITION", "")
                 if pid and pos:
                     position_map[pid] = self._normalize_position(pos)
         else:
-            logger.warning("No resultSets in player bio response")
+            logger.warning("no resultSets in player bio response")
 
-        # Now fetch the main player stats, passing the position map along
         yield scrapy.Request(
             url=(
                 "https://stats.nba.com/stats/leaguedashplayerstats"
@@ -183,19 +174,18 @@ class NbaStatsSpider(scrapy.Spider):
             meta={"endpoint": "player_stats", "position_map": position_map},
         )
 
-    # ------------------------------------------------------------------
-    # Parse player stats
-    # ------------------------------------------------------------------
-    def parse_player_stats(self, response):
+    def parse_player_stats(
+        self, response: Response
+    ) -> Generator[PlayerItem, None, None]:
         data = json.loads(response.text)
         result_sets = data.get("resultSets", [])
         if not result_sets:
-            logger.warning("No resultSets in player stats response")
+            logger.warning("no resultSets in player stats response")
             return
 
-        position_map = response.meta.get("position_map", {})
+        position_map: dict[str, str] = response.meta.get("position_map", {})
         players = self._result_set_to_dicts(result_sets[0])
-        logger.info("Parsing %d players from leaguedashplayerstats", len(players))
+        logger.info("parsing %d players from leaguedashplayerstats", len(players))
 
         for p in players:
             player_id = str(p.get("PLAYER_ID", ""))
@@ -204,34 +194,33 @@ class NbaStatsSpider(scrapy.Spider):
                 name=p.get("PLAYER_NAME", ""),
                 team=p.get("TEAM_ABBREVIATION", ""),
                 position=position_map.get(player_id, ""),
-                ppg=self._safe_float(p.get("PTS")),
-                rpg=self._safe_float(p.get("REB")),
-                apg=self._safe_float(p.get("AST")),
-                spg=self._safe_float(p.get("STL")),
-                bpg=self._safe_float(p.get("BLK")),
-                fg_pct=self._pct_to_display(p.get("FG_PCT")),
-                three_pct=self._pct_to_display(p.get("FG3_PCT")),
-                ft_pct=self._pct_to_display(p.get("FT_PCT")),
-                tov=self._safe_float(p.get("TOV")),
-                mpg=self._safe_float(p.get("MIN")),
-                gp=int(p.get("GP", 0)),
+                points_per_game=self._safe_float(p.get("PTS")),
+                rebounds_per_game=self._safe_float(p.get("REB")),
+                assists_per_game=self._safe_float(p.get("AST")),
+                steals_per_game=self._safe_float(p.get("STL")),
+                blocks_per_game=self._safe_float(p.get("BLK")),
+                field_goal_percentage=self._pct_to_display(p.get("FG_PCT")),
+                three_point_percentage=self._pct_to_display(p.get("FG3_PCT")),
+                free_throw_percentage=self._pct_to_display(p.get("FT_PCT")),
+                turnovers_per_game=self._safe_float(p.get("TOV")),
+                minutes_per_game=self._safe_float(p.get("MIN")),
+                games_played=int(p.get("GP", 0)),
                 headshot_url=(
                     f"https://cdn.nba.com/headshots/nba/latest/1040x760/{player_id}.png"
                 ),
             )
 
-    # ------------------------------------------------------------------
-    # Parse team stats
-    # ------------------------------------------------------------------
-    def parse_team_stats(self, response):
+    def parse_team_stats(
+        self, response: Response
+    ) -> Generator[TeamItem, None, None]:
         data = json.loads(response.text)
         result_sets = data.get("resultSets", [])
         if not result_sets:
-            logger.warning("No resultSets in team stats response")
+            logger.warning("no resultSets in team stats response")
             return
 
         teams = self._result_set_to_dicts(result_sets[0])
-        logger.info("Parsing %d teams from leaguedashteamstats", len(teams))
+        logger.info("parsing %d teams from leaguedashteamstats", len(teams))
 
         for t in teams:
             team_id = str(t.get("TEAM_ID", ""))
@@ -246,24 +235,23 @@ class NbaStatsSpider(scrapy.Spider):
                 division=meta.get("division", ""),
                 wins=int(t.get("W", 0)),
                 losses=int(t.get("L", 0)),
-                ppg=self._safe_float(t.get("PTS")),
-                rpg=self._safe_float(t.get("REB")),
-                apg=self._safe_float(t.get("AST")),
-                spg=self._safe_float(t.get("STL")),
-                bpg=self._safe_float(t.get("BLK")),
-                fg_pct=self._pct_to_display(t.get("FG_PCT")),
-                three_pct=self._pct_to_display(t.get("FG3_PCT")),
-                ft_pct=self._pct_to_display(t.get("FT_PCT")),
-                tov=self._safe_float(t.get("TOV")),
+                points_per_game=self._safe_float(t.get("PTS")),
+                rebounds_per_game=self._safe_float(t.get("REB")),
+                assists_per_game=self._safe_float(t.get("AST")),
+                steals_per_game=self._safe_float(t.get("STL")),
+                blocks_per_game=self._safe_float(t.get("BLK")),
+                field_goal_percentage=self._pct_to_display(t.get("FG_PCT")),
+                three_point_percentage=self._pct_to_display(t.get("FG3_PCT")),
+                free_throw_percentage=self._pct_to_display(t.get("FT_PCT")),
+                turnovers_per_game=self._safe_float(t.get("TOV")),
                 logo_url=(
                     f"https://cdn.nba.com/logos/nba/{team_id}/global/L/logo.svg"
                 ),
             )
 
-    # ------------------------------------------------------------------
-    # Parse scoreboard (today's games)
-    # ------------------------------------------------------------------
-    def parse_scoreboard(self, response):
+    def parse_scoreboard(
+        self, response: Response
+    ) -> Generator[GameItem, None, None]:
         data = json.loads(response.text)
         result_sets = {rs["name"]: rs for rs in data.get("resultSets", [])}
 
@@ -271,14 +259,14 @@ class NbaStatsSpider(scrapy.Spider):
         line_score = result_sets.get("LineScore")
 
         if not game_header:
-            logger.info("No games on today's scoreboard")
+            logger.info("no games on today's scoreboard")
             return
 
         games = self._result_set_to_dicts(game_header)
         scores = self._result_set_to_dicts(line_score) if line_score else []
 
-        # Build a lookup: GAME_ID -> {home_score, away_score}
-        score_map = {}
+        # build GAME_ID -> {team_id: points} for quick score lookup
+        score_map: dict[str, dict[str, object]] = {}
         for s in scores:
             gid = str(s.get("GAME_ID", ""))
             tid = str(s.get("TEAM_ID", ""))
@@ -287,7 +275,7 @@ class NbaStatsSpider(scrapy.Spider):
                 score_map[gid] = {}
             score_map[gid][tid] = pts
 
-        logger.info("Parsing %d games from scoreboard", len(games))
+        logger.info("parsing %d games from scoreboard", len(games))
 
         for g in games:
             game_id = str(g.get("GAME_ID", ""))
@@ -295,7 +283,6 @@ class NbaStatsSpider(scrapy.Spider):
             away_team_id = str(g.get("VISITOR_TEAM_ID", ""))
             game_scores = score_map.get(game_id, {})
 
-            # Determine game status
             status_id = g.get("GAME_STATUS_ID", 1)
             if status_id == 1:
                 status = "Scheduled"
@@ -323,24 +310,19 @@ class NbaStatsSpider(scrapy.Spider):
                 arena=g.get("ARENA_NAME", ""),
             )
 
-    # ------------------------------------------------------------------
-    # Parse injuries from CBS Sports
-    # ------------------------------------------------------------------
-    def parse_injuries(self, response):
-        # CBS Sports renders injury tables per team
+    def parse_injuries(
+        self, response: Response
+    ) -> Generator[InjuryItem, None, None]:
+        # CBS Sports renders one injury table per team
         team_tables = response.css("div.TableBase")
 
         if not team_tables:
-            logger.warning("No injury tables found on CBS Sports")
+            logger.warning("no injury tables found on CBS Sports")
             return
 
         for table in team_tables:
-            # Team name is in the heading before the table
-            team_name = table.css(
-                "span.TeamName a::text"
-            ).get("").strip()
-
-            # Map common CBS team names to abbreviations
+            # team name sits in the heading element above the rows
+            team_name = table.css("span.TeamName a::text").get("").strip()
             team_abbr = self._team_name_to_abbr(team_name)
 
             rows = table.css("tr.TableBase-bodyTr")
@@ -355,7 +337,6 @@ class NbaStatsSpider(scrapy.Spider):
                 if not player_name:
                     player_name = cells[0].css("a::text").get("").strip()
 
-                position = cells[1].css("::text").get("").strip()
                 injury_detail = cells[2].css("::text").get("").strip()
                 injury_status = cells[3].css("::text").get("").strip()
 
@@ -367,45 +348,39 @@ class NbaStatsSpider(scrapy.Spider):
                         injury_detail=injury_detail if injury_detail else "Unknown",
                     )
 
-    # ------------------------------------------------------------------
-    # Error handler
-    # ------------------------------------------------------------------
-    def handle_error(self, failure):
+    def handle_error(self, failure: object) -> None:
         endpoint = failure.request.meta.get("endpoint", "unknown")
         logger.error(
-            "Request to %s failed: %s",
+            "request to %s failed: %s",
             endpoint,
             failure.getErrorMessage(),
         )
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
     @staticmethod
-    def _safe_float(val):
+    def _safe_float(val: object) -> float:
         try:
             return round(float(val), 1)
         except (TypeError, ValueError):
             return 0.0
 
     @staticmethod
-    def _safe_int(val):
+    def _safe_int(val: object) -> int | None:
         try:
             return int(val)
         except (TypeError, ValueError):
             return None
 
     @staticmethod
-    def _pct_to_display(val):
-        """Convert 0.456 to 45.6 for display."""
+    def _pct_to_display(val: object) -> float:
+        """convert 0.456 to 45.6 for display."""
         try:
             return round(float(val) * 100, 1)
         except (TypeError, ValueError):
             return 0.0
 
     @staticmethod
-    def _normalize_position(pos):
-        """Map NBA API position strings to standard abbreviations."""
+    def _normalize_position(pos: str) -> str:
+        """map NBA API position strings to standard abbreviations."""
         if not pos:
             return ""
         pos = pos.strip()
@@ -425,8 +400,8 @@ class NbaStatsSpider(scrapy.Spider):
         return mapping.get(pos, pos)
 
     @staticmethod
-    def _team_name_to_abbr(team_name):
-        """Convert a full team name to its NBA abbreviation."""
+    def _team_name_to_abbr(team_name: str) -> str:
+        """convert a full team name to its NBA abbreviation."""
         lookup = {
             "Atlanta Hawks": "ATL",
             "Boston Celtics": "BOS",

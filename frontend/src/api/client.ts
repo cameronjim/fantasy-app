@@ -1,13 +1,39 @@
 import axios from 'axios';
 import type { Player, Team, Game, RosterPlayer, ChatMessage, TeamAnalysis } from '../types';
 
-const baseURL = import.meta.env.VITE_API_URL
+const BASE_URL = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
   : '/api';
 
-const api = axios.create({ baseURL, timeout: 120000 });
+const api = axios.create({ baseURL: BASE_URL, timeout: 120000 });
 
-// Players
+let authToken: string | null = localStorage.getItem('auth_token');
+
+api.interceptors.request.use((config) => {
+  if (authToken) config.headers.Authorization = `Bearer ${authToken}`;
+  return config;
+});
+
+export function setAuthToken(token: string | null): void {
+  authToken = token;
+  if (token) localStorage.setItem('auth_token', token);
+  else localStorage.removeItem('auth_token');
+}
+
+export function getAuthToken(): string | null {
+  return authToken;
+}
+
+export async function login(username: string, password: string): Promise<void> {
+  const { data } = await api.post('/auth/login', { username, password });
+  setAuthToken(data.token);
+}
+
+export async function register(username: string, password: string): Promise<void> {
+  const { data } = await api.post('/auth/register', { username, password });
+  setAuthToken(data.token);
+}
+
 export async function getPlayers(params?: { search?: string; team?: string; position?: string }): Promise<Player[]> {
   const { data } = await api.get('/players', { params });
   return data;
@@ -18,7 +44,6 @@ export async function getPlayer(id: number): Promise<Player> {
   return data;
 }
 
-// Teams
 export async function getTeams(): Promise<Team[]> {
   const { data } = await api.get('/teams');
   return data;
@@ -29,7 +54,6 @@ export async function getTeam(id: number): Promise<Team> {
   return data;
 }
 
-// Games
 export async function getGames(): Promise<Game[]> {
   const { data } = await api.get('/games');
   return data;
@@ -40,7 +64,6 @@ export async function getLiveGames(): Promise<Game[]> {
   return data;
 }
 
-// My Roster
 export async function getMyRoster(): Promise<RosterPlayer[]> {
   const { data } = await api.get('/fantasy/roster');
   return data;
@@ -54,7 +77,6 @@ export async function dropFromRoster(playerId: number): Promise<void> {
   await api.delete(`/fantasy/roster/${playerId}`);
 }
 
-// AI
 export async function chatWithAI(message: string, contextType?: string, history?: ChatMessage[]): Promise<{ reply: string }> {
   const { data } = await api.post('/ai/chat', { message, context_type: contextType, history });
   return data;

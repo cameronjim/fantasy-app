@@ -11,21 +11,21 @@ interface PlayerTableProps {
 
 type SortKey = keyof Player;
 
-const columns: { key: SortKey; label: string; format?: (v: number) => string }[] = [
+const COLUMNS: { key: SortKey; label: string; format?: (v: number) => string }[] = [
   { key: 'name', label: 'Player' },
   { key: 'team', label: 'Team' },
   { key: 'position', label: 'Pos' },
-  { key: 'ppg', label: 'PPG', format: (v) => Number(v).toFixed(1) },
-  { key: 'rpg', label: 'RPG', format: (v) => Number(v).toFixed(1) },
-  { key: 'apg', label: 'APG', format: (v) => Number(v).toFixed(1) },
-  { key: 'spg', label: 'SPG', format: (v) => Number(v).toFixed(1) },
-  { key: 'bpg', label: 'BPG', format: (v) => Number(v).toFixed(1) },
-  { key: 'fg_pct', label: 'FG%', format: (v) => Number(v).toFixed(1) },
-  { key: 'three_pct', label: '3P%', format: (v) => Number(v).toFixed(1) },
-  { key: 'ft_pct', label: 'FT%', format: (v) => Number(v).toFixed(1) },
-  { key: 'tov', label: 'TOV', format: (v) => Number(v).toFixed(1) },
-  { key: 'mpg', label: 'MIN', format: (v) => Number(v).toFixed(1) },
-  { key: 'gp', label: 'GP' },
+  { key: 'points_per_game', label: 'PPG', format: (v) => Number(v).toFixed(1) },
+  { key: 'rebounds_per_game', label: 'RPG', format: (v) => Number(v).toFixed(1) },
+  { key: 'assists_per_game', label: 'APG', format: (v) => Number(v).toFixed(1) },
+  { key: 'steals_per_game', label: 'SPG', format: (v) => Number(v).toFixed(1) },
+  { key: 'blocks_per_game', label: 'BPG', format: (v) => Number(v).toFixed(1) },
+  { key: 'field_goal_percentage', label: 'FG%', format: (v) => Number(v).toFixed(1) },
+  { key: 'three_point_percentage', label: '3P%', format: (v) => Number(v).toFixed(1) },
+  { key: 'free_throw_percentage', label: 'FT%', format: (v) => Number(v).toFixed(1) },
+  { key: 'turnovers_per_game', label: 'TOV', format: (v) => Number(v).toFixed(1) },
+  { key: 'minutes_per_game', label: 'MIN', format: (v) => Number(v).toFixed(1) },
+  { key: 'games_played', label: 'GP' },
 ];
 
 const PAGE_SIZE = 25;
@@ -33,14 +33,16 @@ const PAGE_SIZE = 25;
 const FALLBACK_SVG =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%23252836'/%3E%3Ccircle cx='20' cy='15' r='7' fill='%234b5563'/%3E%3Cellipse cx='20' cy='35' rx='12' ry='8' fill='%234b5563'/%3E%3C/svg%3E";
 
-export default function PlayerTable({ players, onSelect, selectedForCompare = [], onToggleCompare }: PlayerTableProps) {
-  const [sortKey, setSortKey] = useState<SortKey>('ppg');
+const NUMERIC_KEYS = new Set(['points_per_game','rebounds_per_game','assists_per_game','steals_per_game','blocks_per_game','field_goal_percentage','three_point_percentage','free_throw_percentage','turnovers_per_game','minutes_per_game','games_played']);
+
+export const PlayerTable = ({ players, onSelect, selectedForCompare = [], onToggleCompare }: PlayerTableProps) => {
+  const [sortKey, setSortKey] = useState<SortKey>('points_per_game');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(0);
 
   useEffect(() => { setPage(0); }, [players.length]);
 
-  const handleSort = (key: SortKey) => {
+  const handleSort = (key: SortKey): void => {
     if (sortKey === key) {
       setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
     } else {
@@ -50,14 +52,12 @@ export default function PlayerTable({ players, onSelect, selectedForCompare = []
     setPage(0);
   };
 
-  const numericKeys = new Set(['ppg','rpg','apg','spg','bpg','fg_pct','three_pct','ft_pct','tov','mpg','gp']);
-
   const sorted = [...players].sort((a, b) => {
     const aVal = a[sortKey];
     const bVal = b[sortKey];
     if (aVal == null) return 1;
     if (bVal == null) return -1;
-    if (numericKeys.has(sortKey)) {
+    if (NUMERIC_KEYS.has(sortKey)) {
       const diff = Number(aVal) - Number(bVal);
       return sortDir === 'asc' ? diff : -diff;
     }
@@ -71,7 +71,7 @@ export default function PlayerTable({ players, onSelect, selectedForCompare = []
   const compareIds = new Set(selectedForCompare.map((p) => p.id));
   const compareMaxed = selectedForCompare.length >= 3;
 
-  const injuryBadgeClass = (status: string) => {
+  const injuryBadgeClass = (status: string): string => {
     if (status === 'Out') return 'badge badge-error badge-xs';
     if (['Day-To-Day', 'Day_To_Day', 'Questionable'].includes(status)) return 'badge badge-warning badge-xs';
     if (status === 'Probable') return 'badge badge-success badge-xs';
@@ -93,7 +93,7 @@ export default function PlayerTable({ players, onSelect, selectedForCompare = []
           <thead>
             <tr>
               {onToggleCompare && <th className="w-8" />}
-              {columns.map((col) => (
+              {COLUMNS.map((col) => (
                 <th
                   key={col.key}
                   onClick={() => handleSort(col.key)}
@@ -130,7 +130,7 @@ export default function PlayerTable({ players, onSelect, selectedForCompare = []
                       />
                     </td>
                   )}
-                  {columns.map((col) => (
+                  {COLUMNS.map((col) => (
                     <td key={col.key} className="whitespace-nowrap">
                       {col.key === 'name' ? (
                         <span className="flex items-center gap-2">
@@ -162,7 +162,7 @@ export default function PlayerTable({ players, onSelect, selectedForCompare = []
             })}
             {paginated.length === 0 && (
               <tr>
-                <td colSpan={columns.length + (onToggleCompare ? 1 : 0)} className="text-center py-12 opacity-40">
+                <td colSpan={COLUMNS.length + (onToggleCompare ? 1 : 0)} className="text-center py-12 opacity-40">
                   No players found
                 </td>
               </tr>
@@ -209,4 +209,4 @@ export default function PlayerTable({ players, onSelect, selectedForCompare = []
       )}
     </div>
   );
-}
+};
