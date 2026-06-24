@@ -45,7 +45,7 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
     }
   }, []);
 
-  useEffect(() => { loadRoster(); }, [loadRoster]);
+  useEffect(() => { if (isLoggedIn) loadRoster(); }, [isLoggedIn, loadRoster]);
 
   useEffect(() => {
     if (!search.trim()) { setSearchResults([]); return; }

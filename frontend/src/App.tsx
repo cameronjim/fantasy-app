@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Navbar } from './components/Navbar';
+import Navbar from './components/Navbar';
 import { StatsPage } from './pages/StatsPage';
 import { FantasyPage } from './pages/FantasyPage';
 import { ImproveTeamPage } from './pages/ImproveTeamPage';
