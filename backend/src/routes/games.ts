@@ -3,6 +3,10 @@ import { query } from '../db.js';
 
 const router = Router();
 
+// In-memory cache so the NBA API isn't hammered on every page load
+let liveCache: { data: object[]; fetchedAt: number } = { data: [], fetchedAt: 0 };
+const LIVE_CACHE_TTL = 90_000; // 90 seconds
+
 const NBA_API_HEADERS: Record<string, string> = {
   Host: 'stats.nba.com',
   Referer: 'https://www.nba.com/',
@@ -45,12 +49,20 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
 });
 
 router.get('/live', async (_req: Request, res: Response): Promise<void> => {
+  // Serve from cache if fresh — avoids slow NBA API call on every request
+  if (Date.now() - liveCache.fetchedAt < LIVE_CACHE_TTL && liveCache.data.length > 0) {
+    res.json(liveCache.data);
+    return;
+  }
+
   try {
-    const today = new Date();
-    const mm = String(today.getMonth() + 1).padStart(2, '0');
-    const dd = String(today.getDate()).padStart(2, '0');
-    const yyyy = today.getFullYear();
-    const gameDate = `${mm}/${dd}/${yyyy}`;
+    // NBA schedules are in Eastern Time — using UTC here causes wrong-date fetches after 8 PM ET
+    const gameDate = new Date().toLocaleDateString('en-US', {
+      timeZone: 'America/New_York',
+      month: '2-digit',
+      day: '2-digit',
+      year: 'numeric',
+    }); // e.g. "05/21/2026"
 
     const url = `https://stats.nba.com/stats/scoreboardv2?DayOffset=0&GameDate=${gameDate}&LeagueID=00`;
     const resp = await fetch(url, { headers: NBA_API_HEADERS });
@@ -147,6 +159,7 @@ router.get('/live', async (_req: Request, res: Response): Promise<void> => {
       }
     }
 
+    liveCache = { data: result, fetchedAt: Date.now() };
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch live scores' });
