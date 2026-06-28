@@ -29,15 +29,17 @@ export const ScoreboardStrip = () => {
       cacheFetchedAt = Date.now();
 
       // Step 2: Overlay live scores silently in the background.
-      // Server caches the NBA API response for 3 min, so this is usually fast.
-      // If the NBA API is down it just fails quietly — DB data stays visible.
+      // Server caches ESPN response for 3 min so this is usually fast.
+      // Merge by date+team so old NBA game IDs and new ESPN IDs don't create duplicates.
       getLiveGames().then((liveGames) => {
         if (!liveGames.length) return;
-        const liveIds = new Set(liveGames.map((g) => g.nba_game_id ?? g.id));
+        const gameKey = (g: Game) =>
+          `${(g.game_date ?? '').split('T')[0]}::${(g.home_team ?? '').toLowerCase()}`;
+        const liveKeys = new Set(liveGames.map(gameKey));
         setGames((prev) => {
           const merged = [
             ...liveGames,
-            ...prev.filter((g) => !liveIds.has(g.nba_game_id ?? g.id)),
+            ...prev.filter((g) => !liveKeys.has(gameKey(g))),
           ];
           gamesCache = merged;
           return merged;
