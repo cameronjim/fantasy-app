@@ -29,13 +29,37 @@ export async function login(username: string, password: string): Promise<void> {
   setAuthToken(data.token);
 }
 
-export async function register(username: string, password: string): Promise<void> {
-  const { data } = await api.post('/auth/register', { username, password });
+export async function register(username: string, email: string, password: string): Promise<void> {
+  const { data } = await api.post('/auth/register', { username, email, password });
   setAuthToken(data.token);
 }
 
 export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
   await api.patch('/auth/change-password', { currentPassword, newPassword });
+}
+
+export async function forgotPassword(email: string): Promise<{ message: string }> {
+  const { data } = await api.post('/auth/forgot-password', { email });
+  return data;
+}
+
+export async function resetPassword(token: string, newPassword: string): Promise<void> {
+  await api.post('/auth/reset-password', { token, newPassword });
+}
+
+export async function setEmail(email: string): Promise<void> {
+  await api.patch('/auth/set-email', { email });
+}
+
+export interface CurrentUser {
+  id: number;
+  username: string;
+  email: string | null;
+}
+
+export async function getCurrentUser(): Promise<CurrentUser> {
+  const { data } = await api.get('/auth/me');
+  return data;
 }
 
 export async function getPlayers(params?: { search?: string; team?: string; position?: string }): Promise<Player[]> {
