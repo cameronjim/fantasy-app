@@ -7,6 +7,7 @@ Usage:
     python run_scraper.py
 """
 
+import json
 import logging
 import os
 import re
@@ -14,6 +15,7 @@ import sys
 import time
 import unicodedata
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import psycopg2
 import requests
@@ -22,7 +24,6 @@ from dotenv import load_dotenv
 from nba_api.stats.endpoints import (
     leaguedashplayerstats,
     leaguedashteamstats,
-    scoreboardv3,
 )
 
 env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
@@ -383,123 +384,119 @@ def scrape_teams(conn: psycopg2.extensions.connection) -> None:
     logger.info("upserted %d teams", count)
 
 
-def _fetch_scoreboard_for_date(
-    conn: psycopg2.extensions.connection,
-    date_str: str,
-    cur: psycopg2.extensions.cursor,
-) -> int:
-    """fetch and upsert games for a single date using ScoreboardV3. returns count upserted."""
+def _fetch_espn_scoreboard(date_str: str) -> list[dict]:
+    """Fetch games for one date from ESPN public API.
+
+    date_str must be YYYYMMDD format (e.g. "20260522").
+    ESPN stores event dates as UTC midnight, so we convert to Eastern Time
+    to get the canonical game date — same logic as the backend /games/live endpoint.
+    """
+    url = (
+        "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+        f"?dates={date_str}"
+    )
     try:
-        sb = scoreboardv3.ScoreboardV3(
-            game_date=date_str,
-            league_id="00",
-            timeout=60,
-        )
-        data = sb.get_dict()
-        games_data = data.get("scoreboard", {}).get("games", [])
+        resp = requests.get(url, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
     except Exception as e:
-        logger.error("error fetching %s: %s", date_str, e)
-        return 0
+        logger.error("ESPN fetch failed for %s: %s", date_str, e)
+        return []
 
-    if not games_data:
-        return 0
+    events = data.get("events", [])
+    games = []
 
-    count = 0
-    for g in games_data:
-        game_id = str(g.get("gameId", ""))
+    for event in events:
+        game_id = str(event.get("id", ""))
+        status_obj = event.get("status", {})
+        status_type = status_obj.get("type", {})
+        status_name = status_type.get("name", "")
 
-        home = g.get("homeTeam", {})
-        away = g.get("awayTeam", {})
-
-        home_team_name = (
-            f"{home.get('teamCity', '')} {home.get('teamName', '')}".strip() or "Unknown"
-        )
-        away_team_name = (
-            f"{away.get('teamCity', '')} {away.get('teamName', '')}".strip() or "Unknown"
-        )
-
-        # gameStatus: 1=scheduled, 2=live, 3=final
-        game_status = g.get("gameStatus", 1)
-        game_status_text = str(g.get("gameStatusText", "")).strip()
-
-        if game_status == 1:
-            status = game_status_text if game_status_text else "Scheduled"
-        elif game_status == 2:
+        if status_name == "STATUS_FINAL":
+            status = "Final"
+        elif status_name == "STATUS_IN_PROGRESS":
             status = "In Progress"
         else:
-            status = "Final"
+            status = status_type.get("detail", "Scheduled").strip() or "Scheduled"
 
-        game_time_utc = g.get("gameTimeUTC", "") or g.get("gameEt", "")
+        # ESPN date is UTC midnight — convert to ET for the real game date.
+        # e.g. "2026-05-22T00:00Z" = 8 PM ET May 21 → game_date = "2026-05-21"
+        event_date_str = event.get("date", "")
         try:
-            game_date_val = datetime.strptime(game_time_utc[:10], "%Y-%m-%d").strftime(
-                "%Y-%m-%d"
-            )
+            date_utc = datetime.fromisoformat(event_date_str.replace("Z", "+00:00"))
+            game_date = date_utc.astimezone(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
         except (ValueError, TypeError):
-            try:
-                game_date_val = datetime.strptime(date_str, "%m/%d/%Y").strftime(
-                    "%Y-%m-%d"
-                )
-            except ValueError:
-                game_date_val = datetime.now().strftime("%Y-%m-%d")
+            game_date = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
-        # don't store score for unstarted games
-        if game_status == 1:
+        competition = (event.get("competitions") or [{}])[0]
+        competitors = competition.get("competitors", [])
+        home = next((c for c in competitors if c.get("homeAway") == "home"), {})
+        away = next((c for c in competitors if c.get("homeAway") == "away"), {})
+
+        is_pre_game = status_name not in ("STATUS_FINAL", "STATUS_IN_PROGRESS")
+        try:
+            home_score = int(home.get("score", 0)) if not is_pre_game else None
+        except (TypeError, ValueError):
             home_score = None
+        try:
+            away_score = int(away.get("score", 0)) if not is_pre_game else None
+        except (TypeError, ValueError):
             away_score = None
-        else:
-            try:
-                home_score = int(home.get("score", 0))
-            except (ValueError, TypeError):
-                home_score = None
-            try:
-                away_score = int(away.get("score", 0))
-            except (ValueError, TypeError):
-                away_score = None
 
-        cur.execute(
-            """
-            INSERT INTO games (nba_game_id, home_team, away_team, game_date,
-                               home_score, away_score, status, arena, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
-            ON CONFLICT (nba_game_id) DO UPDATE SET
-                home_team = EXCLUDED.home_team, away_team = EXCLUDED.away_team,
-                game_date = EXCLUDED.game_date, home_score = EXCLUDED.home_score,
-                away_score = EXCLUDED.away_score, status = EXCLUDED.status,
-                arena = EXCLUDED.arena, updated_at = NOW()
-            """,
-            (
-                game_id,
-                home_team_name,
-                away_team_name,
-                game_date_val,
-                home_score,
-                away_score,
-                status,
-                "",
-            ),
-        )
-        count += 1
+        arena = (competition.get("venue") or {}).get("fullName", "")
 
-    return count
+        games.append({
+            "nba_game_id": game_id,
+            "home_team": (home.get("team") or {}).get("displayName", "Unknown"),
+            "away_team": (away.get("team") or {}).get("displayName", "Unknown"),
+            "game_date": game_date,
+            "home_score": home_score,
+            "away_score": away_score,
+            "status": status,
+            "arena": arena,
+        })
+
+    return games
 
 
 def scrape_scoreboard(conn: psycopg2.extensions.connection) -> None:
-    logger.info("fetching games (yesterday, today, next 3 days)...")
-    time.sleep(2)
+    """Fetch games from ESPN for a rolling 10-day window (2 days back, 7 days ahead)."""
+    logger.info("fetching games from ESPN (2 days back → 7 days ahead)...")
+
+    et = ZoneInfo("America/New_York")
+    today = datetime.now(et)
 
     cur = conn.cursor()
     total = 0
-    today = datetime.now()
 
-    for offset in range(-1, 4):
-        d = today + timedelta(days=offset)
-        date_str = d.strftime("%m/%d/%Y")
-        label = d.strftime("%Y-%m-%d")
-        count = _fetch_scoreboard_for_date(conn, date_str, cur)
-        if count > 0:
-            logger.info("%s: %d games", label, count)
-        total += count
-        time.sleep(1)  # rate limit between days
+    for offset in range(-2, 8):  # -2 = day before yesterday, 7 = 7 days from now
+        day = today + timedelta(days=offset)
+        date_str = day.strftime("%Y%m%d")  # ESPN expects YYYYMMDD
+        label = day.strftime("%Y-%m-%d")
+
+        games = _fetch_espn_scoreboard(date_str)
+        for g in games:
+            cur.execute(
+                """
+                INSERT INTO games (nba_game_id, home_team, away_team, game_date,
+                                   home_score, away_score, status, arena, updated_at)
+                VALUES (%(nba_game_id)s, %(home_team)s, %(away_team)s, %(game_date)s,
+                        %(home_score)s, %(away_score)s, %(status)s, %(arena)s, NOW())
+                ON CONFLICT (nba_game_id) DO UPDATE SET
+                    home_team  = EXCLUDED.home_team,
+                    away_team  = EXCLUDED.away_team,
+                    game_date  = EXCLUDED.game_date,
+                    home_score = EXCLUDED.home_score,
+                    away_score = EXCLUDED.away_score,
+                    status     = EXCLUDED.status,
+                    arena      = EXCLUDED.arena,
+                    updated_at = NOW()
+                """,
+                g,
+            )
+        if games:
+            logger.info("%s: %d games", label, len(games))
+        total += len(games)
 
     cur.execute("DELETE FROM games WHERE nba_game_id IS NULL")
     deleted = cur.rowcount
@@ -507,6 +504,7 @@ def scrape_scoreboard(conn: psycopg2.extensions.connection) -> None:
         logger.info("cleaned up %d old seed games", deleted)
 
     cur.close()
+    conn.commit()
     logger.info("total games upserted: %d", total)
 
 
