@@ -62,6 +62,38 @@ export async function getCurrentUser(): Promise<CurrentUser> {
   return data;
 }
 
+export interface AIPreferences {
+  risk_tolerance?: 'avoid_injured' | 'balanced' | 'high_upside';
+  player_age_pref?: 'veterans' | 'balanced' | 'young_upside';
+  opportunity_chase?: 'yes' | 'no';
+  league_format?: 'h2h_categories' | 'h2h_points' | 'roto' | 'points';
+  punt_categories?: string[];
+  roster_strategy?: 'stars_scrubs' | 'balanced' | 'streaming';
+  trade_activity?: 'active' | 'occasional' | 'set_forget';
+  extra_notes?: string;
+}
+
+export async function getPreferences(): Promise<AIPreferences> {
+  const { data } = await api.get('/preferences');
+  return data;
+}
+
+export async function updatePreferences(prefs: AIPreferences): Promise<AIPreferences> {
+  const { data } = await api.patch('/preferences', prefs);
+  return data;
+}
+
+export interface DataStatus {
+  players_updated_at: string | null;
+  teams_updated_at: string | null;
+  games_updated_at: string | null;
+}
+
+export async function getDataStatus(): Promise<DataStatus> {
+  const { data } = await api.get('/status');
+  return data;
+}
+
 export async function getPlayers(params?: { search?: string; team?: string; position?: string }): Promise<Player[]> {
   const { data } = await api.get('/players', { params });
   return data;

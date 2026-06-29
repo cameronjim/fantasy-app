@@ -1,5 +1,7 @@
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { BarChart3, Users, TrendingUp, LogIn, User } from 'lucide-react';
+import { ThemeToggle } from './ThemeToggle';
+import { StatusBadge } from './StatusBadge';
 
 interface NavbarProps {
   isLoggedIn: boolean;
@@ -17,21 +19,21 @@ export default function Navbar({ isLoggedIn, onLogout }: NavbarProps) {
   const location = useLocation();
 
   const goToSignIn = (): void => {
-    // Stash where we came from so we can redirect back after a successful sign-in.
     navigate('/login', { state: { from: location.pathname } });
   };
 
-  const goToChangePassword = (): void => {
+  const goAndBlur = (path: string): void => {
     (document.activeElement as HTMLElement)?.blur();
-    navigate('/change-password');
+    navigate(path);
   };
 
   return (
     <div className="navbar bg-base-200 border-b border-base-300 sticky top-0 z-50 px-4">
-      <div className="flex-1">
+      <div className="flex-1 flex items-center gap-3">
         <NavLink to="/" className="text-xl font-bold tracking-tight">
           Fantasy <span className="text-primary">NBA</span>
         </NavLink>
+        <StatusBadge />
       </div>
       <div className="flex-none gap-1">
         {tabs.map((tab) => {
@@ -51,15 +53,22 @@ export default function Navbar({ isLoggedIn, onLogout }: NavbarProps) {
           );
         })}
 
+        <ThemeToggle />
+
         {isLoggedIn ? (
           <div className="dropdown dropdown-end ml-1">
             <button tabIndex={0} className="btn btn-ghost btn-sm gap-1">
               <User size={16} />
               <span className="hidden sm:inline text-xs">Account</span>
             </button>
-            <ul tabIndex={0} className="dropdown-content menu bg-base-200 rounded-box z-50 w-44 p-2 shadow-lg border border-base-300 mt-1">
+            <ul tabIndex={0} className="dropdown-content menu bg-base-200 rounded-box z-50 w-48 p-2 shadow-lg border border-base-300 mt-1">
               <li>
-                <button onClick={goToChangePassword}>
+                <button onClick={() => goAndBlur('/preferences')}>
+                  AI Preferences
+                </button>
+              </li>
+              <li>
+                <button onClick={() => goAndBlur('/change-password')}>
                   Change Password
                 </button>
               </li>

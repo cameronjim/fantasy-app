@@ -1,10 +1,21 @@
 <!doctype html>
-<html lang="en" data-theme="lofi">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" href="data:," />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Fantasy NBA</title>
+    <script>
+      // Apply persisted theme before React paints — prevents a light-mode flash
+      // for users who chose dark. Mirrors the logic in ThemeToggle.tsx.
+      (function () {
+        var stored = localStorage.getItem('theme');
+        var theme = (stored === 'lofi' || stored === 'business')
+          ? stored
+          : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'business' : 'lofi');
+        document.documentElement.setAttribute('data-theme', theme);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -14,6 +14,8 @@ import { gamesRouter } from './routes/games.js';
 import { fantasyRouter } from './routes/fantasy.js';
 import { aiRouter } from './routes/ai.js';
 import { authRouter } from './routes/auth.js';
+import { preferencesRouter } from './routes/preferences.js';
+import { statusRouter } from './routes/status.js';
 import { requireAuth } from './middleware/auth.js';
 
 const app = express();
@@ -31,6 +33,8 @@ app.use('/api/teams', teamsRouter);
 app.use('/api/games', gamesRouter);
 app.use('/api/fantasy', requireAuth, fantasyRouter);
 app.use('/api/ai', requireAuth, aiRouter);
+app.use('/api/preferences', preferencesRouter);
+app.use('/api/status', statusRouter);
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
