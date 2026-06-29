@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Sparkles, Target, TrendingUp, RefreshCw } from 'lucide-react';
+import { Lightbulb, Target, TrendingUp, RefreshCw } from 'lucide-react';
 import { getWaiverSuggestions } from '../api/client';
 import { ChatBox } from '../components/ChatBox';
 import { PreferencesPrompt } from '../components/PreferencesPrompt';
@@ -91,7 +91,7 @@ export const ImproveTeamPage = ({ isLoggedIn }: ImproveTeamPageProps) => {
                 <div className="card bg-base-200">
                   <div className="card-body p-4">
                     <div className="flex items-center gap-2 mb-2">
-                      <Sparkles size={16} className="text-warning" />
+                      <Lightbulb size={16} className="text-primary" />
                       <span className="text-sm font-semibold">Strategy Summary</span>
                     </div>
                     <p className="text-sm opacity-80 leading-relaxed">{summary}</p>

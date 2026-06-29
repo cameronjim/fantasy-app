@@ -65,9 +65,6 @@ export const ChatBox = ({ contextType, isLoggedIn = true }: ChatBoxProps) => {
       <div className="px-4 py-2.5 border-b border-base-300 flex items-center gap-2">
         <Bot size={16} className="text-primary" />
         <span className="text-sm font-semibold">AI Assistant</span>
-        {contextType && (
-          <span className="badge badge-ghost badge-xs">{contextType}</span>
-        )}
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-[200px] max-h-[360px]">

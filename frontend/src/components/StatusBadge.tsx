@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { Activity } from 'lucide-react';
 import { getDataStatus, type DataStatus } from '../api/client';
 
 // Refresh roughly every 5 minutes — the scraper runs every 6 hours, no need to poll fast.
@@ -62,7 +61,8 @@ export const StatusBadge = () => {
         aria-label={`Data updated ${relativeTime(mostRecentISO ?? null)}`}
         title={`Data updated ${relativeTime(mostRecentISO ?? null)}`}
       >
-        <Activity size={12} className="text-success" />
+        {/* Filled green dot — much more visible than text-success in light mode */}
+        <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
       </button>
       <div tabIndex={0} className="dropdown-content mt-1 z-50 w-60 p-3 shadow-lg bg-base-200 border border-base-300 rounded-box">
         <p className="text-xs font-bold uppercase tracking-wider opacity-50 mb-2">Last updated</p>
@@ -70,7 +70,7 @@ export const StatusBadge = () => {
         <Row label="Teams"   iso={status?.teams_updated_at ?? null} />
         <Row label="Games"   iso={status?.games_updated_at ?? null} />
         <p className="text-[10px] opacity-30 mt-2 pt-2 border-t border-base-300">
-          Scraper runs every 6 hours
+          Data refreshes every 6 hours
         </p>
       </div>
     </div>

@@ -4,6 +4,7 @@ import { getMyRoster, getPlayers, addToRoster, dropFromRoster, getTeamAnalysis }
 import type { Player, RosterPlayer, TeamAnalysis } from '../types';
 import { getTeamLogoUrl } from '../utils/teamLogos';
 import { PreferencesPrompt } from '../components/PreferencesPrompt';
+import { Toast, type ToastVariant } from '../components/Toast';
 
 const CAT_COLORS: Record<string, string> = {
   strong: 'badge-success',
@@ -23,6 +24,7 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
   const [analysis, setAnalysis] = useState<TeamAnalysis | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [rosterLoading, setRosterLoading] = useState(true);
+  const [toast, setToast] = useState<{ message: string; variant: ToastVariant } | null>(null);
 
   const loadRoster = useCallback(async (): Promise<void> => {
     try {
@@ -66,22 +68,28 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
     return () => clearTimeout(timer);
   }, [search, roster]);
 
-  const handleAdd = async (playerId: number): Promise<void> => {
+  const handleAdd = async (playerId: number, playerName: string): Promise<void> => {
     try {
       await addToRoster(playerId);
       setSearch('');
       setSearchResults([]);
       await loadRoster();
       setAnalysis(null);
-    } catch { /* roster add failed silently to avoid blocking ui */ }
+      setToast({ message: `Added ${playerName} to your team`, variant: 'success' });
+    } catch {
+      setToast({ message: `Couldn't add ${playerName}`, variant: 'error' });
+    }
   };
 
-  const handleDrop = async (playerId: number): Promise<void> => {
+  const handleDrop = async (playerId: number, playerName: string): Promise<void> => {
     try {
       await dropFromRoster(playerId);
       await loadRoster();
       setAnalysis(null);
-    } catch { /* roster drop failed silently to avoid blocking ui */ }
+      setToast({ message: `Dropped ${playerName} from your team`, variant: 'success' });
+    } catch {
+      setToast({ message: `Couldn't drop ${playerName}`, variant: 'error' });
+    }
   };
 
   const n = (v: unknown): number => Number(v) || 0;
@@ -131,7 +139,7 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
                       <span className="text-xs opacity-50">{player.position} · {player.team}</span>
                       <span className="text-xs opacity-70">{n(player.points_per_game).toFixed(1)} PPG</span>
                     </div>
-                    <button onClick={() => handleAdd(player.id)} className="btn btn-primary btn-xs gap-1">
+                    <button onClick={() => handleAdd(player.id, player.name)} className="btn btn-primary btn-xs gap-1">
                       <Plus size={12} /> Add
                     </button>
                   </div>
@@ -218,7 +226,7 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
                       {isLoggedIn && (
                         <td>
                           <button
-                            onClick={() => handleDrop(p.player_id || p.id)}
+                            onClick={() => handleDrop(p.player_id || p.id, p.name)}
                             className="btn btn-error btn-xs gap-1"
                           >
                             <Trash2 size={12} /> Drop
@@ -296,6 +304,14 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
             ) : null}
           </div>
         </div>
+      )}
+
+      {toast && (
+        <Toast
+          message={toast.message}
+          variant={toast.variant}
+          onDismiss={() => setToast(null)}
+        />
       )}
     </div>
   );
