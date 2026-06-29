@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Navigate, Link } from 'react-router-dom';
-import { CheckCircle2, Sparkles } from 'lucide-react';
+import { CheckCircle2 } from 'lucide-react';
 import { getAuthToken, getPreferences, updatePreferences, type AIPreferences } from '../api/client';
 
 const CATEGORIES = ['PTS', 'REB', 'AST', 'STL', 'BLK', 'FG%', 'FT%', '3PM', 'TO'];
@@ -98,13 +98,9 @@ export const PreferencesPage = () => {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6 pb-24">
-      <div className="flex items-center gap-2 mb-2">
-        <Sparkles size={20} className="text-primary" />
-        <h1 className="text-2xl font-bold">AI Preferences</h1>
-      </div>
+      <h1 className="text-2xl font-bold mb-2">Team Preferences</h1>
       <p className="text-sm opacity-60 mb-6">
-        These answers are injected into every AI suggestion (team analysis, waiver picks, chat).
-        Update them anytime to get more tailored advice.
+        Tell us about your fantasy strategy and we'll tailor every suggestion to fit. Update these anytime.
       </p>
 
       <div className="space-y-5">
