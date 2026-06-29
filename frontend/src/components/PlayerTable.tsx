@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
-import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronUp, ChevronDown } from 'lucide-react';
 import type { Player } from '../types';
+import { getTeamLogoUrl } from '../utils/teamLogos';
 
 interface PlayerTableProps {
   players: Player[];
@@ -28,19 +29,68 @@ const COLUMNS: { key: SortKey; label: string; format?: (v: number) => string }[]
   { key: 'games_played', label: 'GP' },
 ];
 
-const PAGE_SIZE = 25;
+// How many rows to render initially, and how many more to add each time
+// the user scrolls within INFINITE_THRESHOLD pixels of the bottom.
+const INITIAL_ROWS = 30;
+const ROW_INCREMENT = 30;
+const INFINITE_THRESHOLD = 600;
 
 const FALLBACK_SVG =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%23252836'/%3E%3Ccircle cx='20' cy='15' r='7' fill='%234b5563'/%3E%3Cellipse cx='20' cy='35' rx='12' ry='8' fill='%234b5563'/%3E%3C/svg%3E";
 
-const NUMERIC_KEYS = new Set(['points_per_game','rebounds_per_game','assists_per_game','steals_per_game','blocks_per_game','field_goal_percentage','three_point_percentage','free_throw_percentage','turnovers_per_game','minutes_per_game','games_played']);
+const NUMERIC_KEYS = new Set([
+  'points_per_game', 'rebounds_per_game', 'assists_per_game', 'steals_per_game',
+  'blocks_per_game', 'field_goal_percentage', 'three_point_percentage',
+  'free_throw_percentage', 'turnovers_per_game', 'minutes_per_game', 'games_played',
+]);
 
 export const PlayerTable = ({ players, onSelect, selectedForCompare = [], onToggleCompare }: PlayerTableProps) => {
   const [sortKey, setSortKey] = useState<SortKey>('points_per_game');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
-  const [page, setPage] = useState(0);
+  const [visibleCount, setVisibleCount] = useState(INITIAL_ROWS);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => { setPage(0); }, [players.length]);
+  // Reset the visible window whenever the filter/sort result changes
+  // so users don't open the page already 200 rows deep.
+  useEffect(() => { setVisibleCount(INITIAL_ROWS); }, [players.length, sortKey, sortDir]);
+
+  const sorted = useMemo(() => {
+    return [...players].sort((a, b) => {
+      const aVal = a[sortKey];
+      const bVal = b[sortKey];
+      if (aVal == null) return 1;
+      if (bVal == null) return -1;
+      if (NUMERIC_KEYS.has(sortKey)) {
+        const diff = Number(aVal) - Number(bVal);
+        return sortDir === 'asc' ? diff : -diff;
+      }
+      return sortDir === 'asc'
+        ? String(aVal).localeCompare(String(bVal))
+        : String(bVal).localeCompare(String(aVal));
+    });
+  }, [players, sortKey, sortDir]);
+
+  const visible = sorted.slice(0, visibleCount);
+  const hasMore = visibleCount < sorted.length;
+
+  // IntersectionObserver bumps visibleCount whenever the sentinel scrolls into view.
+  useEffect(() => {
+    if (!hasMore) return;
+    const node = sentinelRef.current;
+    if (!node) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisibleCount((c) => Math.min(c + ROW_INCREMENT, sorted.length));
+        }
+      },
+      { rootMargin: `0px 0px ${INFINITE_THRESHOLD}px 0px` }
+    );
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMore, sorted.length]);
 
   const handleSort = (key: SortKey): void => {
     if (sortKey === key) {
@@ -49,25 +99,8 @@ export const PlayerTable = ({ players, onSelect, selectedForCompare = [], onTogg
       setSortKey(key);
       setSortDir(key === 'name' || key === 'team' || key === 'position' ? 'asc' : 'desc');
     }
-    setPage(0);
   };
 
-  const sorted = [...players].sort((a, b) => {
-    const aVal = a[sortKey];
-    const bVal = b[sortKey];
-    if (aVal == null) return 1;
-    if (bVal == null) return -1;
-    if (NUMERIC_KEYS.has(sortKey)) {
-      const diff = Number(aVal) - Number(bVal);
-      return sortDir === 'asc' ? diff : -diff;
-    }
-    return sortDir === 'asc'
-      ? String(aVal).localeCompare(String(bVal))
-      : String(bVal).localeCompare(String(aVal));
-  });
-
-  const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
-  const paginated = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
   const compareIds = new Set(selectedForCompare.map((p) => p.id));
   const compareMaxed = selectedForCompare.length >= 3;
 
@@ -77,14 +110,6 @@ export const PlayerTable = ({ players, onSelect, selectedForCompare = [], onTogg
     if (status === 'Probable') return 'badge badge-success badge-xs';
     return 'badge badge-error badge-xs';
   };
-
-  const pageItems = Array.from({ length: totalPages }, (_, i) => i)
-    .filter((i) => i === 0 || i === totalPages - 1 || Math.abs(i - page) <= 2)
-    .reduce<(number | 'ellipsis')[]>((acc, i, idx, arr) => {
-      if (idx > 0 && arr[idx - 1] !== i - 1) acc.push('ellipsis');
-      acc.push(i);
-      return acc;
-    }, []);
 
   return (
     <div>
@@ -110,9 +135,10 @@ export const PlayerTable = ({ players, onSelect, selectedForCompare = [], onTogg
             </tr>
           </thead>
           <tbody>
-            {paginated.map((player) => {
+            {visible.map((player) => {
               const isSelected = compareIds.has(player.id);
               const isDisabled = onToggleCompare && compareMaxed && !isSelected;
+              const teamLogo = getTeamLogoUrl(player.team);
               return (
                 <tr
                   key={player.id}
@@ -150,6 +176,18 @@ export const PlayerTable = ({ players, onSelect, selectedForCompare = [], onTogg
                             </span>
                           )}
                         </span>
+                      ) : col.key === 'team' ? (
+                        <span className="flex items-center gap-1.5">
+                          {teamLogo && (
+                            <img
+                              src={teamLogo}
+                              alt=""
+                              className="w-4 h-4 object-contain"
+                              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                            />
+                          )}
+                          <span>{player.team}</span>
+                        </span>
                       ) : col.format && player[col.key] != null ? (
                         col.format(player[col.key] as number)
                       ) : (
@@ -160,7 +198,7 @@ export const PlayerTable = ({ players, onSelect, selectedForCompare = [], onTogg
                 </tr>
               );
             })}
-            {paginated.length === 0 && (
+            {visible.length === 0 && (
               <tr>
                 <td colSpan={COLUMNS.length + (onToggleCompare ? 1 : 0)} className="text-center py-12 opacity-40">
                   No players found
@@ -171,40 +209,15 @@ export const PlayerTable = ({ players, onSelect, selectedForCompare = [], onTogg
         </table>
       </div>
 
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between mt-3 px-1">
-          <span className="text-xs opacity-40">
-            {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, sorted.length)} of {sorted.length}
-          </span>
-          <div className="join">
-            <button
-              className="join-item btn btn-xs"
-              onClick={() => setPage((p) => Math.max(0, p - 1))}
-              disabled={page === 0}
-            >
-              <ChevronLeft size={14} />
-            </button>
-            {pageItems.map((item, idx) =>
-              item === 'ellipsis' ? (
-                <button key={`e${idx}`} className="join-item btn btn-xs btn-disabled">…</button>
-              ) : (
-                <button
-                  key={item}
-                  onClick={() => setPage(item)}
-                  className={`join-item btn btn-xs ${page === item ? 'btn-primary' : ''}`}
-                >
-                  {item + 1}
-                </button>
-              )
-            )}
-            <button
-              className="join-item btn btn-xs"
-              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-              disabled={page >= totalPages - 1}
-            >
-              <ChevronRight size={14} />
-            </button>
-          </div>
+      {hasMore && (
+        <div ref={sentinelRef} className="flex items-center justify-center py-4">
+          <span className="loading loading-spinner loading-sm opacity-40" />
+        </div>
+      )}
+
+      {!hasMore && sorted.length > INITIAL_ROWS && (
+        <div className="text-center text-xs opacity-30 py-3">
+          {sorted.length} player{sorted.length !== 1 ? 's' : ''} total
         </div>
       )}
     </div>
