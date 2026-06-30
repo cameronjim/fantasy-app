@@ -96,7 +96,7 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
             <button
               type="button"
               onClick={() => switchGoogleAccount()}
-              className="text-xs text-primary hover:underline"
+              className="text-xs text-primary hover:underline cursor-pointer"
             >
               Use a different Google account
             </button>

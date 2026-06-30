@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Search, Plus, Trash2, RefreshCw, ChevronUp, ChevronDown } from 'lucide-react';
 import { getMyRoster, getPlayers, addToRoster, dropFromRoster, getTeamAnalysis } from '../api/client';
 import type { Player, RosterPlayer, TeamAnalysis } from '../types';
@@ -56,6 +56,10 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
   const [toast, setToast] = useState<{ message: string; variant: ToastVariant } | null>(null);
   const [sortKey, setSortKey] = useState<keyof RosterPlayer>('points_per_game');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  // Monotonic counter — each loadAnalysis() call captures its own ID and only
+  // commits its result if that ID is still the latest. Mutations that change
+  // the roster bump the counter, invalidating any in-flight request.
+  const analysisRequestIdRef = useRef(0);
 
   const loadRoster = useCallback(async (): Promise<void> => {
     try {
@@ -69,15 +73,22 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
   }, []);
 
   const loadAnalysis = useCallback(async (): Promise<void> => {
+    const requestId = ++analysisRequestIdRef.current;
     setAnalysisLoading(true);
     try {
       const data = await getTeamAnalysis();
+      // If another mutation/load has fired since we started, ignore our result —
+      // the newer one will (or already did) handle it.
+      if (requestId !== analysisRequestIdRef.current) return;
       setAnalysis(data);
       setCachedAnalysis(data);
     } catch {
+      if (requestId !== analysisRequestIdRef.current) return;
       setAnalysis(null);
     } finally {
-      setAnalysisLoading(false);
+      if (requestId === analysisRequestIdRef.current) {
+        setAnalysisLoading(false);
+      }
     }
   }, []);
 
@@ -115,8 +126,12 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
       setSearch('');
       setSearchResults([]);
       await loadRoster();
+      // Bump the request id so any in-flight analysis call discards its result
+      // — otherwise an analysis started for the previous roster could land
+      // *after* this mutation and overwrite the cleared state with stale data.
+      analysisRequestIdRef.current++;
       setAnalysis(null);
-      invalidateAIClientCaches(); // roster changed -> waiver suggestions stale too
+      invalidateAIClientCaches();
       setToast({ message: `Added ${playerName} to your team`, variant: 'success' });
     } catch {
       setToast({ message: `Couldn't add ${playerName}`, variant: 'error' });
@@ -127,6 +142,7 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
     try {
       await dropFromRoster(playerId);
       await loadRoster();
+      analysisRequestIdRef.current++;
       setAnalysis(null);
       invalidateAIClientCaches();
       setToast({ message: `Dropped ${playerName} from your team`, variant: 'success' });

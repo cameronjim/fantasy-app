@@ -66,6 +66,16 @@ export const ScoreboardStrip = () => {
     container.scrollBy({ left: direction === 'left' ? -280 : 280, behavior: 'smooth' });
   };
 
+  // Today's date as YYYY-MM-DD in the user's local TZ. Computed at render time
+  // (and inside an effect below) so it stays correct across midnight.
+  const todayIso = (() => {
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  })();
+
   const formatDate = (dateStr: string): string => {
     const d = new Date(dateStr + 'T12:00:00');
     const today = new Date();
@@ -76,6 +86,27 @@ export const ScoreboardStrip = () => {
     if (diffDays === 1) return 'Tomorrow';
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
+
+  // Auto-scroll the scoreboard strip so today's date group sits roughly at the
+  // start of the viewport — instead of the user landing in the past and having
+  // to scroll right. Re-runs when the data set changes (today moves to a
+  // different index when the scraper window slides).
+  useEffect(() => {
+    if (games.length === 0) return;
+    // requestAnimationFrame ensures the elements are laid out before we measure.
+    const raf = requestAnimationFrame(() => {
+      const container = document.getElementById('scoreboard-scroll');
+      const todayEl = container?.querySelector<HTMLElement>(`[data-date="${todayIso}"]`);
+      if (container && todayEl) {
+        // Position today's group ~80px from the left edge of the visible area
+        // (just past the left scroll button), centering the focus on today
+        // and showing past games trailing behind.
+        const offsetLeft = todayEl.offsetLeft - container.offsetLeft - 80;
+        container.scrollTo({ left: Math.max(0, offsetLeft), behavior: 'auto' });
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [games, todayIso]);
 
   const grouped = games.reduce<Record<string, Game[]>>((acc, g) => {
     const date = g.game_date?.split('T')[0] || 'Unknown';
@@ -108,7 +139,7 @@ export const ScoreboardStrip = () => {
         className="flex gap-3 overflow-x-auto py-3 px-10 no-scrollbar"
       >
         {sortedDates.map((date) => (
-          <div key={date} className="flex items-center gap-3 flex-shrink-0">
+          <div key={date} data-date={date} className="flex items-center gap-3 flex-shrink-0">
             <div className="flex-shrink-0 text-center px-2">
               <div className="text-[10px] font-bold opacity-40 uppercase tracking-wider">{formatDate(date)}</div>
               <div className="text-[10px] opacity-25">{date}</div>
