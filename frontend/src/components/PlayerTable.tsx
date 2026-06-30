@@ -126,13 +126,11 @@ export const PlayerTable = ({ players, onSelect, selectedForCompare = [], onTogg
                 >
                   <span className="inline-flex items-center gap-1">
                     {col.label}
-                    {/* Fixed-width slot so the header doesn't reflow when the
-                        active sort column changes. */}
-                    <span className="inline-block w-3 text-current">
-                      {sortKey === col.key
-                        ? (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)
-                        : null}
-                    </span>
+                    {/* Always render a chevron — `invisible` hides it but keeps
+                        the layout space so column widths never change on sort. */}
+                    {sortKey === col.key
+                      ? (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)
+                      : <ChevronUp size={12} className="invisible" />}
                   </span>
                 </th>
               ))}
