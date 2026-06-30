@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { register } from '../api/client';
+import { GoogleLogin } from '@react-oauth/google';
+import { register, googleSignIn } from '../api/client';
 
 interface RegisterPageProps {
   onRegister: () => void;
@@ -29,6 +30,22 @@ export const RegisterPage = ({ onRegister }: RegisterPageProps) => {
 
   const pwValidationError = password ? validatePassword(password) : null;
   const emailLooksValid = email && isValidEmail(email);
+
+  const handleGoogleSuccess = async (credential: string | undefined): Promise<void> => {
+    if (!credential) return;
+    setError('');
+    setLoading(true);
+    try {
+      await googleSignIn(credential);
+      onRegister();
+      navigate('/', { replace: true });
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      setError(msg ?? 'Google sign-in failed');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
@@ -67,6 +84,19 @@ export const RegisterPage = ({ onRegister }: RegisterPageProps) => {
         <div className="card-body">
           <h2 className="card-title text-2xl mb-1">Create Account</h2>
           <p className="text-sm opacity-50 mb-4">Join Fantasy NBA</p>
+
+          <div className="flex justify-center mb-4">
+            <GoogleLogin
+              onSuccess={(resp) => handleGoogleSuccess(resp.credential)}
+              onError={() => setError('Google sign-in failed')}
+              theme="outline"
+              size="large"
+              text="signup_with"
+              width="290"
+            />
+          </div>
+
+          <div className="divider text-xs opacity-50 my-2">or</div>
 
           <form onSubmit={handleSubmit} className="space-y-3">
             <div>

@@ -1,4 +1,3 @@
-import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import type { RosterPlayer } from '../types';
 
 interface TeamAveragesProps {
@@ -9,14 +8,12 @@ interface CategoryDef {
   key: keyof RosterPlayer;
   label: string;
   benchmark: number;
-  /** When true, lower is better (e.g. turnovers). */
   lowerIsBetter?: boolean;
-  /** When true, format as a percentage (45.6% not 45.6). */
   isPercent?: boolean;
 }
 
-// Benchmarks are the per-player averages from a competitive 10-team 9-cat league
-// (same numbers we hand to Claude in the team-analysis prompt for consistency).
+// Same benchmarks we pass to Claude for team-analysis so the AI's view and the
+// numbers shown to the user line up.
 const CATEGORIES: CategoryDef[] = [
   { key: 'points_per_game',         label: 'PTS', benchmark: 15.0 },
   { key: 'rebounds_per_game',       label: 'REB', benchmark: 5.0 },
@@ -29,13 +26,9 @@ const CATEGORIES: CategoryDef[] = [
   { key: 'turnovers_per_game',      label: 'TO',  benchmark: 1.8, lowerIsBetter: true },
 ];
 
-// What counts as "meaningfully better/worse" — anything within this margin
-// of the benchmark is considered roughly average.
 const MARGIN_PCT = 0.07;
 
-function n(v: unknown): number {
-  return Number(v) || 0;
-}
+function n(v: unknown): number { return Number(v) || 0; }
 
 function mean(values: number[]): number {
   if (values.length === 0) return 0;
@@ -53,7 +46,6 @@ function compare(val: number, cat: CategoryDef): Comparison {
   const diff = (val - cat.benchmark) / cat.benchmark;
   if (Math.abs(diff) < MARGIN_PCT) return 'similar';
   const isAbove = diff > 0;
-  // Most cats: higher = better. Turnovers: lower = better.
   return cat.lowerIsBetter ? (isAbove ? 'worse' : 'better') : (isAbove ? 'better' : 'worse');
 }
 
@@ -62,39 +54,43 @@ export const TeamAverages = ({ roster }: TeamAveragesProps) => {
 
   return (
     <div className="px-4 py-3 border-b border-base-300 bg-base-300/30">
-      <div className="flex items-baseline justify-between mb-2">
-        <p className="text-xs font-bold uppercase tracking-wider opacity-60">Team averages per game</p>
-        <p className="text-[10px] opacity-40">vs. competitive 9-cat benchmark</p>
-      </div>
-      <div className="grid grid-cols-5 sm:grid-cols-9 gap-2">
+      <p className="text-xs font-bold uppercase tracking-wider opacity-60 mb-3">
+        Team averages per game
+        <span className="ml-2 text-[10px] font-normal opacity-50 normal-case tracking-normal">
+          vs. competitive 9-cat benchmark
+        </span>
+      </p>
+
+      <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-9 gap-1.5">
         {CATEGORIES.map((cat) => {
           const values = roster.map((p) => n(p[cat.key]));
           const avg = mean(values);
           const cmp = compare(avg, cat);
 
-          const color =
+          // Subtle tinted background — same hue family as the existing strong/avg/weak
+          // badges on the 9-cat analysis card so the two views feel related.
+          const tone =
+            cmp === 'better'
+              ? 'bg-emerald-500/10 border-emerald-500/40'
+              : cmp === 'worse'
+              ? 'bg-red-500/10 border-red-500/40'
+              : 'bg-base-200 border-base-300';
+
+          const valueColor =
             cmp === 'better' ? 'text-emerald-500'
             : cmp === 'worse' ? 'text-red-500'
-            : 'opacity-60';
-
-          const Icon =
-            cmp === 'better' ? TrendingUp
-            : cmp === 'worse' ? TrendingDown
-            : Minus;
+            : '';
 
           return (
             <div
               key={cat.label}
-              className="flex flex-col items-center justify-center rounded-lg bg-base-200 px-2 py-1.5"
+              className={`flex items-baseline justify-between px-2.5 py-1.5 rounded-md border ${tone}`}
               title={`Benchmark: ${formatValue(cat.benchmark, cat)}${cat.lowerIsBetter ? ' (lower is better)' : ''}`}
             >
-              <div className="text-[10px] font-bold opacity-50 uppercase tracking-wider">{cat.label}</div>
-              <div className="flex items-center gap-1 mt-0.5">
-                <Icon size={12} className={color} />
-                <span className={`text-sm font-semibold tabular-nums ${color}`}>
-                  {formatValue(avg, cat)}
-                </span>
-              </div>
+              <span className="text-[10px] font-bold opacity-60 uppercase tracking-wider">{cat.label}</span>
+              <span className={`text-sm font-bold tabular-nums ${valueColor}`}>
+                {formatValue(avg, cat)}
+              </span>
             </div>
           );
         })}

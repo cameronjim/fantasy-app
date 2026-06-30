@@ -2,9 +2,12 @@ import { Router, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
+import { OAuth2Client } from 'google-auth-library';
 import { query } from '../db.js';
 import { requireAuth, AuthRequest } from '../middleware/auth.js';
 import { sendEmail, passwordResetEmail } from '../services/email.js';
+
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const router = Router();
 
@@ -91,6 +94,12 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
       res.status(401).json({ error: 'Invalid username or password' });
       return;
     }
+    // Google-only accounts have no password hash — tell the user clearly
+    // instead of returning a generic auth failure.
+    if (!result.rows[0].password_hash) {
+      res.status(401).json({ error: 'This account uses Google Sign-In. Please use the Google button instead.' });
+      return;
+    }
     const valid = await bcrypt.compare(password, result.rows[0].password_hash);
     if (!valid) {
       res.status(401).json({ error: 'Invalid username or password' });
@@ -104,6 +113,100 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
     res.json({ token });
   } catch {
     res.status(500).json({ error: 'Failed to login' });
+  }
+});
+
+/**
+ * Sign in (or sign up) via Google. The frontend submits the credential
+ * (an ID token JWT from Google Identity Services); we verify it against
+ * Google's public keys, then match-or-create the user account.
+ *
+ * Three branches:
+ *   1. Existing google_id  -> log in
+ *   2. Existing email      -> link google_id to that account, log in
+ *   3. Brand new           -> create user (username derived from email)
+ */
+router.post('/google', async (req: Request, res: Response): Promise<void> => {
+  const { credential } = req.body;
+  if (!credential) {
+    res.status(400).json({ error: 'credential is required' });
+    return;
+  }
+  if (!process.env.GOOGLE_CLIENT_ID) {
+    res.status(500).json({ error: 'Google Sign-In is not configured on the server' });
+    return;
+  }
+
+  let payload;
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken: credential,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    payload = ticket.getPayload();
+  } catch (err) {
+    console.error('Google verifyIdToken failed:', err);
+    res.status(401).json({ error: 'Invalid Google credential' });
+    return;
+  }
+
+  if (!payload?.email || !payload.sub) {
+    res.status(401).json({ error: 'Google token missing required fields' });
+    return;
+  }
+
+  const googleId = payload.sub;
+  const email = payload.email.toLowerCase();
+
+  try {
+    // Branch 1: already linked to this google_id?
+    let result = await query('SELECT id FROM users WHERE google_id = $1', [googleId]);
+
+    // Branch 2: existing user by email — attach the google_id.
+    if (result.rows.length === 0) {
+      const byEmail = await query(
+        'SELECT id FROM users WHERE LOWER(email) = $1',
+        [email]
+      );
+      if (byEmail.rows.length > 0) {
+        await query(
+          'UPDATE users SET google_id = $1 WHERE id = $2',
+          [googleId, byEmail.rows[0].id]
+        );
+        result = byEmail;
+      }
+    }
+
+    // Branch 3: brand new — create the user. Username = email prefix with
+    // numeric suffix if needed to dodge the username UNIQUE constraint.
+    if (result.rows.length === 0) {
+      const base = email.split('@')[0].replace(/[^a-z0-9]/g, '') || 'user';
+      let username = base;
+      let suffix = 0;
+      // 20 tries is plenty for any reasonable collision.
+      for (let i = 0; i < 20; i++) {
+        const taken = await query('SELECT 1 FROM users WHERE username = $1', [username]);
+        if (taken.rows.length === 0) break;
+        suffix += 1;
+        username = `${base}${suffix}`;
+      }
+
+      const created = await query(
+        'INSERT INTO users (username, email, google_id, password_hash) VALUES ($1, $2, $3, NULL) RETURNING id',
+        [username, email, googleId]
+      );
+      result = created;
+    }
+
+    const token = jwt.sign(
+      { userId: result.rows[0].id },
+      process.env.AUTH_SECRET!,
+      { expiresIn: '30d' }
+    );
+    res.json({ token });
+  } catch (err) {
+    console.error('Google sign-in error:', err);
+    res.status(500).json({ error: 'Failed to sign in with Google' });
   }
 });
 
