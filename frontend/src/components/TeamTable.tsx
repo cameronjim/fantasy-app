@@ -9,23 +9,23 @@ interface TeamTableProps {
 
 type SortKey = keyof Team;
 
-const COLUMNS: { key: SortKey; label: string; format?: (v: number) => string }[] = [
-  { key: 'name', label: 'Team' },
-  { key: 'conference', label: 'Conf' },
-  { key: 'wins', label: 'W' },
-  { key: 'losses', label: 'L' },
-  { key: 'points_per_game', label: 'PPG', format: (v) => Number(v).toFixed(1) },
-  { key: 'rebounds_per_game', label: 'RPG', format: (v) => Number(v).toFixed(1) },
-  { key: 'assists_per_game', label: 'APG', format: (v) => Number(v).toFixed(1) },
-  { key: 'steals_per_game', label: 'SPG', format: (v) => Number(v).toFixed(1) },
-  { key: 'blocks_per_game', label: 'BPG', format: (v) => Number(v).toFixed(1) },
-  { key: 'field_goal_percentage', label: 'FG%', format: (v) => Number(v).toFixed(1) },
-  { key: 'three_point_percentage', label: '3P%', format: (v) => Number(v).toFixed(1) },
-  { key: 'free_throw_percentage', label: 'FT%', format: (v) => Number(v).toFixed(1) },
-  { key: 'turnovers_per_game', label: 'TOV', format: (v) => Number(v).toFixed(1) },
-  { key: 'offensive_rating', label: 'OFF RTG', format: (v) => Number(v).toFixed(1) },
-  { key: 'defensive_rating', label: 'DEF RTG', format: (v) => Number(v).toFixed(1) },
-  { key: 'net_rating', label: 'NET RTG', format: (v) => Number(v).toFixed(1) },
+const COLUMNS: { key: SortKey; label: string; full: string; format?: (v: number) => string }[] = [
+  { key: 'name',                   label: 'Team',    full: 'Team Name' },
+  { key: 'conference',             label: 'Conf',    full: 'Conference' },
+  { key: 'wins',                   label: 'W',       full: 'Wins' },
+  { key: 'losses',                 label: 'L',       full: 'Losses' },
+  { key: 'points_per_game',        label: 'PPG',     full: 'Points Per Game',     format: (v) => Number(v).toFixed(1) },
+  { key: 'rebounds_per_game',      label: 'RPG',     full: 'Rebounds Per Game',   format: (v) => Number(v).toFixed(1) },
+  { key: 'assists_per_game',       label: 'APG',     full: 'Assists Per Game',    format: (v) => Number(v).toFixed(1) },
+  { key: 'steals_per_game',        label: 'SPG',     full: 'Steals Per Game',     format: (v) => Number(v).toFixed(1) },
+  { key: 'blocks_per_game',        label: 'BPG',     full: 'Blocks Per Game',     format: (v) => Number(v).toFixed(1) },
+  { key: 'field_goal_percentage',  label: 'FG%',     full: 'Field Goal %',        format: (v) => Number(v).toFixed(1) },
+  { key: 'three_point_percentage', label: '3P%',     full: '3-Point %',           format: (v) => Number(v).toFixed(1) },
+  { key: 'free_throw_percentage',  label: 'FT%',     full: 'Free Throw %',        format: (v) => Number(v).toFixed(1) },
+  { key: 'turnovers_per_game',     label: 'TOV',     full: 'Turnovers Per Game',  format: (v) => Number(v).toFixed(1) },
+  { key: 'offensive_rating',       label: 'OFF RTG', full: 'Offensive Rating',    format: (v) => Number(v).toFixed(1) },
+  { key: 'defensive_rating',       label: 'DEF RTG', full: 'Defensive Rating',    format: (v) => Number(v).toFixed(1) },
+  { key: 'net_rating',             label: 'NET RTG', full: 'Net Rating',          format: (v) => Number(v).toFixed(1) },
 ];
 
 const NUMERIC_KEYS = new Set(['wins','losses','points_per_game','rebounds_per_game','assists_per_game','steals_per_game','blocks_per_game','field_goal_percentage','three_point_percentage','free_throw_percentage','turnovers_per_game','defensive_rating','offensive_rating','net_rating']);
@@ -66,6 +66,7 @@ export const TeamTable = ({ teams }: TeamTableProps) => {
               <th
                 key={col.key}
                 onClick={() => handleSort(col.key)}
+                title={col.full}
                 className="cursor-pointer select-none whitespace-nowrap"
               >
                 <span className="inline-flex items-center gap-1">

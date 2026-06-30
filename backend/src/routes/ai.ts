@@ -11,7 +11,7 @@ const router = Router();
 // Bump when the team-analysis or waiver-suggestions system prompt changes
 // meaningfully — old cache entries hashed without this won't collide so they
 // get re-prompted on next request.
-const PROMPT_VERSION = 'v4-zscore-waivers';
+const PROMPT_VERSION = 'v5-fp-formula';
 
 function extractJSON(text: string): string {
   const fenced = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);

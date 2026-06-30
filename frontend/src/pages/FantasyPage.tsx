@@ -20,19 +20,20 @@ const CAT_COLORS: Record<string, string> = {
 
 // Column definitions for the My Roster table. `key` is the sort field; columns
 // without a key (like the bare "Player" column header) are not sortable.
-const ROSTER_COLUMNS: Array<{ key: keyof RosterPlayer | null; label: string }> = [
-  { key: 'name',                     label: 'Player' },
-  { key: 'position',                 label: 'Pos' },
-  { key: 'team',                     label: 'Team' },
-  { key: 'points_per_game',          label: 'PTS' },
-  { key: 'rebounds_per_game',        label: 'REB' },
-  { key: 'assists_per_game',         label: 'AST' },
-  { key: 'steals_per_game',          label: 'STL' },
-  { key: 'blocks_per_game',          label: 'BLK' },
-  { key: 'field_goal_percentage',    label: 'FG%' },
-  { key: 'free_throw_percentage',    label: 'FT%' },
-  { key: 'three_pointers_made',      label: '3PM' },
-  { key: 'turnovers_per_game',       label: 'TO' },
+// `full` powers the native browser hover tooltip on each header.
+const ROSTER_COLUMNS: Array<{ key: keyof RosterPlayer | null; label: string; full: string }> = [
+  { key: 'name',                     label: 'Player', full: 'Player Name' },
+  { key: 'position',                 label: 'Pos',    full: 'Position' },
+  { key: 'team',                     label: 'Team',   full: 'Team' },
+  { key: 'points_per_game',          label: 'PTS',    full: 'Points Per Game' },
+  { key: 'rebounds_per_game',        label: 'REB',    full: 'Rebounds Per Game' },
+  { key: 'assists_per_game',         label: 'AST',    full: 'Assists Per Game' },
+  { key: 'steals_per_game',          label: 'STL',    full: 'Steals Per Game' },
+  { key: 'blocks_per_game',          label: 'BLK',    full: 'Blocks Per Game' },
+  { key: 'field_goal_percentage',    label: 'FG%',    full: 'Field Goal %' },
+  { key: 'free_throw_percentage',    label: 'FT%',    full: 'Free Throw %' },
+  { key: 'three_pointers_made',      label: '3PM',    full: '3-Pointers Made Per Game' },
+  { key: 'turnovers_per_game',       label: 'TO',     full: 'Turnovers Per Game' },
 ];
 
 const NUMERIC_ROSTER_KEYS = new Set<keyof RosterPlayer>([
@@ -266,6 +267,7 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
                       <th
                         key={col.label}
                         onClick={col.key ? () => handleSort(col.key!) : undefined}
+                        title={col.full}
                         className={col.key ? 'cursor-pointer select-none whitespace-nowrap' : 'whitespace-nowrap'}
                       >
                         <span className="inline-flex items-center gap-1">

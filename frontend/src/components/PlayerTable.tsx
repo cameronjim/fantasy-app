@@ -15,24 +15,22 @@ type SortKey = keyof Player;
 // Fixed pixel widths. The table uses `table-layout: fixed` below so these
 // widths are authoritative — content that doesn't fit is truncated. Sorting
 // can never resize a column.
-const COLUMNS: { key: SortKey; label: string; format?: (v: number) => string; w: string }[] = [
-  { key: 'name',                   label: 'Player', w: 'w-[220px]' },
-  { key: 'team',                   label: 'Team',   w: 'w-[78px]' },
-  { key: 'position',               label: 'Pos',    w: 'w-[60px]' },
-  // Fantasy column lives right after the basics so users can sort by it
-  // immediately without scrolling. Higher = better, hence default desc.
-  { key: 'fantasy_score',          label: 'FS',     w: 'w-[68px]', format: (v) => Number(v).toFixed(1) },
-  { key: 'points_per_game',        label: 'PPG',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
-  { key: 'rebounds_per_game',      label: 'RPG',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
-  { key: 'assists_per_game',       label: 'APG',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
-  { key: 'steals_per_game',        label: 'SPG',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
-  { key: 'blocks_per_game',        label: 'BPG',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
-  { key: 'field_goal_percentage',  label: 'FG%',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
-  { key: 'three_point_percentage', label: '3P%',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
-  { key: 'free_throw_percentage',  label: 'FT%',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
-  { key: 'turnovers_per_game',     label: 'TOV',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
-  { key: 'minutes_per_game',       label: 'MIN',    w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
-  { key: 'games_played',           label: 'GP',     w: 'w-[58px]' },
+const COLUMNS: { key: SortKey; label: string; full: string; format?: (v: number) => string; w: string }[] = [
+  { key: 'name',                   label: 'Player', full: 'Player Name',                w: 'w-[220px]' },
+  { key: 'team',                   label: 'Team',   full: 'Team',                        w: 'w-[78px]' },
+  { key: 'position',               label: 'Pos',    full: 'Position',                    w: 'w-[60px]' },
+  { key: 'fantasy_score',          label: 'FS',     full: 'Fantasy Score (per game)',    w: 'w-[68px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'points_per_game',        label: 'PPG',    full: 'Points Per Game',             w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'rebounds_per_game',      label: 'RPG',    full: 'Rebounds Per Game',           w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'assists_per_game',       label: 'APG',    full: 'Assists Per Game',            w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'steals_per_game',        label: 'SPG',    full: 'Steals Per Game',             w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'blocks_per_game',        label: 'BPG',    full: 'Blocks Per Game',             w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'field_goal_percentage',  label: 'FG%',    full: 'Field Goal %',                w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'three_point_percentage', label: '3P%',    full: '3-Point %',                   w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'free_throw_percentage',  label: 'FT%',    full: 'Free Throw %',                w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'turnovers_per_game',     label: 'TOV',    full: 'Turnovers Per Game',          w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'minutes_per_game',       label: 'MIN',    full: 'Minutes Per Game',            w: 'w-[64px]', format: (v) => Number(v).toFixed(1) },
+  { key: 'games_played',           label: 'GP',     full: 'Games Played',                w: 'w-[58px]' },
 ];
 
 // Sum of all column widths + ~40px for the optional compare checkbox.
@@ -137,6 +135,7 @@ export const PlayerTable = ({ players, onSelect, selectedForCompare = [], onTogg
                 <th
                   key={col.key}
                   onClick={() => handleSort(col.key)}
+                  title={col.full}
                   className={`cursor-pointer select-none whitespace-nowrap ${col.w}`}
                 >
                   <span className="inline-flex items-center gap-1">
