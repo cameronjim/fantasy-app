@@ -127,9 +127,14 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
  *   3. Brand new           -> create user (username derived from email)
  */
 router.post('/google', async (req: Request, res: Response): Promise<void> => {
-  const { credential } = req.body;
-  if (!credential) {
-    res.status(400).json({ error: 'credential is required' });
+  // Two flows supported:
+  //   `credential`   — ID token from the GoogleLogin button (one-tap / default)
+  //   `access_token` — from useGoogleLogin implicit flow with select_account
+  //                    prompt, used when the user wants to pick a different
+  //                    Google account on a device where they're already logged in.
+  const { credential, access_token: accessToken } = req.body;
+  if (!credential && !accessToken) {
+    res.status(400).json({ error: 'credential or access_token is required' });
     return;
   }
   if (!process.env.GOOGLE_CLIENT_ID) {
@@ -137,26 +142,58 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  let payload;
+  let googleId: string | undefined;
+  let email: string | undefined;
+
   try {
-    const ticket = await googleClient.verifyIdToken({
-      idToken: credential,
-      audience: process.env.GOOGLE_CLIENT_ID,
-    });
-    payload = ticket.getPayload();
+    if (credential) {
+      const ticket = await googleClient.verifyIdToken({
+        idToken: credential,
+        audience: process.env.GOOGLE_CLIENT_ID,
+      });
+      const payload = ticket.getPayload();
+      googleId = payload?.sub;
+      email = payload?.email?.toLowerCase();
+    } else if (accessToken) {
+      // Verify the access_token came from our client by hitting Google's
+      // tokeninfo endpoint. The response includes sub and email so we don't
+      // need a second userinfo call.
+      const tokenInfoRes = await fetch(
+        `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(accessToken)}`
+      );
+      if (!tokenInfoRes.ok) {
+        res.status(401).json({ error: 'Invalid Google access token' });
+        return;
+      }
+      const info = await tokenInfoRes.json() as {
+        aud?: string;
+        sub?: string;
+        email?: string;
+        email_verified?: string | boolean;
+      };
+      // Critical: only trust tokens issued for OUR client. Otherwise anyone
+      // with a valid Google token from any app could log in as that user here.
+      if (info.aud !== process.env.GOOGLE_CLIENT_ID) {
+        res.status(401).json({ error: 'Access token was not issued for this app' });
+        return;
+      }
+      if (String(info.email_verified) !== 'true') {
+        res.status(401).json({ error: 'Google email is not verified' });
+        return;
+      }
+      googleId = info.sub;
+      email = info.email?.toLowerCase();
+    }
   } catch (err) {
-    console.error('Google verifyIdToken failed:', err);
+    console.error('Google credential verification failed:', err);
     res.status(401).json({ error: 'Invalid Google credential' });
     return;
   }
 
-  if (!payload?.email || !payload.sub) {
-    res.status(401).json({ error: 'Google token missing required fields' });
+  if (!googleId || !email) {
+    res.status(401).json({ error: 'Google credential missing required fields' });
     return;
   }
-
-  const googleId = payload.sub;
-  const email = payload.email.toLowerCase();
 
   try {
     // Branch 1: already linked to this google_id?

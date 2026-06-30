@@ -323,19 +323,21 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
                       its cells, which would make the row stand out wrong.
                       A subtle background tint is the only visual separator. */}
                   <tr className="bg-base-300/40">
-                    <td className="font-medium whitespace-nowrap">
-                      {/* Spacer matches the avatar circles in the rows above
-                          (w-6 + gap-2 = 32px) so "AVG" lines up with the
-                          first letter of each player's name. */}
+                    <td className="font-medium whitespace-nowrap text-xs">
+                      {/* Spacer is w-6 h-6 — same dimensions as the avatar
+                          circles in the player rows above. Same width keeps
+                          "AVG" aligned with the first letter of names; same
+                          height keeps the row visually the same size as body
+                          rows so the text doesn't appear proportionally larger. */}
                       <span className="flex items-center gap-2">
-                        <span className="w-6 flex-shrink-0" />
+                        <span className="w-6 h-6 flex-shrink-0" />
                         AVG
                       </span>
                     </td>
-                    <td />
-                    <td />
+                    <td className="text-xs" />
+                    <td className="text-xs" />
                     {AVG_CATEGORIES.map((cat) => (
-                      <td key={cat.key as string}>
+                      <td key={cat.key as string} className="text-xs">
                         {formatAvg(rosterAverages[cat.key as string], cat)}
                       </td>
                     ))}
