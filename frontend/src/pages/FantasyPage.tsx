@@ -265,7 +265,7 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
                 </thead>
                 <tbody>
                   {sortedRoster.map((p) => (
-                    <tr key={p.id} className="hover">
+                    <tr key={`player-${p.id}`} className="hover">
                       <td className="font-medium whitespace-nowrap">
                         <span className="flex items-center gap-2">
                           <div className="avatar">
@@ -318,14 +318,15 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
                       )}
                     </tr>
                   ))}
-                </tbody>
-                {/* Team averages row — same font/size as the body rows so the
-                    numbers read as part of the table, not a callout. */}
-                <tfoot>
+                  {/* Team averages row — kept inside <tbody> so it inherits
+                      body font/size. daisyUI's <tfoot> CSS bolds and shrinks
+                      its cells, which would make the row stand out wrong.
+                      A subtle background tint is the only visual separator. */}
                   <tr className="bg-base-300/40">
                     <td className="font-medium whitespace-nowrap">
-                      {/* Empty spacer matches the avatar slot (w-6 + gap-2)
-                          so "AVG" lines up under the players' first names. */}
+                      {/* Spacer matches the avatar circles in the rows above
+                          (w-6 + gap-2 = 32px) so "AVG" lines up with the
+                          first letter of each player's name. */}
                       <span className="flex items-center gap-2">
                         <span className="w-6 flex-shrink-0" />
                         AVG
@@ -340,7 +341,7 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
                     ))}
                     {isLoggedIn && <td />}
                   </tr>
-                </tfoot>
+                </tbody>
               </table>
             </div>
           )}

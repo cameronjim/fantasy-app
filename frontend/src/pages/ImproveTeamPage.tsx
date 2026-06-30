@@ -24,6 +24,7 @@ export const ImproveTeamPage = ({ isLoggedIn }: ImproveTeamPageProps) => {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [emptyRoster, setEmptyRoster] = useState(false);
 
   const loadSuggestions = useCallback(async (refresh = false): Promise<void> => {
     if (refresh) setRefreshing(true);
@@ -35,7 +36,12 @@ export const ImproveTeamPage = ({ isLoggedIn }: ImproveTeamPageProps) => {
       setWaiverPickups(data.waiver_pickups || []);
       setSummary(data.summary || '');
       setCachedAt(data.cached_at || null);
-      setCachedSuggestions(data);
+      setEmptyRoster(!!data.empty_roster);
+      // Don't pollute the client cache with the empty-roster response — once
+      // the user adds players we want a fresh AI call, not a stale empty.
+      if (!data.empty_roster) {
+        setCachedSuggestions(data);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load suggestions');
     } finally {
@@ -91,6 +97,15 @@ export const ImproveTeamPage = ({ isLoggedIn }: ImproveTeamPageProps) => {
               <div className="card-body flex flex-col items-center py-16 gap-4">
                 <p className="text-error text-sm">{error}</p>
                 <button onClick={() => loadSuggestions()} className="btn btn-primary btn-sm">Try Again</button>
+              </div>
+            </div>
+          ) : emptyRoster ? (
+            <div className="card bg-base-200">
+              <div className="card-body flex flex-col items-center py-16 gap-2 text-center">
+                <p className="font-semibold text-sm">Add players to your team first</p>
+                <p className="text-xs opacity-60 max-w-xs">
+                  Go to <span className="font-medium">My Team</span> and add a few players. We'll suggest trades and waiver pickups based on your roster's weak categories.
+                </p>
               </div>
             </div>
           ) : (
