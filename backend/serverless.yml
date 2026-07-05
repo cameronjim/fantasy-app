@@ -1,5 +1,10 @@
 service: fantasy-nba-api
 
+# pin to serverless framework v3. v4 requires a serverless.com account
+# and access key; v3 stays free for personal use and is feature-complete
+# for this app. if v3 ever stops working, switch to v4 + license key.
+frameworkVersion: '3'
+
 provider:
   name: aws
   runtime: nodejs22.x
