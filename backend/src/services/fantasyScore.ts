@@ -18,7 +18,17 @@ import { query } from '../db.js';
  * Cached for an hour to amortize the recompute across many requests.
  */
 
-function fantasyPoints(p: { points_per_game: number; rebounds_per_game: number; assists_per_game: number; steals_per_game: number; blocks_per_game: number; three_pointers_made: number; turnovers_per_game: number }): number {
+export interface FantasyStatLine {
+  points_per_game: number;
+  rebounds_per_game: number;
+  assists_per_game: number;
+  steals_per_game: number;
+  blocks_per_game: number;
+  three_pointers_made: number;
+  turnovers_per_game: number;
+}
+
+export function fantasyPoints(p: FantasyStatLine): number {
   return (
     p.points_per_game +
     1.2 * p.rebounds_per_game +
@@ -28,6 +38,23 @@ function fantasyPoints(p: { points_per_game: number; rebounds_per_game: number; 
     1 * p.three_pointers_made -
     1 * p.turnovers_per_game
   );
+}
+
+// minimum volume to receive a meaningful rank. below this a player has played
+// too little to compare against rotation regulars — their score is null so the
+// FS column shows "-" instead of a misleading "47.8" from a tiny sample.
+export const MIN_GAMES_FOR_RANK = 15;
+export const MIN_MIN_FOR_RANK = 12;
+
+// per-game fantasy score for one player, or null if the player hasn't played
+// enough to be ranked. pulled out of the cached load path so unit tests can
+// exercise the scoring rules without a database.
+export function scorePlayer(
+  stats: FantasyStatLine & { games_played: number; minutes_per_game: number }
+): number | null {
+  if (stats.games_played < MIN_GAMES_FOR_RANK) return null;
+  if (stats.minutes_per_game < MIN_MIN_FOR_RANK) return null;
+  return Math.round(fantasyPoints(stats) * 10) / 10;
 }
 
 export interface PlayerWithScore {
@@ -64,12 +91,6 @@ interface CacheEntry {
 let cache: CacheEntry | null = null;
 const TTL_MS = 60 * 60 * 1000;
 
-// Minimum volume to receive a meaningful rank. Below this a player has played
-// too little to compare against rotation regulars — their score is null so the
-// FS column shows "-" instead of a misleading "47.8" from a tiny sample.
-const MIN_GAMES_FOR_RANK = 15;
-const MIN_MIN_FOR_RANK = 12;
-
 async function compute(): Promise<{ ranked: PlayerWithScore[]; byId: Map<number, PlayerWithScore> }> {
   const all = await query(`
     SELECT id, nba_id, name, team, position,
@@ -105,10 +126,7 @@ async function compute(): Promise<{ ranked: PlayerWithScore[]; byId: Map<number,
       turnovers_per_game: Number(p.turnovers_per_game) || 0,
     };
 
-    let score: number | null = null;
-    if (gp >= MIN_GAMES_FOR_RANK && mpg >= MIN_MIN_FOR_RANK) {
-      score = Math.round(fantasyPoints(stats) * 10) / 10;
-    }
+    const score = scorePlayer({ ...stats, games_played: gp, minutes_per_game: mpg });
 
     return {
       id: Number(p.id),

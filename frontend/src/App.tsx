@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { GoogleOAuthProvider } from '@react-oauth/google';
-import Navbar from './components/Navbar';
+import { Navbar } from './components/Navbar';
 import { StatsPage } from './pages/StatsPage';
 import { FantasyPage } from './pages/FantasyPage';
 import { ImproveTeamPage } from './pages/ImproveTeamPage';
@@ -13,7 +13,7 @@ import { ChangePasswordPage } from './pages/ChangePasswordPage';
 import { PreferencesPage } from './pages/PreferencesPage';
 import { getAuthToken, setAuthToken } from './api/client';
 
-export const App = () => {
+export const App = (): JSX.Element => {
   const [isLoggedIn, setIsLoggedIn] = useState(() => !!getAuthToken());
 
   const handleLogout = (): void => {

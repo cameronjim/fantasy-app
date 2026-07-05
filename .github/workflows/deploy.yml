@@ -1,0 +1,140 @@
+name: Deploy
+
+# fires on every push to main, AFTER the ci workflow runs and passes.
+# the `workflow_run` trigger means: when the workflow named "CI" finishes
+# for a commit on main, start this one. if ci fails, deploy never runs.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+# prevent overlapping deploys for the same branch — if two pushes land
+# back-to-back, the second one waits for the first to finish (don't cancel
+# mid-deploy or you'll leave the lambda half-updated).
+concurrency:
+  group: deploy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-backend:
+    name: Deploy backend to Lambda
+    # only run if ci succeeded. workflow_run fires on every completion so we
+    # must check the conclusion explicitly.
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write       # required for oidc trust with aws
+      contents: read
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Serverless deploy
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          FRONTEND_URL: ${{ vars.PROD_FRONTEND_URL }}
+          FROM_EMAIL: ${{ vars.FROM_EMAIL }}
+        run: npx serverless deploy --stage prod
+
+  deploy-frontend:
+    name: Deploy frontend to S3 + CloudFront
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build for production
+        env:
+          # vite bakes env vars into the bundle at build time — these must be
+          # set BEFORE `npm run build`. they end up in the static js, so don't
+          # put real secrets here.
+          VITE_API_URL: ${{ vars.PROD_API_URL }}
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
+        run: npm run build
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      # vite emits content-hashed assets under dist/assets/ — safe to cache
+      # forever. anything outside dist/assets/ (index.html, favicon, etc.)
+      # must be no-cache so users see the new bundle after deploy.
+      - name: Upload hashed assets (immutable, long cache)
+        run: |
+          aws s3 sync dist/assets/ "s3://${{ vars.S3_BUCKET }}/assets/" \
+            --cache-control "public, max-age=31536000, immutable" \
+            --delete
+
+      - name: Upload root files (no cache)
+        run: |
+          aws s3 sync dist/ "s3://${{ vars.S3_BUCKET }}/" \
+            --cache-control "public, max-age=0, must-revalidate" \
+            --exclude "assets/*" \
+            --delete
+
+      - name: Invalidate CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}" \
+            --paths "/index.html" "/"
+
+  smoke-test:
+    name: Post-deploy smoke test
+    needs: [deploy-backend, deploy-frontend]
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hit /api/health
+        run: |
+          curl -fsS --max-time 10 "${{ vars.PROD_API_URL }}/api/health" \
+            | jq -e '.status == "ok"'
+
+      - name: Fetch index.html
+        run: |
+          curl -fsS --max-time 10 "${{ vars.PROD_FRONTEND_URL }}/" \
+            | grep -q '<div id="root">'

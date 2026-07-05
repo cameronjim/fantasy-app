@@ -85,8 +85,7 @@ export async function getCurrentBenchmarks(): Promise<Benchmarks> {
     };
     cache = { data: benchmarks, fetchedAt: Date.now() };
     return benchmarks;
-  } catch (err) {
-    console.error('benchmarks: query failed, using fallback:', err);
+  } catch {
     return FALLBACK;
   }
 }

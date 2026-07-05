@@ -56,8 +56,7 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
 
     const reply = await callClaude(systemPrompt, messages, { model: 'claude-sonnet-4-6', maxTokens: 1024 });
     res.json({ reply });
-  } catch (error) {
-    console.error('chat error:', error);
+  } catch {
     res.status(500).json({ error: 'Failed to process chat' });
   }
 });
@@ -145,7 +144,6 @@ You MUST include at least 2 entries in each of strengths, weaknesses, and sugges
         (analysis.suggestions ?? []).length === 0;
 
       if (empty) {
-        console.warn('team-analysis: model returned empty analysis, not caching. raw:', reply.slice(0, 300));
         res.json({ ...analysis, _empty: true });
         return;
       }
@@ -160,12 +158,10 @@ You MUST include at least 2 entries in each of strengths, weaknesses, and sugges
         [userId, cacheKey, JSON.stringify(analysis)]
       );
       res.json(analysis);
-    } catch (parseErr) {
-      console.error('team-analysis: JSON parse failed. raw response (first 500 chars):', reply.slice(0, 500), 'error:', parseErr);
+    } catch {
       res.json({ raw_analysis: reply, strengths: [], weaknesses: [], suggestions: [], categories: {} });
     }
-  } catch (error) {
-    console.error('team-analysis error:', error);
+  } catch {
     res.status(500).json({ error: 'Failed to analyze team' });
   }
 });
@@ -250,7 +246,6 @@ Return ONLY valid JSON.`;
       // Don't cache an empty result — let a refresh re-prompt the model.
       const empty = suggestions.trade_targets.length === 0 && suggestions.waiver_pickups.length === 0;
       if (empty) {
-        console.warn('waiver-suggestions: model returned no picks, not caching. raw:', reply.slice(0, 300));
         res.json({ ...suggestions, _empty: true });
         return;
       }
@@ -265,12 +260,10 @@ Return ONLY valid JSON.`;
         [userId, cacheKey, JSON.stringify(suggestions)]
       );
       res.json(suggestions);
-    } catch (parseErr) {
-      console.error('waiver-suggestions: JSON parse failed. raw response (first 500 chars):', reply.slice(0, 500), 'error:', parseErr);
+    } catch {
       res.json({ raw: reply, trade_targets: [], waiver_pickups: [], summary: '' });
     }
-  } catch (error) {
-    console.error('waiver-suggestions error:', error);
+  } catch {
     res.status(500).json({ error: 'Failed to generate suggestions' });
   }
 });

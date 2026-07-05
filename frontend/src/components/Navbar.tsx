@@ -14,7 +14,7 @@ const tabs = [
   { to: '/improve', label: 'Improve Team', icon: TrendingUp },
 ];
 
-export default function Navbar({ isLoggedIn, onLogout }: NavbarProps) {
+export function Navbar({ isLoggedIn, onLogout }: NavbarProps): JSX.Element {
   const navigate = useNavigate();
   const location = useLocation();
   const { theme, toggle: toggleTheme } = useTheme();
