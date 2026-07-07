@@ -58,7 +58,13 @@
         "s3:PutBucketPolicy",
         "s3:GetBucketPolicy",
         "s3:PutBucketVersioning",
-        "s3:GetBucketVersioning"
+        "s3:GetBucketVersioning",
+        "s3:PutBucketTagging",
+        "s3:GetBucketTagging",
+        "s3:PutEncryptionConfiguration",
+        "s3:GetEncryptionConfiguration",
+        "s3:PutBucketPublicAccessBlock",
+        "s3:GetBucketPublicAccessBlock"
       ],
       "Resource": [
         "arn:aws:s3:::fantasy-nba-api-prod-serverlessdeploymentbucket-*",
