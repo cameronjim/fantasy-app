@@ -298,8 +298,8 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
                           {p.name}{injuryBadge(p.injury_status)}
                         </span>
                       </td>
-                      <td className="opacity-60">{p.position}</td>
-                      <td className="opacity-60">
+                      <td>{p.position}</td>
+                      <td>
                         <span className="flex items-center gap-1.5">
                           {(() => {
                             const logo = getTeamLogoUrl(p.team);
