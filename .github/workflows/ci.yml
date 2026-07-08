@@ -127,7 +127,6 @@ jobs:
     permissions:
       id-token: write        # required for aws oidc role assumption
       contents: read
-      pull-requests: write   # for posting the preview-url comment
     steps:
       - uses: actions/checkout@v4
 
@@ -197,45 +196,7 @@ jobs:
             --distribution-id "${{ vars.DEV_CLOUDFRONT_DISTRIBUTION_ID }}" \
             --paths "/index.html" "/"
 
-      # post a sticky comment on the pr with the preview urls. updates an
-      # existing comment if one exists rather than spamming the pr on every
-      # push.
-      - name: Comment preview URL on PR
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const frontendUrl = '${{ vars.DEV_FRONTEND_URL }}';
-            const apiUrl = '${{ vars.DEV_API_URL }}';
-            const sha = context.payload.pull_request.head.sha.substring(0, 7);
-            const marker = '<!-- preview-deploy-bot -->';
-            const body =
-              marker + '\n' +
-              '🚀 **Preview deployed**\n\n' +
-              `- Frontend: ${frontendUrl}\n` +
-              `- API health: ${apiUrl}/api/health\n` +
-              `- Commit: \`${sha}\`\n\n` +
-              '_Shared dev environment — the most recent PR push wins. ' +
-              'Merge to `main` deploys to production._';
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-            const existing = comments.find((c) => c.body && c.body.includes(marker));
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body,
-              });
-            }
+      # the dev environment is at a fixed url (DEV_FRONTEND_URL), so we don't
+      # need to post a comment on the pr to find it — just visit the url after
+      # the workflow goes green. removed the bot-comment step to keep prs
+      # uncluttered.
