@@ -9,6 +9,14 @@
 
 import { query } from '../db.js';
 
+export interface BettingPreferences {
+  risk_appetite?: 'conservative' | 'balanced' | 'aggressive';
+  preferred_markets?: Array<'spread' | 'total' | 'moneyline' | 'parlay'>;
+  bankroll?: number; // dollars the user is willing to play with
+  unit_size?: number; // typical single-bet size in dollars
+  extra_notes?: string; // freeform betting context ("I like unders", etc.)
+}
+
 export interface AIPreferences {
   risk_tolerance?: 'avoid_injured' | 'balanced' | 'high_upside';
   player_age_pref?: 'veterans' | 'balanced' | 'young_upside';
@@ -25,10 +33,12 @@ export interface AIPreferences {
   bench_philosophy?: 'high_upside_stash' | 'safe_role_players' | 'streaming_slots';
   position_needs?: string[]; // subset of ['PG','SG','SF','PF','C']
   extra_notes?: string; // freeform user notes
+  betting?: BettingPreferences;
 }
 
 export const VALID_CATEGORIES = ['PTS', 'REB', 'AST', 'STL', 'BLK', 'FG%', 'FT%', '3PM', 'TO'];
 export const VALID_POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
+export const VALID_BET_MARKETS = ['spread', 'total', 'moneyline', 'parlay'];
 
 /** Loads a user's preferences from the DB. Returns {} if none set. */
 export async function getUserPreferences(userId: number): Promise<AIPreferences> {
@@ -37,7 +47,39 @@ export async function getUserPreferences(userId: number): Promise<AIPreferences>
   return (result.rows[0].ai_preferences as AIPreferences) ?? {};
 }
 
-/** Validates and saves preferences. Strips out unknown keys. */
+/** Validates the betting sub-object. Strips unknown keys and junk values. */
+function cleanBettingPreferences(betting: BettingPreferences): BettingPreferences {
+  const cleaned: BettingPreferences = {};
+
+  if (['conservative', 'balanced', 'aggressive'].includes(betting.risk_appetite ?? '')) {
+    cleaned.risk_appetite = betting.risk_appetite;
+  }
+  if (Array.isArray(betting.preferred_markets)) {
+    cleaned.preferred_markets = betting.preferred_markets.filter((m) =>
+      VALID_BET_MARKETS.includes(m)
+    );
+  }
+  if (typeof betting.bankroll === 'number' && betting.bankroll > 0 && betting.bankroll <= 1_000_000) {
+    cleaned.bankroll = Math.round(betting.bankroll * 100) / 100;
+  }
+  if (typeof betting.unit_size === 'number' && betting.unit_size > 0 && betting.unit_size <= 1_000_000) {
+    cleaned.unit_size = Math.round(betting.unit_size * 100) / 100;
+  }
+  if (typeof betting.extra_notes === 'string' && betting.extra_notes.length <= 1000) {
+    cleaned.extra_notes = betting.extra_notes.trim();
+  }
+
+  return cleaned;
+}
+
+/**
+ * Validates and saves preferences. Strips out unknown keys.
+ *
+ * Saves are MERGED over the stored prefs: a PATCH carrying only `betting`
+ * must not wipe the fantasy answers (and vice versa). Keys present in the
+ * payload replace the stored value wholesale — `betting` included — while
+ * absent keys are left untouched.
+ */
 export async function setUserPreferences(userId: number, prefs: AIPreferences): Promise<void> {
   const cleaned: AIPreferences = {};
 
@@ -86,10 +128,16 @@ export async function setUserPreferences(userId: number, prefs: AIPreferences): 
   if (typeof prefs.extra_notes === 'string' && prefs.extra_notes.length <= 1000) {
     cleaned.extra_notes = prefs.extra_notes.trim();
   }
+  if (prefs.betting && typeof prefs.betting === 'object') {
+    cleaned.betting = cleanBettingPreferences(prefs.betting);
+  }
+
+  const existing = await getUserPreferences(userId);
+  const merged = { ...existing, ...cleaned };
 
   await query(
     'UPDATE users SET ai_preferences = $1 WHERE id = $2',
-    [JSON.stringify(cleaned), userId]
+    [JSON.stringify(merged), userId]
   );
 }
 
@@ -217,4 +265,41 @@ export function buildPreferencesPromptBlock(prefs: AIPreferences): string {
 
   if (lines.length === 0) return '';
   return `\n\nUSER STRATEGY PREFERENCES (must follow):\n${lines.join('\n')}\n`;
+}
+
+/**
+ * Renders betting prefs into a prompt block for the betting analyst persona.
+ * Same contract as buildPreferencesPromptBlock: empty string when unset.
+ * Bankroll and unit size are deliberately NOT included — stake sizing is
+ * computed server-side at serve time, and keeping money out of the prompt
+ * keeps it out of the AI picks cache key.
+ */
+export function buildBettingPromptBlock(prefs: AIPreferences): string {
+  const betting = prefs.betting;
+  if (!betting) return '';
+
+  const lines: string[] = [];
+
+  switch (betting.risk_appetite) {
+    case 'conservative':
+      lines.push('- Risk appetite: conservative. Favor Safe picks with modest, defensible edges. Keep hail-mary suggestions to a minimum and say so when a slate offers nothing safe.');
+      break;
+    case 'aggressive':
+      lines.push('- Risk appetite: aggressive. The user enjoys underdogs and high-variance plays — surface more hail-mary and plus-money picks.');
+      break;
+    case 'balanced':
+      lines.push('- Risk appetite: balanced. Mix safe and value plays; include a hail mary only when genuinely interesting.');
+      break;
+  }
+
+  if (betting.preferred_markets && betting.preferred_markets.length > 0) {
+    lines.push(`- Preferred bet types: ${betting.preferred_markets.join(', ')}. Weight picks toward these markets.`);
+  }
+
+  if (betting.extra_notes && betting.extra_notes.length > 0) {
+    lines.push(`- Additional betting notes from the user: ${betting.extra_notes}`);
+  }
+
+  if (lines.length === 0) return '';
+  return `\n\nUSER BETTING PREFERENCES (must follow):\n${lines.join('\n')}\n`;
 }

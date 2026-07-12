@@ -1,4 +1,4 @@
-import type { TeamAnalysis } from '../types';
+import type { TeamAnalysis, BettingPicksResponse } from '../types';
 
 /**
  * Client-side caches for the two slow AI endpoints. Module-level so they
@@ -26,6 +26,7 @@ interface Suggestions {
 
 let analysis: CacheEntry<TeamAnalysis> | null = null;
 let suggestions: CacheEntry<Suggestions> | null = null;
+let bettingPicks: CacheEntry<BettingPicksResponse> | null = null;
 
 // 30 minutes — generous because we explicitly invalidate on the events that
 // actually matter (roster mutation, prefs save). The TTL is just a safety net.
@@ -49,6 +50,19 @@ export function getCachedSuggestions(): Suggestions | null {
 
 export function setCachedSuggestions(data: Suggestions): void {
   suggestions = { data, fetchedAt: Date.now() };
+}
+
+export function getCachedBettingPicks(): BettingPicksResponse | null {
+  return isFresh(bettingPicks) ? bettingPicks!.data : null;
+}
+
+export function setCachedBettingPicks(data: BettingPicksResponse): void {
+  bettingPicks = { data, fetchedAt: Date.now() };
+}
+
+/** Wipe just the betting picks — call after a betting-prefs save or refresh. */
+export function invalidateBettingClientCache(): void {
+  bettingPicks = null;
 }
 
 /** Wipe both caches. Call when the underlying data definitely changed. */

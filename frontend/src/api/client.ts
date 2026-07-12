@@ -1,5 +1,8 @@
 import axios from 'axios';
-import type { Player, Team, Game, RosterPlayer, ChatMessage, TeamAnalysis } from '../types';
+import type {
+  Player, Team, Game, RosterPlayer, ChatMessage, TeamAnalysis,
+  BettingGame, BettingPicksResponse, Bet, NewBet, LedgerSummary,
+} from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
@@ -98,6 +101,14 @@ export async function updateProfile(updates: ProfileUpdate): Promise<CurrentUser
   return data;
 }
 
+export interface BettingPreferences {
+  risk_appetite?: 'conservative' | 'balanced' | 'aggressive';
+  preferred_markets?: Array<'spread' | 'total' | 'moneyline' | 'parlay'>;
+  bankroll?: number;
+  unit_size?: number;
+  extra_notes?: string;
+}
+
 export interface AIPreferences {
   risk_tolerance?: 'avoid_injured' | 'balanced' | 'high_upside';
   player_age_pref?: 'veterans' | 'balanced' | 'young_upside';
@@ -114,6 +125,7 @@ export interface AIPreferences {
   bench_philosophy?: 'high_upside_stash' | 'safe_role_players' | 'streaming_slots';
   position_needs?: string[];
   extra_notes?: string;
+  betting?: BettingPreferences;
 }
 
 export async function getPreferences(): Promise<AIPreferences> {
@@ -193,4 +205,28 @@ export async function getTeamAnalysis(): Promise<TeamAnalysis> {
 export async function getWaiverSuggestions(refresh?: boolean): Promise<{ trade_targets: Array<{name: string; reasoning: string}>; waiver_pickups: Array<{name: string; reasoning: string}>; summary: string; cached?: boolean; cached_at?: string; empty_roster?: boolean }> {
   const { data } = await api.get('/ai/waiver-suggestions', { params: refresh ? { refresh: 'true' } : {} });
   return data;
+}
+
+export async function getBettingOdds(): Promise<{ games: BettingGame[]; fetched_at: string }> {
+  const { data } = await api.get('/betting/odds');
+  return data;
+}
+
+export async function getBettingPicks(refresh?: boolean): Promise<BettingPicksResponse> {
+  const { data } = await api.get('/betting/picks', { params: refresh ? { refresh: 'true' } : {} });
+  return data;
+}
+
+export async function getBets(): Promise<{ bets: Bet[]; summary: LedgerSummary }> {
+  const { data } = await api.get('/betting/bets');
+  return data;
+}
+
+export async function createBet(bet: NewBet): Promise<Bet> {
+  const { data } = await api.post('/betting/bets', bet);
+  return data;
+}
+
+export async function deleteBet(id: number): Promise<void> {
+  await api.delete(`/betting/bets/${id}`);
 }
