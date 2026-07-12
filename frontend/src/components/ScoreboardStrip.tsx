@@ -115,15 +115,13 @@ export const ScoreboardStrip = () => {
     return acc;
   }, {});
 
-  const sortedDates = Object.keys(grouped).sort((a, b) => a.localeCompare(b));
+  // always include today in the scoreboard so the auto-scroll has a stable
+  // anchor. without this, an off-season day (or any day where the scraper
+  // hasn't picked up new games) leaves the user looking at the oldest date
+  // with no signal that "today" is real and just has no games.
+  if (!grouped[todayIso]) grouped[todayIso] = [];
 
-  if (games.length === 0) {
-    return (
-      <div className="bg-base-200 border-b border-base-300 py-3 px-4 flex items-center justify-center">
-        <p className="text-sm opacity-40">No games available</p>
-      </div>
-    );
-  }
+  const sortedDates = Object.keys(grouped).sort((a, b) => a.localeCompare(b));
 
   return (
     <div className="bg-base-200 border-b border-base-300 relative">
@@ -144,6 +142,14 @@ export const ScoreboardStrip = () => {
               <div className="text-[10px] font-bold opacity-40 uppercase tracking-wider">{formatDate(date)}</div>
               <div className="text-[10px] opacity-25">{date}</div>
             </div>
+
+            {grouped[date].length === 0 && (
+              <div className="card card-compact bg-base-300/50 flex-shrink-0 min-w-[200px] border border-dashed border-base-300">
+                <div className="card-body items-center justify-center text-center">
+                  <p className="text-xs opacity-50">No games scheduled</p>
+                </div>
+              </div>
+            )}
 
             {grouped[date].map((game) => {
               const isLive = game.status.toLowerCase() === 'in progress';
