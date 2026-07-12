@@ -252,12 +252,10 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-/**
- * Change password (for users who already have one) OR set initial password
- * (for google-signin users who don't). The `currentPassword` field is only
- * required when the user already has a password — verified via the hash
- * lookup below, not the client.
- */
+// change password for existing-password users, OR set initial password for
+// google-signin users who have none. currentPassword is only required when
+// the user already has a password — the check uses the hash on disk, not
+// what the client claims.
 router.patch('/change-password', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const { currentPassword, newPassword } = req.body;
   const userId = (req as AuthRequest).userId;
@@ -371,6 +369,22 @@ router.patch('/profile', requireAuth, async (req: Request, res: Response): Promi
     email?: string;
     phone?: string;
   };
+
+  // reject explicit nulls and non-string types up front. without this guard
+  // each branch below would either crash (e.g. `null.trim()` throws a
+  // typeerror) or silently coerce. require a string per field that's
+  // actually being updated.
+  for (const [key, value] of [
+    ['username', username],
+    ['name', name],
+    ['email', email],
+    ['phone', phone],
+  ] as const) {
+    if (value !== undefined && typeof value !== 'string') {
+      res.status(400).json({ error: `${key} must be a string` });
+      return;
+    }
+  }
 
   if (username !== undefined) {
     const trimmed = username.trim();

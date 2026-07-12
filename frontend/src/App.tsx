@@ -11,6 +11,7 @@ import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { PreferencesPage } from './pages/PreferencesPage';
+import { AboutPage } from './pages/AboutPage';
 import { getAuthToken, setAuthToken } from './api/client';
 
 export const App = (): JSX.Element => {
@@ -47,6 +48,7 @@ export const App = (): JSX.Element => {
               {/* legacy route — redirect to the Change Password tab inside /profile. */}
               <Route path="/change-password" element={<Navigate to="/profile#password" replace />} />
               <Route path="/preferences" element={<PreferencesPage />} />
+              <Route path="/about" element={<AboutPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </main>

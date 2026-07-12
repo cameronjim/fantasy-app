@@ -3,29 +3,16 @@
   themes: lofi --default, business --prefersdark;
 }
 
-/* ----------------------------------------------------------------------
- * brand colors — single source of truth for the app's palette.
- *
- * the rule: any time a component reaches for "the brand green" or "the
- * brand red," it should use `text-success` / `bg-success` / `text-error`
- * / `bg-error` (daisyui utility classes), which cascade through the
- * theme variables below. do NOT hardcode tailwind colors like
- * `bg-emerald-500` or `bg-red-500` inside components — that creates
- * the kind of "almost-the-same" green/red drift this block exists
- * to prevent.
- * ---------------------------------------------------------------------- */
-
+/* brand colors — single source of truth. components should use daisyui's
+   `success` / `error` utility classes (text-success, bg-success, etc.) so
+   any palette change propagates through these variables. do not hardcode
+   tailwind palette colors like `bg-emerald-500` or `bg-red-500` inside
+   components. */
 :root {
-  /* tailwind emerald-500. picked because it's darker / more visible than
-     daisyui's default success in light mode and matches the data-fresh
-     dot in the navbar. */
-  --brand-green: #10b981;
-  /* tailwind red-500. matches the look of the existing error toast. */
-  --brand-red: #ef4444;
+  --brand-green: #10b981; /* tailwind emerald-500 — darker / more visible than daisyui's default success */
+  --brand-red: #ef4444;   /* tailwind red-500 — matches the original error-toast look */
 }
 
-/* override both themes' success + error colors so every daisyui
-   `success` / `error` utility class uses the brand value. */
 [data-theme="lofi"],
 [data-theme="business"] {
   --color-success: var(--brand-green);
