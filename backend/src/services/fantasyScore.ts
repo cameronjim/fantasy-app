@@ -1,22 +1,22 @@
 import { query } from '../db.js';
 
-/**
- * Fantasy points per game, using the industry-standard NBA weighting:
- *
- *   FP = PTS + 1.2·REB + 1.5·AST + 3·STL + 3·BLK + 1·3PM − 1·TOV
- *
- * This is the same formula used by NBA.com (NBA_FANTASY_PTS), FanDuel,
- * and most "fantasy rank" articles. Values are interpretable directly —
- * a player putting up 50 FP/g is a top-tier producer, 25-30 is a typical
- * fantasy starter, etc.
- *
- * Note: this formula doesn't directly reward FG%/FT% — those matter in
- * category leagues but not in points-style scoring. For category-league
- * users we can revisit with a z-score variant later if needed; for now
- * matching what other sites publish was the priority.
- *
- * Cached for an hour to amortize the recompute across many requests.
- */
+// fantasy scoring engine. supports the major industry formats — pick one
+// via `ScoringFormat` or compose your own. the global ranking cache uses
+// `NBA_STANDARD` as a sensible default; per-user rankings (driven by the
+// `league_format` preference) will be wired up in a follow-up.
+//
+// industry reference (verified may 2026):
+//
+//   NBA.com (NBA_FANTASY_PTS): PTS·1 + REB·1.2 + AST·1.5 + STL·3 + BLK·3 − TOV·1
+//   FanDuel:                   PTS·1 + REB·1.2 + AST·1.5 + STL·3 + BLK·3 − TOV·1
+//   DraftKings:                PTS·1 + 3PM·0.5 + REB·1.25 + AST·1.5 + STL·2 + BLK·2 − TOV·0.5
+//                              + DD bonus 1.5, TD bonus 3
+//   ESPN H2H points:           PTS·1 + 3PM·1 + REB·1 + AST·2 + STL·4 + BLK·4 − TOV·2
+//                              + FGM·2 − FGA·1 + FTM·1 − FTA·1
+//   Yahoo "High Score":        PTS·1 + REB·1 + AST·2 + STL·3 + BLK·3, no TOV penalty
+//
+// category leagues (9-cat) use z-scores rather than a single number, so
+// they're modeled separately under `zScoreRank()` below.
 
 export interface FantasyStatLine {
   points_per_game: number;
@@ -28,15 +28,118 @@ export interface FantasyStatLine {
   turnovers_per_game: number;
 }
 
-export function fantasyPoints(p: FantasyStatLine): number {
+// optional extras some formats use. exposed separately so a caller with a
+// simple stat line doesn't have to provide them — they're treated as 0
+// when missing, which matches every preset's "stat not in formula" case.
+export interface FantasyStatLineExtras {
+  field_goals_made?: number;
+  field_goals_attempted?: number;
+  free_throws_made?: number;
+  free_throws_attempted?: number;
+  // double-double / triple-double counts per game. only DraftKings uses these.
+  double_doubles_per_game?: number;
+  triple_doubles_per_game?: number;
+}
+
+export interface ScoringFormat {
+  /** human-readable name (used in ai prompts and the ui). */
+  name: string;
+  /** coefficient per stat per game. */
+  pts: number;
+  reb: number;
+  ast: number;
+  stl: number;
+  blk: number;
+  tov: number;
+  threePM: number;
+  fgm: number;
+  fga: number;
+  ftm: number;
+  fta: number;
+  doubleDoubleBonus: number;
+  tripleDoubleBonus: number;
+}
+
+const ZERO_COEFFS = {
+  pts: 0, reb: 0, ast: 0, stl: 0, blk: 0, tov: 0,
+  threePM: 0, fgm: 0, fga: 0, ftm: 0, fta: 0,
+  doubleDoubleBonus: 0, tripleDoubleBonus: 0,
+} as const;
+
+export const NBA_STANDARD: ScoringFormat = {
+  ...ZERO_COEFFS,
+  name: 'NBA Standard',
+  pts: 1.0, reb: 1.2, ast: 1.5, stl: 3.0, blk: 3.0, tov: -1.0,
+};
+
+export const FANDUEL: ScoringFormat = {
+  ...ZERO_COEFFS,
+  name: 'FanDuel',
+  pts: 1.0, reb: 1.2, ast: 1.5, stl: 3.0, blk: 3.0, tov: -1.0,
+};
+
+export const DRAFTKINGS: ScoringFormat = {
+  ...ZERO_COEFFS,
+  name: 'DraftKings',
+  pts: 1.0, threePM: 0.5, reb: 1.25, ast: 1.5, stl: 2.0, blk: 2.0, tov: -0.5,
+  doubleDoubleBonus: 1.5, tripleDoubleBonus: 3.0,
+};
+
+export const ESPN_DEFAULT: ScoringFormat = {
+  ...ZERO_COEFFS,
+  name: 'ESPN H2H Points',
+  pts: 1.0, threePM: 1.0, reb: 1.0, ast: 2.0, stl: 4.0, blk: 4.0, tov: -2.0,
+  fgm: 2.0, fga: -1.0, ftm: 1.0, fta: -1.0,
+};
+
+export const YAHOO_HIGH_SCORE: ScoringFormat = {
+  ...ZERO_COEFFS,
+  name: 'Yahoo High Score',
+  pts: 1.0, reb: 1.0, ast: 2.0, stl: 3.0, blk: 3.0, tov: 0,
+};
+
+// the original formula this app shipped with — NBA standard plus a small
+// 3PM bonus. kept as a named format so anyone who relied on the old scores
+// can opt back in.
+export const APP_LEGACY: ScoringFormat = {
+  ...ZERO_COEFFS,
+  name: 'App Legacy (NBA + 3PM bonus)',
+  pts: 1.0, reb: 1.2, ast: 1.5, stl: 3.0, blk: 3.0, tov: -1.0, threePM: 1.0,
+};
+
+export const SCORING_FORMATS: Readonly<Record<string, ScoringFormat>> = Object.freeze({
+  nba_standard: NBA_STANDARD,
+  fanduel: FANDUEL,
+  draftkings: DRAFTKINGS,
+  espn: ESPN_DEFAULT,
+  yahoo: YAHOO_HIGH_SCORE,
+  app_legacy: APP_LEGACY,
+});
+
+/**
+ * Compute fantasy points for one player under the given scoring format.
+ * Missing optional fields (FGM, FGA, FTM, FTA, DD, TD) are treated as 0 —
+ * formats that don't use them get the right answer either way.
+ */
+export function fantasyPoints(
+  p: FantasyStatLine,
+  format: ScoringFormat = NBA_STANDARD,
+  extras: FantasyStatLineExtras = {}
+): number {
   return (
-    p.points_per_game +
-    1.2 * p.rebounds_per_game +
-    1.5 * p.assists_per_game +
-    3 * p.steals_per_game +
-    3 * p.blocks_per_game +
-    1 * p.three_pointers_made -
-    1 * p.turnovers_per_game
+    p.points_per_game        * format.pts +
+    p.rebounds_per_game      * format.reb +
+    p.assists_per_game       * format.ast +
+    p.steals_per_game        * format.stl +
+    p.blocks_per_game        * format.blk +
+    p.turnovers_per_game     * format.tov +
+    p.three_pointers_made    * format.threePM +
+    (extras.field_goals_made       ?? 0) * format.fgm +
+    (extras.field_goals_attempted  ?? 0) * format.fga +
+    (extras.free_throws_made       ?? 0) * format.ftm +
+    (extras.free_throws_attempted  ?? 0) * format.fta +
+    (extras.double_doubles_per_game ?? 0) * format.doubleDoubleBonus +
+    (extras.triple_doubles_per_game ?? 0) * format.tripleDoubleBonus
   );
 }
 
@@ -50,11 +153,77 @@ export const MIN_MIN_FOR_RANK = 12;
 // enough to be ranked. pulled out of the cached load path so unit tests can
 // exercise the scoring rules without a database.
 export function scorePlayer(
-  stats: FantasyStatLine & { games_played: number; minutes_per_game: number }
+  stats: FantasyStatLine & { games_played: number; minutes_per_game: number },
+  format: ScoringFormat = NBA_STANDARD,
+  extras: FantasyStatLineExtras = {}
 ): number | null {
   if (stats.games_played < MIN_GAMES_FOR_RANK) return null;
   if (stats.minutes_per_game < MIN_MIN_FOR_RANK) return null;
-  return Math.round(fantasyPoints(stats) * 10) / 10;
+  return Math.round(fantasyPoints(stats, format, extras) * 10) / 10;
+}
+
+/**
+ * Z-score-based ranking for category leagues. Returns each player's average
+ * z-score across the 9 standard categories. Higher = better, except TOV
+ * which is sign-flipped before averaging.
+ *
+ * Note: this is a one-shot computation over a slice of players (the
+ * "rotation" pool to compute mean/stddev against). Volume-adjusted FG%/FT%
+ * are NOT implemented yet — the naive percentage is used. A full
+ * basketball-monster-style ranking would weight percentages by attempts
+ * (a 90% FT% on 1 attempt/game is less valuable than 80% on 8 attempts/game);
+ * we'd add that when category-league users actually adopt this.
+ */
+export interface CategoryStatLine extends FantasyStatLine {
+  field_goal_percentage: number;
+  free_throw_percentage: number;
+}
+
+export function zScoreRank<T extends CategoryStatLine>(
+  players: T[]
+): Array<T & { z_score: number }> {
+  if (players.length === 0) return [];
+
+  const mean = (xs: number[]): number => xs.reduce((s, x) => s + x, 0) / xs.length;
+  const stddev = (xs: number[]): number => {
+    const m = mean(xs);
+    const variance = mean(xs.map((x) => (x - m) ** 2));
+    return Math.sqrt(variance);
+  };
+  // safe-divide: if stddev is 0 (all values identical), every player gets 0
+  // for that category instead of NaN/Infinity.
+  const safeZ = (val: number, m: number, sd: number): number =>
+    sd === 0 ? 0 : (val - m) / sd;
+
+  const cats: Array<keyof CategoryStatLine> = [
+    'points_per_game',
+    'rebounds_per_game',
+    'assists_per_game',
+    'steals_per_game',
+    'blocks_per_game',
+    'three_pointers_made',
+    'field_goal_percentage',
+    'free_throw_percentage',
+    'turnovers_per_game',
+  ];
+
+  // precompute mean + stddev per category from the supplied pool.
+  const stats = new Map<keyof CategoryStatLine, { m: number; sd: number }>();
+  for (const cat of cats) {
+    const values = players.map((p) => p[cat]);
+    stats.set(cat, { m: mean(values), sd: stddev(values) });
+  }
+
+  return players.map((p) => {
+    let total = 0;
+    for (const cat of cats) {
+      const s = stats.get(cat)!;
+      const z = safeZ(p[cat], s.m, s.sd);
+      // turnovers: lower is better, so flip the sign before averaging.
+      total += cat === 'turnovers_per_game' ? -z : z;
+    }
+    return { ...p, z_score: total / cats.length };
+  });
 }
 
 export interface PlayerWithScore {
@@ -126,6 +295,8 @@ async function compute(): Promise<{ ranked: PlayerWithScore[]; byId: Map<number,
       turnovers_per_game: Number(p.turnovers_per_game) || 0,
     };
 
+    // global cache uses NBA standard as the default — see the explainer
+    // at the top of the file for why and how to support per-user formats.
     const score = scorePlayer({ ...stats, games_played: gp, minutes_per_game: mpg });
 
     return {
@@ -148,7 +319,7 @@ async function compute(): Promise<{ ranked: PlayerWithScore[]; byId: Map<number,
     };
   });
 
-  // Rank by FP descending; unranked players (null score) stay at the bottom.
+  // rank by FP descending; unranked players (null score) stay at the bottom.
   const rankable = scored.filter((p) => p.fantasy_score !== null);
   rankable.sort((a, b) => (b.fantasy_score ?? 0) - (a.fantasy_score ?? 0));
   rankable.forEach((p, i) => { p.fantasy_rank = i + 1; });
@@ -156,7 +327,7 @@ async function compute(): Promise<{ ranked: PlayerWithScore[]; byId: Map<number,
   const byId = new Map<number, PlayerWithScore>();
   scored.forEach((p) => byId.set(p.id, p));
 
-  // Returned `ranked` is sorted: rankable first (best to worst), then
+  // returned `ranked` is sorted: rankable first (best to worst), then
   // un-scored players in their original order.
   const unranked = scored.filter((p) => p.fantasy_score === null);
   return { ranked: [...rankable, ...unranked], byId };

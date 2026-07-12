@@ -34,6 +34,15 @@ export function Navbar({ isLoggedIn, onLogout }: NavbarProps): JSX.Element {
     toggleTheme();
   };
 
+  // sign-out should always land users on the stats page. without this,
+  // signing out from a protected route (e.g. /profile, /fantasy) would
+  // either leave them on a now-broken page or bounce them to /login.
+  const handleSignOut = (): void => {
+    (document.activeElement as HTMLElement)?.blur();
+    onLogout();
+    navigate('/');
+  };
+
   return (
     <div className="navbar bg-base-200 border-b border-base-300 sticky top-0 z-50 px-4">
       <div className="flex-1 flex items-center gap-2">
@@ -68,13 +77,13 @@ export function Navbar({ isLoggedIn, onLogout }: NavbarProps): JSX.Element {
             </button>
             <ul tabIndex={0} className="dropdown-content menu bg-base-200 rounded-box z-50 w-52 p-2 shadow-lg border border-base-300 mt-1">
               <li>
-                <button onClick={() => goAndBlur('/preferences')}>
-                  Team Preferences
+                <button onClick={() => goAndBlur('/profile')}>
+                  My Profile
                 </button>
               </li>
               <li>
-                <button onClick={() => goAndBlur('/change-password')}>
-                  Change Password
+                <button onClick={() => goAndBlur('/preferences')}>
+                  Team Preferences
                 </button>
               </li>
               <li>
@@ -87,7 +96,12 @@ export function Navbar({ isLoggedIn, onLogout }: NavbarProps): JSX.Element {
                 </button>
               </li>
               <li className="border-t border-base-300 mt-1 pt-1">
-                <button onClick={onLogout} className="text-error">
+                <button onClick={() => goAndBlur('/about')}>
+                  About
+                </button>
+              </li>
+              <li>
+                <button onClick={handleSignOut} className="text-error">
                   Sign Out
                 </button>
               </li>
