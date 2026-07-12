@@ -9,9 +9,11 @@ const LIVE_CACHE_TTL = 3 * 60_000; // 3 minutes
 // how far back and forward the scoreboard looks. a window (rather than just
 // "today") means recent results stay visible AND upcoming games load, so the
 // "Today" / "Tomorrow" labels in the strip actually have content even on an
-// off-day with no game scheduled today.
-const PAST_WINDOW_DAYS = 2;
-const FUTURE_WINDOW_DAYS = 7;
+// off-day with no game scheduled today. two weeks back covers a full playoff
+// series so the back arrow has real history to scroll through; ten days
+// forward covers upcoming games without pulling an unbounded schedule.
+const PAST_WINDOW_DAYS = 14;
+const FUTURE_WINDOW_DAYS = 10;
 
 // the ET calendar date `offsetDays` from now, as YYYY-MM-DD. game days are
 // anchored to Eastern Time (ESPN stores them as UTC midnight of the ET date),
