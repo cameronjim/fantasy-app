@@ -3,7 +3,6 @@ import {
   formatAmerican,
   formatPercent,
   formatSignedPercent,
-  formatMoney,
   formatLine,
 } from '../../src/utils/formatOdds';
 
@@ -30,15 +29,6 @@ describe('formatSignedPercent', () => {
     expect(formatSignedPercent(0.067)).toBe('+6.7%');
     expect(formatSignedPercent(-0.02)).toBe('-2.0%');
     expect(formatSignedPercent(0)).toBe('+0.0%');
-  });
-});
-
-describe('formatMoney', () => {
-  it('formats dollars with the sign outside the symbol', () => {
-    // act + assert
-    expect(formatMoney(13.75)).toBe('$13.75');
-    expect(formatMoney(-50)).toBe('-$50.00');
-    expect(formatMoney(0)).toBe('$0.00');
   });
 });
 

@@ -12,8 +12,6 @@ import { query } from '../db.js';
 export interface BettingPreferences {
   risk_appetite?: 'conservative' | 'balanced' | 'aggressive';
   preferred_markets?: Array<'spread' | 'total' | 'moneyline' | 'parlay'>;
-  bankroll?: number; // dollars the user is willing to play with
-  unit_size?: number; // typical single-bet size in dollars
   extra_notes?: string; // freeform betting context ("I like unders", etc.)
 }
 
@@ -58,12 +56,6 @@ function cleanBettingPreferences(betting: BettingPreferences): BettingPreference
     cleaned.preferred_markets = betting.preferred_markets.filter((m) =>
       VALID_BET_MARKETS.includes(m)
     );
-  }
-  if (typeof betting.bankroll === 'number' && betting.bankroll > 0 && betting.bankroll <= 1_000_000) {
-    cleaned.bankroll = Math.round(betting.bankroll * 100) / 100;
-  }
-  if (typeof betting.unit_size === 'number' && betting.unit_size > 0 && betting.unit_size <= 1_000_000) {
-    cleaned.unit_size = Math.round(betting.unit_size * 100) / 100;
   }
   if (typeof betting.extra_notes === 'string' && betting.extra_notes.length <= 1000) {
     cleaned.extra_notes = betting.extra_notes.trim();
@@ -270,9 +262,6 @@ export function buildPreferencesPromptBlock(prefs: AIPreferences): string {
 /**
  * Renders betting prefs into a prompt block for the betting analyst persona.
  * Same contract as buildPreferencesPromptBlock: empty string when unset.
- * Bankroll and unit size are deliberately NOT included — stake sizing is
- * computed server-side at serve time, and keeping money out of the prompt
- * keeps it out of the AI picks cache key.
  */
 export function buildBettingPromptBlock(prefs: AIPreferences): string {
   const betting = prefs.betting;
@@ -282,13 +271,13 @@ export function buildBettingPromptBlock(prefs: AIPreferences): string {
 
   switch (betting.risk_appetite) {
     case 'conservative':
-      lines.push('- Risk appetite: conservative. Favor Safe picks with modest, defensible edges. Keep hail-mary suggestions to a minimum and say so when a slate offers nothing safe.');
+      lines.push('- Risk appetite: conservative. Favor Safe picks with modest, defensible edges. Keep hail-mary suggestions tame and say so when a slate offers nothing safe.');
       break;
     case 'aggressive':
-      lines.push('- Risk appetite: aggressive. The user enjoys underdogs and high-variance plays — surface more hail-mary and plus-money picks.');
+      lines.push('- Risk appetite: aggressive. The user enjoys underdogs and high-variance plays. Surface bolder hail-mary and plus-money picks.');
       break;
     case 'balanced':
-      lines.push('- Risk appetite: balanced. Mix safe and value plays; include a hail mary only when genuinely interesting.');
+      lines.push('- Risk appetite: balanced. Mix safe and value plays.');
       break;
   }
 

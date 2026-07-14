@@ -1,7 +1,7 @@
 /**
  * Display formatting for betting numbers. Pure string helpers — all odds math
- * (implied probability, edges, kelly) is computed server-side and arrives in
- * the API payload.
+ * (implied probability, edges) is computed server-side and arrives in the API
+ * payload.
  */
 
 /** -110 → "-110", 150 → "+150" */
@@ -18,12 +18,6 @@ export function formatPercent(p: number): string {
 export function formatSignedPercent(p: number): string {
   const formatted = formatPercent(Math.abs(p));
   return p >= 0 ? `+${formatted}` : `-${formatted}`;
-}
-
-/** 13.75 → "$13.75"; negatives → "-$13.75" */
-export function formatMoney(amount: number): string {
-  const abs = Math.abs(amount).toFixed(2);
-  return amount < 0 ? `-$${abs}` : `$${abs}`;
 }
 
 /** spread line for display: -2.5 → "-2.5", 2.5 → "+2.5" */

@@ -30,6 +30,7 @@ describe('auth gating on /api/fantasy and /api/ai', () => {
     ['get', '/api/betting/picks'],
     ['get', '/api/betting/bets'],
     ['post', '/api/betting/bets'],
+    ['patch', '/api/betting/bets/1'],
     ['delete', '/api/betting/bets/1'],
   ] as const)('rejects %s %s without a Bearer token', async (method, path) => {
     // act
