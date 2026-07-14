@@ -125,6 +125,8 @@ CREATE TABLE IF NOT EXISTS bets (
     line NUMERIC(5,1),
     american_odds INTEGER,
     description VARCHAR(300),
+    stake NUMERIC(10,2) CHECK (stake > 0),
+    wager_type VARCHAR(12) NOT NULL DEFAULT 'cash' CHECK (wager_type IN ('cash', 'bonus_bet', 'odds_boost')),
     status VARCHAR(7) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'won', 'lost', 'push')),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     settled_at TIMESTAMPTZ

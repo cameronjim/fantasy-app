@@ -24,3 +24,14 @@ export function formatSignedPercent(p: number): string {
 export function formatLine(line: number): string {
   return line > 0 ? `+${line}` : `${line}`;
 }
+
+/** 13.75 → "$13.75"; -50 → "-$50.00" */
+export function formatMoney(amount: number): string {
+  const abs = Math.abs(amount).toFixed(2);
+  return amount < 0 ? `-$${abs}` : `$${abs}`;
+}
+
+/** signed money for net results: 12.5 → "+$12.50", -50 → "-$50.00" */
+export function formatSignedMoney(amount: number): string {
+  return amount >= 0 ? `+${formatMoney(amount)}` : formatMoney(amount);
+}

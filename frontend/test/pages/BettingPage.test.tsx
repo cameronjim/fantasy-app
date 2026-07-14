@@ -26,7 +26,7 @@ beforeEach(() => {
   picksMock.mockResolvedValue({ picks: [], parlay: null, summary: '', no_games: true });
   betsMock.mockResolvedValue({
     bets: [],
-    summary: { wins: 0, losses: 0, pushes: 0, pending: 0 },
+    summary: { wins: 0, losses: 0, pushes: 0, pending: 0, net: 0 },
   });
   prefsMock.mockResolvedValue({});
 });

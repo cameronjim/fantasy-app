@@ -146,7 +146,7 @@ test.describe('Betting page', () => {
       route.fulfill({
         json: {
           bets: tracked,
-          summary: { wins: 0, losses: 0, pushes: 0, pending: tracked.length },
+          summary: { wins: 0, losses: 0, pushes: 0, pending: tracked.length, net: 0 },
         },
       });
     });

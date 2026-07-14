@@ -296,7 +296,46 @@ describe('GET /api/betting/bets', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.bets).toHaveLength(2);
-    expect(res.body.summary).toEqual({ wins: 1, losses: 0, pushes: 0, pending: 1 });
+    expect(res.body.summary).toEqual({ wins: 1, losses: 0, pushes: 0, pending: 1, net: 0 });
+  });
+
+  it('computes per-bet and total net when stakes were recorded', async () => {
+    // arrange — no pending straight bets to settle, then three money bets:
+    // won 50 cash at -105 (+47.62), lost 25 bonus bet (0), lost 20 cash (-20)
+    queryMock
+      .mockResolvedValueOnce(pgResult([]))
+      .mockResolvedValueOnce(pgResult([
+        {
+          id: 1, market: 'spread', nba_game_id: '401', home_team: 'New York Knicks',
+          away_team: 'San Antonio Spurs', game_date: '2026-06-10', selection: 'home',
+          line: -2.5, american_odds: -105, description: null, stake: 50, wager_type: 'cash',
+          status: 'won', created_at: '2026-06-09T12:00:00Z', settled_at: '2026-06-11T04:00:00Z',
+        },
+        {
+          id: 2, market: 'prop', nba_game_id: '401', home_team: 'New York Knicks',
+          away_team: 'San Antonio Spurs', game_date: '2026-06-10', selection: null,
+          line: null, american_odds: -115, description: 'Brunson over 28.5', stake: 25, wager_type: 'bonus_bet',
+          status: 'lost', created_at: '2026-06-09T13:00:00Z', settled_at: '2026-06-11T04:00:00Z',
+        },
+        {
+          id: 3, market: 'custom', nba_game_id: null, home_team: null,
+          away_team: null, game_date: null, selection: null,
+          line: null, american_odds: 600, description: 'First basket', stake: 20, wager_type: 'cash',
+          status: 'lost', created_at: '2026-06-09T14:00:00Z', settled_at: '2026-06-11T04:00:00Z',
+        },
+      ]));
+
+    // act
+    const res = await request(app)
+      .get('/api/betting/bets')
+      .set('Authorization', bearerFor(9));
+
+    // assert — a lost bonus bet costs nothing real
+    expect(res.status).toBe(200);
+    expect(res.body.bets[0].net).toBeCloseTo(47.62, 2);
+    expect(res.body.bets[1].net).toBe(0);
+    expect(res.body.bets[2].net).toBe(-20);
+    expect(res.body.summary.net).toBeCloseTo(27.62, 2);
   });
 
   it('binds every query to the jwt user id', async () => {
@@ -373,6 +412,49 @@ describe('POST /api/betting/bets', () => {
     const params = insertCall![1] as unknown[];
     expect(params[2]).toBeNull(); // nba_game_id
     expect(params[6]).toBeNull(); // selection
+  });
+
+  it('persists an optional stake and wager type', async () => {
+    // arrange
+    queryMock.mockResolvedValueOnce(pgResult([
+      {
+        id: 4, market: 'custom', nba_game_id: null, home_team: null, away_team: null,
+        game_date: null, selection: null, line: null, american_odds: 600,
+        description: 'First basket: Wembanyama', stake: 10, wager_type: 'bonus_bet',
+        status: 'pending', created_at: '2026-06-09T12:00:00Z', settled_at: null,
+      },
+    ]));
+
+    // act
+    const res = await request(app)
+      .post('/api/betting/bets')
+      .set('Authorization', bearerFor(9))
+      .send({ market: 'custom', description: 'First basket: Wembanyama', american_odds: 600, stake: 10, wager_type: 'bonus_bet' });
+
+    // assert
+    expect(res.status).toBe(201);
+    const insertCall = queryMock.mock.calls.find(([sql]) => (sql as string).includes('INSERT INTO bets'));
+    const params = insertCall![1] as unknown[];
+    expect(params[10]).toBe(10);          // stake
+    expect(params[11]).toBe('bonus_bet'); // wager_type
+  });
+
+  it('rejects a junk wager type and a non-positive stake', async () => {
+    // act
+    const badWager = await request(app)
+      .post('/api/betting/bets')
+      .set('Authorization', bearerFor(9))
+      .send({ market: 'custom', description: 'whatever', wager_type: 'lottery' });
+    const badStake = await request(app)
+      .post('/api/betting/bets')
+      .set('Authorization', bearerFor(9))
+      .send({ market: 'custom', description: 'whatever', stake: 0 });
+
+    // assert
+    expect(badWager.status).toBe(400);
+    expect(badWager.body.error).toBe('wager_type must be cash, bonus_bet, or odds_boost');
+    expect(badStake.status).toBe(400);
+    expect(badStake.body.error).toBe('stake must be between 0 and 100000');
   });
 
   it('creates a parlay bet without odds', async () => {

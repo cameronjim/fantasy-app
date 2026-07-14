@@ -3,8 +3,18 @@ import {
   americanToDecimal,
   decimalToAmerican,
   americanToImpliedProb,
+  profitOnWin,
   combineParlay,
 } from '../../src/services/oddsMath.js';
+
+describe('profitOnWin', () => {
+  it('computes winnings excluding the returned stake', () => {
+    // act + assert
+    expect(profitOnWin(110, -110)).toBeCloseTo(100, 2);
+    expect(profitOnWin(100, +150)).toBeCloseTo(150, 2);
+    expect(profitOnWin(10, +600)).toBeCloseTo(60, 2);
+  });
+});
 
 describe('americanToDecimal', () => {
   it('converts negative and positive american odds', () => {

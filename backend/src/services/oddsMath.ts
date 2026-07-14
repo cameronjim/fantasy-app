@@ -31,6 +31,12 @@ export interface ParlayOdds {
   impliedProb: number;
 }
 
+/** profit (excluding returned stake) if a bet at these odds wins */
+export function profitOnWin(stake: number, americanOdds: number): number {
+  const profit = stake * (americanToDecimal(americanOdds) - 1);
+  return Math.round(profit * 100) / 100;
+}
+
 /** combined price of a parlay: decimal odds multiply across legs */
 export function combineParlay(legOdds: number[]): ParlayOdds {
   const decimal = legOdds.reduce((acc, odds) => acc * americanToDecimal(odds), 1);
