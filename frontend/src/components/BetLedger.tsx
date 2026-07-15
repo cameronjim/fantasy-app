@@ -391,7 +391,11 @@ export const BetLedger = ({ bets, summary, loading, error, games, onTrackBet, on
                         <td className={`text-xs font-medium whitespace-nowrap ${
                           bet.net != null && bet.net > 0 ? 'text-success' : bet.net != null && bet.net < 0 ? 'text-error' : 'opacity-60'
                         }`}>
-                          {bet.net != null ? formatSignedMoney(bet.net) : ''}
+                          {bet.net != null
+                            ? formatSignedMoney(bet.net)
+                            : bet.status === 'pending' && bet.to_win != null
+                              ? `to win ${formatMoney(bet.to_win)}`
+                              : ''}
                         </td>
                         <td>
                           <div className="flex items-center gap-1 justify-end">

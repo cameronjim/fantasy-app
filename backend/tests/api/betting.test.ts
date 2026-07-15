@@ -336,6 +336,9 @@ describe('GET /api/betting/bets', () => {
     expect(res.body.bets[1].net).toBe(0);
     expect(res.body.bets[2].net).toBe(-20);
     expect(res.body.summary.net).toBeCloseTo(27.62, 2);
+    // projected payout rides along for every bet with odds recorded
+    expect(res.body.bets[0].to_win).toBeCloseTo(47.62, 2);
+    expect(res.body.bets[1].to_win).toBeCloseTo(21.74, 2);
   });
 
   it('binds every query to the jwt user id', async () => {

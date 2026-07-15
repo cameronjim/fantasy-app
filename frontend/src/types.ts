@@ -184,6 +184,9 @@ export interface Bet {
   settled_at: string | null;
   // money result, computed server-side: null while pending or without a stake
   net: number | null;
+  // payout (excluding returned stake) if the bet hits; null without odds.
+  // optional because optimistic temp rows don't have it yet.
+  to_win?: number | null;
 }
 
 export interface NewBet {
