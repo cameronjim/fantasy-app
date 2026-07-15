@@ -26,6 +26,21 @@ describe('auth gating on /api/fantasy and /api/ai', () => {
     expect(res.body.error).toBe('Unauthorized');
   });
 
+  it.each([
+    ['get', '/api/betting/picks'],
+    ['get', '/api/betting/bets'],
+    ['post', '/api/betting/bets'],
+    ['patch', '/api/betting/bets/1'],
+    ['delete', '/api/betting/bets/1'],
+  ] as const)('rejects %s %s without a Bearer token', async (method, path) => {
+    // act
+    const res = await request(app)[method](path);
+
+    // assert
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('Unauthorized');
+  });
+
   it('rejects /api/fantasy/roster with an invalid token', async () => {
     // act
     const res = await request(app)

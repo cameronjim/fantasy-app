@@ -9,6 +9,7 @@
 export { StatsPage } from './StatsPage';
 export { FantasyPage } from './FantasyPage';
 export { ImproveTeamPage } from './ImproveTeamPage';
+export { BettingPage } from './BettingPage';
 export { LoginPage } from './LoginPage';
 export { NavbarComponent } from './NavbarComponent';
 export { PlayerTableComponent } from './PlayerTableComponent';

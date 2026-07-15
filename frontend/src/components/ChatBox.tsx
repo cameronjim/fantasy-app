@@ -6,9 +6,11 @@ import type { ChatMessage } from '../types';
 interface ChatBoxProps {
   contextType?: string;
   isLoggedIn?: boolean;
+  // shown in the empty state so each page can hint at what to ask about.
+  emptyHint?: string;
 }
 
-export const ChatBox = ({ contextType, isLoggedIn = true }: ChatBoxProps) => {
+export const ChatBox = ({ contextType, isLoggedIn = true, emptyHint }: ChatBoxProps) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -58,7 +60,7 @@ export const ChatBox = ({ contextType, isLoggedIn = true }: ChatBoxProps) => {
   const formatMessage = (text: string): JSX.Element[] => {
     return text.split('\n').map((line, index) => {
       if (!line) {
-        return <span key={index} className="block">{'\u00a0'}</span>;
+        return <span key={index} className="block">{' '}</span>;
       }
 
       const numbered = line.match(/^(\d+)\.\s(.*)$/);
@@ -74,7 +76,7 @@ export const ChatBox = ({ contextType, isLoggedIn = true }: ChatBoxProps) => {
       if (line.startsWith('- ') || line.startsWith('* ')) {
         return (
           <span key={`${index}-${line}`} className="block">
-            {'\u2022 '}
+            {'• '}
             {renderInline(line.slice(2))}
           </span>
         );
@@ -97,7 +99,7 @@ export const ChatBox = ({ contextType, isLoggedIn = true }: ChatBoxProps) => {
             <Bot size={28} className="opacity-20 mb-2" />
             <p className="text-xs opacity-40">
               {isLoggedIn
-                ? 'Ask me anything about your fantasy team, player stats, or trade advice.'
+                ? emptyHint ?? 'Ask me anything about your fantasy team, player stats, or trade advice.'
                 : 'Sign in to chat with the AI assistant.'}
             </p>
           </div>
