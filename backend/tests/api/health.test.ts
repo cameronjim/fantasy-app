@@ -13,4 +13,13 @@ describe('GET /api/health', () => {
     expect(res.body.status).toBe('ok');
     expect(typeof res.body.timestamp).toBe('string');
   });
+
+  it('sends helmet security headers on responses', async () => {
+    // act
+    const res = await request(app).get('/api/health');
+
+    // assert — helmet sets these; their presence confirms the middleware runs.
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers).toHaveProperty('x-dns-prefetch-control');
+  });
 });
