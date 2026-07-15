@@ -429,10 +429,9 @@ router.post('/bets', requireAuth, async (req: Request, res: Response): Promise<v
       return;
     }
 
-    // odds are optional for text bets (you might not know the price on an
-    // exotic), required for straight bets where settlement implies a price.
-    const hasOdds = american_odds != null;
-    if (hasOdds && (!Number.isInteger(american_odds) || Math.abs(american_odds) < 100 || Math.abs(american_odds) > 10000)) {
+    // odds are required on every bet — projected winnings and the net math
+    // both depend on the price.
+    if (!Number.isInteger(american_odds) || Math.abs(american_odds) < 100 || Math.abs(american_odds) > 10000) {
       res.status(400).json({ error: 'american_odds must be an integer like -110 or +150' });
       return;
     }
@@ -502,10 +501,6 @@ router.post('/bets', requireAuth, async (req: Request, res: Response): Promise<v
           return;
         }
       }
-      if (!hasOdds) {
-        res.status(400).json({ error: 'american_odds is required for this market' });
-        return;
-      }
       resolvedGame = await resolveGame();
       if (!resolvedGame) {
         res.status(400).json({ error: 'Unknown game' });
@@ -544,7 +539,7 @@ router.post('/bets', requireAuth, async (req: Request, res: Response): Promise<v
         game?.game_date ?? null,
         isStraight ? selection : null,
         isStraight && market !== 'moneyline' ? line : null,
-        hasOdds ? american_odds : null,
+        american_odds,
         isText ? description.trim() : null,
         stake,
         wagerType,
@@ -553,7 +548,7 @@ router.post('/bets', requireAuth, async (req: Request, res: Response): Promise<v
     const saved = result.rows[0];
     res.status(201).json({
       ...saved,
-      to_win: hasOdds ? profitOnWin(stake, american_odds) : null,
+      to_win: profitOnWin(stake, american_odds),
     });
   } catch {
     res.status(500).json({ error: 'Failed to save bet' });

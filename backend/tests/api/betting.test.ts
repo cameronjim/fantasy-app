@@ -448,15 +448,15 @@ describe('POST /api/betting/bets', () => {
     const badWager = await request(app)
       .post('/api/betting/bets')
       .set('Authorization', bearerFor(9))
-      .send({ market: 'custom', description: 'whatever', stake: 5, wager_type: 'lottery' });
+      .send({ market: 'custom', description: 'whatever', american_odds: -110, stake: 5, wager_type: 'lottery' });
     const badStake = await request(app)
       .post('/api/betting/bets')
       .set('Authorization', bearerFor(9))
-      .send({ market: 'custom', description: 'whatever', stake: 0 });
+      .send({ market: 'custom', description: 'whatever', american_odds: -110, stake: 0 });
     const noStake = await request(app)
       .post('/api/betting/bets')
       .set('Authorization', bearerFor(9))
-      .send({ market: 'custom', description: 'whatever' });
+      .send({ market: 'custom', description: 'whatever', american_odds: -110 });
 
     // assert
     expect(badWager.status).toBe(400);
@@ -467,14 +467,14 @@ describe('POST /api/betting/bets', () => {
     expect(noStake.body.error).toBe('stake must be between 0 and 100000');
   });
 
-  it('creates a parlay bet without odds', async () => {
+  it('creates a parlay bet with its combined odds', async () => {
     // arrange
     queryMock.mockResolvedValueOnce(pgResult([
       {
         id: 3, market: 'parlay', nba_game_id: null, home_team: null, away_team: null,
-        game_date: null, selection: null, line: null, american_odds: null,
-        description: 'Knicks ML + Under 216.5 + Celtics -3', status: 'pending',
-        created_at: '2026-06-09T12:00:00Z', settled_at: null,
+        game_date: null, selection: null, line: null, american_odds: 264,
+        description: 'Knicks ML + Under 216.5 + Celtics -3', stake: 5, wager_type: 'cash',
+        status: 'pending', created_at: '2026-06-09T12:00:00Z', settled_at: null,
       },
     ]));
 
@@ -482,11 +482,11 @@ describe('POST /api/betting/bets', () => {
     const res = await request(app)
       .post('/api/betting/bets')
       .set('Authorization', bearerFor(9))
-      .send({ market: 'parlay', description: 'Knicks ML + Under 216.5 + Celtics -3', stake: 5 });
+      .send({ market: 'parlay', description: 'Knicks ML + Under 216.5 + Celtics -3', stake: 5, american_odds: 264 });
 
-    // assert
+    // assert — the projected payout rides along on the response
     expect(res.status).toBe(201);
-    expect(res.body.american_odds).toBeNull();
+    expect(res.body.to_win).toBeCloseTo(13.2, 2);
   });
 
   it.each([
@@ -497,9 +497,10 @@ describe('POST /api/betting/bets', () => {
     [{ ...straightBet, line: 99 }, 'Spread line out of range'],
     [{ ...straightBet, market: 'total', selection: 'over', line: 500 }, 'Total line out of range'],
     [{ ...straightBet, american_odds: -50 }, 'american_odds must be an integer like -110 or +150'],
-    [{ ...straightBet, american_odds: undefined }, 'american_odds is required for this market'],
-    [{ market: 'prop', description: 'x', stake: 10 }, 'description is required (3-300 characters)'],
-    [{ market: 'custom', description: 'valid words here', stake: 10, selection: 'home' }, 'selection and line only apply to spread/total/moneyline bets'],
+    [{ ...straightBet, american_odds: undefined }, 'american_odds must be an integer like -110 or +150'],
+    [{ market: 'parlay', description: 'three legs of chaos', stake: 5 }, 'american_odds must be an integer like -110 or +150'],
+    [{ market: 'prop', description: 'x', stake: 10, american_odds: -110 }, 'description is required (3-300 characters)'],
+    [{ market: 'custom', description: 'valid words here', stake: 10, american_odds: -110, selection: 'home' }, 'selection and line only apply to spread/total/moneyline bets'],
   ])('rejects invalid payload %#', async (payload, message) => {
     // act
     const res = await request(app)
