@@ -193,9 +193,12 @@ export interface NewBet {
   line?: number | null;
   american_odds?: number | null;
   description?: string;
-  stake?: number | null;
+  stake: number;
   wager_type?: WagerType;
 }
+
+/** display fields for an optimistic ledger row before the server confirms */
+export type NewBetGameRef = Pick<Bet, 'home_team' | 'away_team' | 'game_date'>;
 
 export interface LedgerSummary {
   wins: number;
