@@ -647,11 +647,12 @@ section H below):
 | `DEV_API_URL`                     | Dev backend URL (the existing `dev-fantasy-nba-api` invoke URL)  |
 | `DEV_FRONTEND_URL`                | Dev frontend URL (e.g. `https://dev.fantasy-nba.cameronjim.com`) |
 
-Plus a secret:
+Plus secrets:
 
 | Name                  | Value                                                                |
 |-----------------------|----------------------------------------------------------------------|
 | `DEV_DATABASE_URL`    | Connection string for the Neon dev branch (NOT prod's URL)           |
+| `DEV_AUTH_SECRET`     | A **separate** 32+ char JWT signing secret for dev (NOT prod's). The dev env is public, so a shared secret would let a dev-minted token authenticate against prod. |
 
 #### F. Verify it works
 
