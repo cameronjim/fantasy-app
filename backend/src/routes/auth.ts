@@ -362,8 +362,9 @@ router.get('/me', requireAuth, async (req: Request, res: Response): Promise<void
     const result = await query(
       // has_password is computed so the client can decide whether to show the
       // "current password" field on the change-password form. raw password_hash
-      // never leaves the server.
-      `SELECT id, username, email, name, phone,
+      // never leaves the server. is_admin only gates UI (the nav link to
+      // /admin) — the admin api re-checks it server-side on every request.
+      `SELECT id, username, email, name, phone, is_admin,
               (password_hash IS NOT NULL) AS has_password
        FROM users WHERE id = $1`,
       [userId]

@@ -18,7 +18,10 @@ import { authRouter } from './routes/auth.js';
 import { preferencesRouter } from './routes/preferences.js';
 import { bettingRouter } from './routes/betting.js';
 import { statusRouter } from './routes/status.js';
+import { trackRouter } from './routes/track.js';
+import { adminRouter } from './routes/admin.js';
 import { requireAuth, type AuthRequest } from './middleware/auth.js';
+import { requireAdmin } from './middleware/admin.js';
 import { rateLimit } from './middleware/rateLimit.js';
 import { validateAuthSecret } from './config.js';
 
@@ -58,6 +61,10 @@ app.use('/api/preferences', preferencesRouter);
 // per-endpoint auth: the odds board is public, picks/bets require a token.
 app.use('/api/betting', bettingRouter);
 app.use('/api/status', statusRouter);
+// pageview beacon — public on purpose so anonymous visitors are counted.
+app.use('/api/track', trackRouter);
+// developer tools — admin-only, authorization re-checked in the db per request.
+app.use('/api/admin', requireAuth, requireAdmin, adminRouter);
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

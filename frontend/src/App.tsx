@@ -13,6 +13,8 @@ import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { PreferencesPage } from './pages/PreferencesPage';
 import { AboutPage } from './pages/AboutPage';
+import { AdminPage } from './pages/AdminPage';
+import { PageViewTracker } from './components/PageViewTracker';
 import { getAuthToken, setAuthToken } from './api/client';
 
 export const App = (): JSX.Element => {
@@ -34,6 +36,7 @@ export const App = (): JSX.Element => {
   return (
     <GoogleOAuthProvider clientId={googleClientId}>
       <BrowserRouter>
+        <PageViewTracker />
         <div className="min-h-screen bg-base-100 text-base-content">
           <Navbar isLoggedIn={isLoggedIn} onLogout={handleLogout} />
           <main>
@@ -51,6 +54,7 @@ export const App = (): JSX.Element => {
               <Route path="/change-password" element={<Navigate to="/profile#password" replace />} />
               <Route path="/preferences" element={<PreferencesPage />} />
               <Route path="/about" element={<AboutPage />} />
+              <Route path="/admin" element={<AdminPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </main>
