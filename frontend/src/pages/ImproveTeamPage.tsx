@@ -27,27 +27,48 @@ export const ImproveTeamPage = ({ isLoggedIn }: ImproveTeamPageProps) => {
   const [emptyRoster, setEmptyRoster] = useState(false);
 
   const loadSuggestions = useCallback(async (refresh = false): Promise<void> => {
+    type SuggestionsResponse = Awaited<ReturnType<typeof getWaiverSuggestions>>;
+    const apply = (d: SuggestionsResponse): void => {
+      setTradeTargets(d.trade_targets || []);
+      setWaiverPickups(d.waiver_pickups || []);
+      setSummary(d.summary || '');
+      setCachedAt(d.cached_at || null);
+      setEmptyRoster(!!d.empty_roster);
+    };
+
     if (refresh) setRefreshing(true);
     else setLoading(true);
     setError('');
+    let data: SuggestionsResponse;
     try {
-      const data = await getWaiverSuggestions(refresh);
-      setTradeTargets(data.trade_targets || []);
-      setWaiverPickups(data.waiver_pickups || []);
-      setSummary(data.summary || '');
-      setCachedAt(data.cached_at || null);
-      setEmptyRoster(!!data.empty_roster);
-      // Don't pollute the client cache with the empty-roster response — once
-      // the user adds players we want a fresh AI call, not a stale empty.
-      if (!data.empty_roster) {
-        setCachedSuggestions(data);
-      }
+      data = await getWaiverSuggestions(refresh);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load suggestions');
-    } finally {
       setLoading(false);
       setRefreshing(false);
+      return;
     }
+    apply(data);
+    // Don't pollute the client cache with the empty-roster response (once
+    // the user adds players we want a fresh AI call) or with a stale one
+    // (it's about to be replaced by the background regeneration below).
+    if (!data.empty_roster && !data.stale) {
+      setCachedSuggestions(data);
+    }
+    setLoading(false);
+    if (!refresh && data.stale) {
+      // the server handed back expired suggestions so the page rendered
+      // instantly — regenerate behind the scenes and swap when ready.
+      setRefreshing(true);
+      try {
+        const fresh = await getWaiverSuggestions(true);
+        apply(fresh);
+        if (!fresh.empty_roster) setCachedSuggestions(fresh);
+      } catch {
+        // regeneration failed — the previous suggestions stay visible.
+      }
+    }
+    setRefreshing(false);
   }, []);
 
   useEffect(() => {

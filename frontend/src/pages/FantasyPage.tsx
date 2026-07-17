@@ -11,6 +11,7 @@ import {
   setCachedAnalysis,
   invalidateAIClientCaches,
 } from '../api/clientCaches';
+import { getCached, setCached, CACHE_KEYS } from '../api/resourceCache';
 
 const CAT_COLORS: Record<string, string> = {
   strong: 'badge-success',
@@ -47,13 +48,19 @@ interface FantasyPageProps {
 }
 
 export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
-  const [roster, setRoster] = useState<RosterPlayer[]>([]);
+  // hydrate from the shared cache so tab returns render the roster instantly;
+  // the mount effect still revalidates silently behind it.
+  const [roster, setRoster] = useState<RosterPlayer[]>(
+    () => getCached<RosterPlayer[]>(CACHE_KEYS.roster) ?? []
+  );
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<Player[]>([]);
   const [searching, setSearching] = useState(false);
   const [analysis, setAnalysis] = useState<TeamAnalysis | null>(getCachedAnalysis);
   const [analysisLoading, setAnalysisLoading] = useState(false);
-  const [rosterLoading, setRosterLoading] = useState(true);
+  const [rosterLoading, setRosterLoading] = useState(
+    () => getCached<RosterPlayer[]>(CACHE_KEYS.roster) === null
+  );
   const [toast, setToast] = useState<{ message: string; variant: ToastVariant } | null>(null);
   const [sortKey, setSortKey] = useState<keyof RosterPlayer>('points_per_game');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
@@ -65,6 +72,7 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
   const loadRoster = useCallback(async (): Promise<void> => {
     try {
       const data = await getMyRoster();
+      setCached(CACHE_KEYS.roster, data);
       setRoster(data);
     } catch {
       setRoster([]);
@@ -72,6 +80,13 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
       setRosterLoading(false);
     }
   }, []);
+
+  // mirror the rendered roster (including optimistic add/drop states) into
+  // the shared cache, so a tab switch mid-mutation never resurrects a
+  // dropped player or loses an added one.
+  useEffect(() => {
+    if (isLoggedIn && !rosterLoading) setCached(CACHE_KEYS.roster, roster);
+  }, [roster, rosterLoading, isLoggedIn]);
 
   const loadAnalysis = useCallback(async (): Promise<void> => {
     const requestId = ++analysisRequestIdRef.current;
@@ -82,14 +97,29 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
       // the newer one will (or already did) handle it.
       if (requestId !== analysisRequestIdRef.current) return;
       setAnalysis(data);
-      setCachedAnalysis(data);
+      if (!data.stale) {
+        setCachedAnalysis(data);
+        return;
+      }
     } catch {
       if (requestId !== analysisRequestIdRef.current) return;
       setAnalysis(null);
+      return;
     } finally {
       if (requestId === analysisRequestIdRef.current) {
         setAnalysisLoading(false);
       }
+    }
+    // the server handed back the previous roster's analysis — it's already
+    // on screen, so regenerate quietly and swap when ready. the requestId
+    // guard drops the result if the roster changes meanwhile.
+    try {
+      const fresh = await getTeamAnalysis(true);
+      if (requestId !== analysisRequestIdRef.current) return;
+      setAnalysis(fresh);
+      setCachedAnalysis(fresh);
+    } catch {
+      // regeneration failed — the previous analysis stays visible.
     }
   }, []);
 
