@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getBets, createBet, deleteBet, settleBetStatus } from '../api/client';
+import { getCached, setCached, CACHE_KEYS } from '../api/resourceCache';
 import type { Bet, BetStatus, LedgerSummary, NewBet, NewBetGameRef } from '../types';
 
 const EMPTY_SUMMARY: LedgerSummary = { wins: 0, losses: 0, pushes: 0, pending: 0, net: 0 };
+
+interface LedgerData {
+  bets: Bet[];
+  summary: LedgerSummary;
+}
 
 interface UseBetLedger {
   bets: Bet[];
@@ -23,19 +29,28 @@ interface UseBetLedger {
  * the API response or a silent re-fetch.
  */
 export function useBetLedger(isLoggedIn: boolean): UseBetLedger {
-  const [bets, setBets] = useState<Bet[]>([]);
-  const [summary, setSummary] = useState<LedgerSummary>(EMPTY_SUMMARY);
+  // hydrate from the shared cache so tab returns render the ledger instantly;
+  // the mount effect still revalidates silently behind it.
+  const [initialLedger] = useState<LedgerData | null>(
+    () => (isLoggedIn ? getCached<LedgerData>(CACHE_KEYS.bets) : null)
+  );
+  const [bets, setBets] = useState<Bet[]>(initialLedger?.bets ?? []);
+  const [summary, setSummary] = useState<LedgerSummary>(initialLedger?.summary ?? EMPTY_SUMMARY);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   // temp ids for optimistic rows are negative so they can never collide with
   // real SERIAL ids from the db.
   const tempIdRef = useRef(-1);
+  // gates the cache mirror below until real data has loaded, so a transient
+  // empty ledger never gets pinned as the cached copy.
+  const loadedRef = useRef(initialLedger !== null);
 
   const reload = useCallback(async (silent = false): Promise<void> => {
     if (!silent) setLoading(true);
     setError('');
     try {
       const data = await getBets();
+      loadedRef.current = true;
       setBets(data.bets);
       setSummary(data.summary);
     } catch {
@@ -47,8 +62,15 @@ export function useBetLedger(isLoggedIn: boolean): UseBetLedger {
 
   useEffect(() => {
     if (!isLoggedIn) return;
-    void reload();
-  }, [isLoggedIn, reload]);
+    // silent when a cached copy is already on screen — no spinner flash.
+    void reload(initialLedger !== null);
+  }, [isLoggedIn, initialLedger, reload]);
+
+  // mirror the rendered ledger (including optimistic mutations) into the
+  // shared cache so tab switches always restore what the user last saw.
+  useEffect(() => {
+    if (isLoggedIn && loadedRef.current) setCached(CACHE_KEYS.bets, { bets, summary });
+  }, [bets, summary, isLoggedIn]);
 
   const trackBet = useCallback(async (bet: NewBet, gameRef?: NewBetGameRef): Promise<void> => {
     const tempId = tempIdRef.current--;

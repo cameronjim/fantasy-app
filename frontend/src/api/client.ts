@@ -197,12 +197,12 @@ export async function chatWithAI(message: string, contextType?: string, history?
   return data;
 }
 
-export async function getTeamAnalysis(): Promise<TeamAnalysis> {
-  const { data } = await api.get('/ai/team-analysis');
+export async function getTeamAnalysis(refresh?: boolean): Promise<TeamAnalysis> {
+  const { data } = await api.get('/ai/team-analysis', { params: refresh ? { refresh: 'true' } : {} });
   return data;
 }
 
-export async function getWaiverSuggestions(refresh?: boolean): Promise<{ trade_targets: Array<{name: string; reasoning: string}>; waiver_pickups: Array<{name: string; reasoning: string}>; summary: string; cached?: boolean; cached_at?: string; empty_roster?: boolean }> {
+export async function getWaiverSuggestions(refresh?: boolean): Promise<{ trade_targets: Array<{name: string; reasoning: string}>; waiver_pickups: Array<{name: string; reasoning: string}>; summary: string; cached?: boolean; cached_at?: string; empty_roster?: boolean; stale?: boolean }> {
   const { data } = await api.get('/ai/waiver-suggestions', { params: refresh ? { refresh: 'true' } : {} });
   return data;
 }
