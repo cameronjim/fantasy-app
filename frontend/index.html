@@ -6,11 +6,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Fantasy NBA</title>
     <script>
-      // Apply persisted theme before React paints — prevents a light-mode flash
-      // for users who chose dark. Mirrors the logic in ThemeToggle.tsx.
+      // Apply persisted theme before React paints — prevents a flash of the
+      // wrong theme on load. Mirrors the THEMES list in src/hooks/useTheme.ts;
+      // keep the two in sync when adding or removing a theme.
       (function () {
+        var themes = ['lofi', 'cream', 'sage', 'slate', 'ocean', 'business', 'graphite'];
         var stored = localStorage.getItem('theme');
-        var theme = (stored === 'lofi' || stored === 'business')
+        var theme = themes.indexOf(stored) !== -1
           ? stored
           : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'business' : 'lofi');
         document.documentElement.setAttribute('data-theme', theme);

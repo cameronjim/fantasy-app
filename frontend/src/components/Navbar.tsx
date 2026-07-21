@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { BarChart3, Users, TrendingUp, Dices, LogIn, User, Sun, Moon } from 'lucide-react';
-import { useTheme } from '../hooks/useTheme';
+import { BarChart3, Users, TrendingUp, Dices, LogIn, User } from 'lucide-react';
 import { StatusBadge } from './StatusBadge';
+import { ThemePicker } from './ThemePicker';
 import { getCurrentUser } from '../api/client';
 
 interface NavbarProps {
@@ -20,8 +20,6 @@ const tabs = [
 export function Navbar({ isLoggedIn, onLogout }: NavbarProps): JSX.Element {
   const navigate = useNavigate();
   const location = useLocation();
-  const { theme, toggle: toggleTheme } = useTheme();
-  const isDark = theme === 'business';
   const [isAdmin, setIsAdmin] = useState(false);
 
   // the flag only gates the nav link — the admin api re-checks server-side,
@@ -51,11 +49,6 @@ export function Navbar({ isLoggedIn, onLogout }: NavbarProps): JSX.Element {
   const goAndBlur = (path: string): void => {
     (document.activeElement as HTMLElement)?.blur();
     navigate(path);
-  };
-
-  const themeAndBlur = (): void => {
-    (document.activeElement as HTMLElement)?.blur();
-    toggleTheme();
   };
 
   // sign-out should always land users on the stats page. without this,
@@ -93,6 +86,9 @@ export function Navbar({ isLoggedIn, onLogout }: NavbarProps): JSX.Element {
           );
         })}
 
+        {/* theme picker is always visible, signed in or out. */}
+        <ThemePicker />
+
         {isLoggedIn ? (
           <div className="dropdown dropdown-end ml-1">
             <button tabIndex={0} className="btn btn-ghost btn-sm gap-1">
@@ -108,15 +104,6 @@ export function Navbar({ isLoggedIn, onLogout }: NavbarProps): JSX.Element {
               <li>
                 <button onClick={() => goAndBlur('/preferences')}>
                   Team Preferences
-                </button>
-              </li>
-              <li>
-                <button onClick={themeAndBlur} className="flex items-center justify-between">
-                  <span>Theme</span>
-                  <span className="flex items-center gap-1 opacity-60 text-xs">
-                    {isDark ? <Moon size={12} /> : <Sun size={12} />}
-                    {isDark ? 'Dark' : 'Light'}
-                  </span>
                 </button>
               </li>
               {isAdmin && (
@@ -139,22 +126,10 @@ export function Navbar({ isLoggedIn, onLogout }: NavbarProps): JSX.Element {
             </ul>
           </div>
         ) : (
-          <>
-            {/* Logged-out users still need a way to toggle theme.
-                Tiny circle button keeps it from crowding the Sign In CTA. */}
-            <button
-              onClick={toggleTheme}
-              className="btn btn-ghost btn-sm btn-circle"
-              aria-label={`Switch to ${isDark ? 'light' : 'dark'} mode`}
-              title={`Switch to ${isDark ? 'light' : 'dark'} mode`}
-            >
-              {isDark ? <Sun size={16} /> : <Moon size={16} />}
-            </button>
-            <button onClick={goToSignIn} className="btn btn-primary btn-sm ml-1 gap-1">
-              <LogIn size={16} />
-              <span className="hidden sm:inline">Sign In</span>
-            </button>
-          </>
+          <button onClick={goToSignIn} className="btn btn-primary btn-sm ml-1 gap-1">
+            <LogIn size={16} />
+            <span className="hidden sm:inline">Sign In</span>
+          </button>
         )}
       </div>
     </div>
