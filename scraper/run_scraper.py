@@ -64,43 +64,6 @@ TEAM_META = {
     "WAS": {"conference": "East", "division": "Southeast", "full_name": "Washington Wizards"},
 }
 
-# leaguedashteamstats (Base measure type) returns TEAM_ID and TEAM_NAME but NOT
-# TEAM_ABBREVIATION, so we can't read the abbreviation off the response. NBA team
-# IDs are permanent, so map from those. Falls back to a name lookup below.
-TEAM_ID_TO_ABBR = {
-    "1610612737": "ATL", "1610612738": "BOS", "1610612751": "BKN",
-    "1610612766": "CHA", "1610612741": "CHI", "1610612739": "CLE",
-    "1610612742": "DAL", "1610612743": "DEN", "1610612765": "DET",
-    "1610612744": "GSW", "1610612745": "HOU", "1610612754": "IND",
-    "1610612746": "LAC", "1610612747": "LAL", "1610612763": "MEM",
-    "1610612748": "MIA", "1610612749": "MIL", "1610612750": "MIN",
-    "1610612740": "NOP", "1610612752": "NYK", "1610612760": "OKC",
-    "1610612753": "ORL", "1610612755": "PHI", "1610612756": "PHX",
-    "1610612757": "POR", "1610612758": "SAC", "1610612759": "SAS",
-    "1610612761": "TOR", "1610612762": "UTA", "1610612764": "WAS",
-}
-
-# Reverse of TEAM_META's full_name, used when a team id is unexpectedly missing
-# (e.g. NBA changes an id, or a future expansion team appears).
-NAME_TO_ABBR = {
-    meta["full_name"].lower(): abbr for abbr, meta in TEAM_META.items()
-}
-# NBA's data is inconsistent about the Clippers' name across endpoints.
-NAME_TO_ABBR["la clippers"] = "LAC"
-
-
-def _resolve_team_abbr(team_id: str, team_name: str) -> str:
-    """Best-effort abbreviation for a team row.
-
-    leaguedashteamstats' Base measure type omits TEAM_ABBREVIATION, so resolve
-    from the permanent team id first, then fall back to matching the full name.
-    Returns "" only if both lookups miss, which would mean genuinely unknown data.
-    """
-    abbr = TEAM_ID_TO_ABBR.get(str(team_id), "")
-    if abbr:
-        return abbr
-    return NAME_TO_ABBR.get((team_name or "").strip().lower(), "")
-
 SEASON = "2025-26"
 
 # maps NBA broad positions to specific positions for multi-position support
@@ -361,14 +324,9 @@ def scrape_teams(conn: psycopg2.extensions.connection) -> None:
     count = 0
     for _, row in df.iterrows():
         team_id = str(row["TEAM_ID"])
-        team_name = row.get("TEAM_NAME", "")
-        # Don't trust TEAM_ABBREVIATION — the Base measure type doesn't include it.
-        abbr = row.get("TEAM_ABBREVIATION") or _resolve_team_abbr(team_id, team_name)
+        abbr = row.get("TEAM_ABBREVIATION", "")
         meta = TEAM_META.get(abbr, {})
         ratings = adv_ratings.get(team_id, {})
-
-        if not abbr:
-            logger.warning("could not resolve abbreviation for team %s (%s)", team_name, team_id)
 
         cur.execute(
             """

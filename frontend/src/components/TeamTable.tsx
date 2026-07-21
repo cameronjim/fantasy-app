@@ -104,10 +104,7 @@ export const TeamTable = ({ teams }: TeamTableProps) => {
                   );
                 }
                 if (col.key === 'name') {
-                  // Prefer the logo_url the scraper stores (derived from the
-                  // permanent nba_id) and only fall back to deriving one from
-                  // the abbreviation, which can be blank in older rows.
-                  const logo = team.logo_url || getTeamLogoUrl(team.abbreviation);
+                  const logo = getTeamLogoUrl(team.abbreviation);
                   return (
                     <td key={col.key} className="font-medium whitespace-nowrap">
                       <span className="flex items-center gap-2">
