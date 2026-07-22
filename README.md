@@ -421,6 +421,8 @@ code.
 
 ## License
 
-No license file is present yet. Until one is added, this code is
-"all rights reserved" by default and cannot be reused. See the repository issues
-if you need clarification.
+[MIT](LICENSE) — free to use, modify, and distribute with attribution.
+
+NBA statistics, team names, and logos are property of the NBA and its teams.
+This project is unaffiliated with the NBA and consumes publicly available data
+for personal and educational use.
