@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronUp, ChevronDown } from 'lucide-react';
 import type { Player } from '../types';
 import { getTeamLogoUrl } from '../utils/teamLogos';
+import { PLAYER_IMAGE_FALLBACK } from '../utils/playerImage';
 
 interface PlayerTableProps {
   players: Player[];
@@ -38,9 +39,6 @@ const COLUMNS: { key: SortKey; label: string; full: string; format?: (v: number)
 const INITIAL_ROWS = 30;
 const ROW_INCREMENT = 30;
 const INFINITE_THRESHOLD = 600;
-
-const FALLBACK_SVG =
-  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%23252836'/%3E%3Ccircle cx='20' cy='15' r='7' fill='%234b5563'/%3E%3Cellipse cx='20' cy='35' rx='12' ry='8' fill='%234b5563'/%3E%3C/svg%3E";
 
 const NUMERIC_KEYS = new Set([
   'points_per_game', 'rebounds_per_game', 'assists_per_game', 'steals_per_game',
@@ -176,9 +174,9 @@ export const PlayerTable = ({ players, onSelect, selectedForCompare = [], onTogg
                           <div className="avatar flex-shrink-0">
                             <div className="w-7 rounded-full">
                               <img
-                                src={player.headshot_url || FALLBACK_SVG}
+                                src={player.headshot_url || PLAYER_IMAGE_FALLBACK}
                                 alt=""
-                                onError={(e) => { (e.target as HTMLImageElement).src = FALLBACK_SVG; }}
+                                onError={(e) => { (e.target as HTMLImageElement).src = PLAYER_IMAGE_FALLBACK; }}
                               />
                             </div>
                           </div>

@@ -1,4 +1,6 @@
 import type { Player } from '../types';
+import { PlayerCareerSection } from './PlayerCareerSection';
+import { Rating2kBadge } from './Rating2kBadge';
 
 interface PlayerModalProps {
   player: Player | null;
@@ -70,6 +72,8 @@ export const PlayerModal = ({ player, onClose }: PlayerModalProps) => {
             <div>
               <h3 className="font-bold text-2xl">{player.name}</h3>
               <p className="text-sm opacity-60">{player.team} · {player.position}</p>
+              {/* renders nothing when the player has no 2K match */}
+              <Rating2kBadge playerName={player.name} />
             </div>
           </div>
           <button className="btn btn-sm btn-circle btn-ghost" onClick={onClose}>✕</button>
@@ -97,6 +101,8 @@ export const PlayerModal = ({ player, onClose }: PlayerModalProps) => {
             </div>
           </div>
         ))}
+
+        <PlayerCareerSection nbaPlayerId={player.nba_id} />
       </div>
       <div className="modal-backdrop" onClick={onClose} />
     </div>
