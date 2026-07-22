@@ -36,6 +36,21 @@ export interface AIPreferences {
 
 export const VALID_CATEGORIES = ['PTS', 'REB', 'AST', 'STL', 'BLK', 'FG%', 'FT%', '3PM', 'TO'];
 export const VALID_POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
+
+/**
+ * Keeps only allowlisted values and drops duplicates, preserving first-seen
+ * order. Deduping is what bounds the length: filtering alone accepts an
+ * arbitrarily long array of repeated valid values, and these arrays get joined
+ * into the system prompt of every AI call, so a caller could otherwise inflate
+ * token spend by orders of magnitude. Output can never exceed the allowlist.
+ */
+function allowlisted(values: unknown[], allowed: string[]): string[] {
+  const seen = new Set<string>();
+  for (const v of values) {
+    if (typeof v === 'string' && allowed.includes(v)) seen.add(v);
+  }
+  return [...seen];
+}
 export const VALID_BET_MARKETS = ['spread', 'total', 'moneyline', 'parlay'];
 
 /** Loads a user's preferences from the DB. Returns {} if none set. */
@@ -91,10 +106,10 @@ export async function setUserPreferences(userId: number, prefs: AIPreferences): 
     cleaned.league_size = Math.round(prefs.league_size);
   }
   if (Array.isArray(prefs.punt_categories)) {
-    cleaned.punt_categories = prefs.punt_categories.filter((c) => VALID_CATEGORIES.includes(c));
+    cleaned.punt_categories = allowlisted(prefs.punt_categories, VALID_CATEGORIES);
   }
   if (Array.isArray(prefs.priority_categories)) {
-    cleaned.priority_categories = prefs.priority_categories.filter((c) => VALID_CATEGORIES.includes(c));
+    cleaned.priority_categories = allowlisted(prefs.priority_categories, VALID_CATEGORIES);
   }
   if (['stars_scrubs', 'balanced', 'streaming'].includes(prefs.roster_strategy ?? '')) {
     cleaned.roster_strategy = prefs.roster_strategy;
@@ -115,7 +130,7 @@ export async function setUserPreferences(userId: number, prefs: AIPreferences): 
     cleaned.bench_philosophy = prefs.bench_philosophy;
   }
   if (Array.isArray(prefs.position_needs)) {
-    cleaned.position_needs = prefs.position_needs.filter((p) => VALID_POSITIONS.includes(p));
+    cleaned.position_needs = allowlisted(prefs.position_needs, VALID_POSITIONS);
   }
   if (typeof prefs.extra_notes === 'string' && prefs.extra_notes.length <= 1000) {
     cleaned.extra_notes = prefs.extra_notes.trim();
