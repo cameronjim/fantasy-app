@@ -1,5 +1,3 @@
-Scrapy
-fake-useragent
 nba_api
 psycopg2-binary
 python-dotenv

@@ -55,7 +55,7 @@ const TechStack = () => (
       <StackCard
         title="Backend"
         items={[
-          'Node.js 22 with Express 4',
+          'Node.js 20 with Express 4',
           'TypeScript ESM using NodeNext resolution',
           'PostgreSQL via the pg driver',
           'JWT auth with bcryptjs password hashing',
@@ -77,7 +77,7 @@ const TechStack = () => (
       <StackCard
         title="Data pipeline"
         items={[
-          'Python with Scrapy and the nba_api library',
+          'Python with the nba_api library and requests',
           'Beautiful Soup for CBS Sports injury parsing',
           'A scheduled scrape every six hours via GitHub Actions cron',
           'Upserts directly into Postgres via psycopg2',
@@ -130,13 +130,13 @@ const Architecture = () => (
         </ul>
         <h3 className="text-base font-semibold mt-4 mb-2">Fantasy scoring engine</h3>
         <p className="opacity-80">
-          The scoring service supports every major industry format,
+          The scoring service implements every major industry format,
           including NBA.com's <code className="text-xs">NBA_FANTASY_PTS</code>,
           FanDuel, DraftKings (with double-double and triple-double bonuses),
-          ESPN H2H Points, and Yahoo High Score. It also includes a z-score
-          variant for nine-category leagues. Formats are selectable per user
-          via the existing preferences system, and the default is NBA
-          standard.
+          ESPN H2H Points, and Yahoo High Score, plus a z-score variant for
+          nine-category leagues. Scores currently render using the NBA standard
+          formula; wiring per-user format selection through to the preferences
+          system is still on the list.
         </p>
       </div>
     </div>

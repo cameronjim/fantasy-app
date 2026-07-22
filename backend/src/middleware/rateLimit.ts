@@ -13,6 +13,10 @@ export interface RateLimitOptions {
   // derives the throttling identity from the request. defaults to client ip;
   // authenticated routes pass a userId-based key instead.
   keyFor?: (req: Request) => string;
+  // when the counter query errors, reject with 503 instead of letting the
+  // request through. Use for limits that cap billable third-party spend, where
+  // an unbounded fallback is worse than a brief outage. Defaults to false.
+  failClosed?: boolean;
 }
 
 /**
@@ -46,12 +50,17 @@ function clientKey(req: Request): string {
  * Disabled under NODE_ENV=test so the unit/api suites don't depend on a real
  * counter table — the logic is covered directly in rateLimit.test.ts.
  *
- * Fails OPEN: if the counter query errors, the request proceeds. A limiter
- * outage must not lock out every user, and route-level validation still
+ * Fails OPEN by default: if the counter query errors, the request proceeds. A
+ * limiter outage must not lock out every user, and route-level validation still
  * guards each endpoint.
+ *
+ * Pass `failClosed: true` to invert that for limits protecting billable spend
+ * (the Claude-backed routes). There, a silent fallback to unlimited is the worse
+ * failure: the cap is the only thing bounding Anthropic cost, so a counter
+ * outage should surface as 503 rather than quietly uncapping the endpoint.
  */
 export function rateLimit(options: RateLimitOptions) {
-  const { scope, limit, windowSeconds, keyFor = clientKey } = options;
+  const { scope, limit, windowSeconds, keyFor = clientKey, failClosed = false } = options;
 
   return async function rateLimitMiddleware(
     req: Request,
@@ -70,7 +79,13 @@ export function rateLimit(options: RateLimitOptions) {
         return;
       }
     } catch {
-      // fail open — see the function doc.
+      // see the function doc: open by default, closed for spend-capping scopes.
+      if (failClosed) {
+        res.status(503).json({
+          error: 'Rate limiting is temporarily unavailable. Please try again shortly.',
+        });
+        return;
+      }
     }
     next();
   };
