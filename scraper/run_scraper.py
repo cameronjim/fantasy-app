@@ -36,6 +36,7 @@ import time
 import unicodedata
 from datetime import datetime, timedelta
 from typing import Callable, TypeVar
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 import psycopg2
@@ -167,13 +168,60 @@ _BROAD_TO_SPECIFIC: dict[str, list[str]] = {
 }
 
 
-def get_db() -> psycopg2.extensions.connection:
-    url = os.getenv("DATABASE_URL")
-    if not url:
-        logger.error("DATABASE_URL not set in .env")
-        sys.exit(1)
+# Which database a run targets. Prod is the default so an un-flagged run (the
+# GitHub Actions cron) keeps its existing behaviour untouched.
+TARGET_PROD = "prod"
+TARGET_DEV = "dev"
+
+# env var per target. dev is optional: only people who test against the dev
+# Neon branch need it set.
+TARGET_ENV_VARS = {
+    TARGET_PROD: "DATABASE_URL",
+    TARGET_DEV: "DATABASE_URL_DEV",
+}
+
+
+def resolve_database_url(target: str) -> str:
+    """Connection string for `target`, or exit with an actionable message.
+
+    Kept separate from get_db so the resolution rules are testable without a
+    live database.
+    """
+    var = TARGET_ENV_VARS[target]
+    url = os.getenv(var)
+    if url:
+        return url
+    if target == TARGET_DEV:
+        logger.error(
+            "%s is not set. Add it to .env with your Neon dev branch connection "
+            "string (Neon console -> Branches -> dev -> Connection string), or "
+            "drop --dev to run against prod.",
+            var,
+        )
+    else:
+        logger.error("%s is not set in .env", var)
+    sys.exit(1)
+
+
+def get_db(target: str = TARGET_PROD) -> psycopg2.extensions.connection:
+    url = resolve_database_url(target)
     conn = psycopg2.connect(url)
     conn.autocommit = True
+    # Log which database we actually landed on. There is more than one Neon
+    # branch in play (prod vs dev), and a shell DATABASE_URL silently overrides
+    # .env, so "table does not exist" is usually "right migration, wrong
+    # database" rather than a missing migration. Host + db name only, never
+    # credentials.
+    try:
+        parsed = urlparse(url)
+        logger.info(
+            "target=%s -> connected to %s/%s",
+            target.upper(),
+            parsed.hostname,
+            (parsed.path or "").lstrip("/").split("?")[0] or "?",
+        )
+    except Exception:  # noqa: BLE001 - diagnostics must never break the run
+        pass
     return conn
 
 
@@ -1378,6 +1426,24 @@ def sync_2k_ratings(
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="NBA stats scraper")
+    # Mutually exclusive so `--dev --prod` is rejected rather than silently
+    # picking one. Default is prod, which keeps the un-flagged cron unchanged.
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument(
+        "--dev",
+        dest="target",
+        action="store_const",
+        const=TARGET_DEV,
+        help="write to the dev Neon branch (uses DATABASE_URL_DEV)",
+    )
+    target.add_argument(
+        "--prod",
+        dest="target",
+        action="store_const",
+        const=TARGET_PROD,
+        help="write to the prod database (uses DATABASE_URL, the default)",
+    )
+    parser.set_defaults(target=TARGET_PROD)
     parser.add_argument(
         "--backfill-history",
         action="store_true",
@@ -1431,7 +1497,7 @@ def main(argv: list[str] | None = None) -> None:
             logger.error("%s", e)
             sys.exit(2)
 
-    conn = get_db()
+    conn = get_db(args.target)
     try:
         if args.backfill_history:
             backfill_history(conn, args.from_season, args.to_season)

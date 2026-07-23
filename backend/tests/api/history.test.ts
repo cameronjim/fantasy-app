@@ -173,7 +173,9 @@ describe('GET /api/history/players', () => {
     expect(countParams).toContain('%jordan%');
   });
 
-  it('caps limit at 500 and passes it as a bound parameter', async () => {
+  // 1000, not the shared 500 default: modern seasons run past 500 players once
+  // two-way contracts are counted, and the UI loads a season in one request.
+  it('caps limit at 1000 and passes it as a bound parameter', async () => {
     // arrange
     queryMock
       .mockResolvedValueOnce(pgResult([{ total: 20000 }]))
@@ -187,7 +189,28 @@ describe('GET /api/history/players', () => {
     // assert
     expect(res.status).toBe(200);
     const [, pageParams] = queryMock.mock.calls[1];
-    expect(pageParams).toEqual(['1996-97', 500, 0]);
+    expect(pageParams).toEqual(['1996-97', 1000, 0]);
+  });
+
+  // regression: the ceiling used to be 500, which silently truncated any season
+  // with more players than that — 2021-22 has 605, so its lowest-scoring 105
+  // players could neither be listed nor found by search.
+  it('lets a single request cover the largest season', async () => {
+    // arrange
+    const LARGEST_SEASON_SIZE = 605; // 2021-22, inflated by two-way contracts
+    queryMock
+      .mockResolvedValueOnce(pgResult([{ total: LARGEST_SEASON_SIZE }]))
+      .mockResolvedValueOnce(pgResult([]));
+
+    // act
+    const res = await request(app)
+      .get('/api/history/players')
+      .query({ season: '2021-22', limit: String(LARGEST_SEASON_SIZE) });
+
+    // assert
+    expect(res.status).toBe(200);
+    const [, pageParams] = queryMock.mock.calls[1];
+    expect(pageParams).toEqual(['2021-22', LARGEST_SEASON_SIZE, 0]);
   });
 
   it('honours limit and offset for paging', async () => {
