@@ -3,6 +3,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { Navbar } from './components/Navbar';
 import { StatsPage } from './pages/StatsPage';
+import { HistoryPage } from './pages/HistoryPage';
+import { Ratings2kPage } from './pages/Ratings2kPage';
 import { FantasyPage } from './pages/FantasyPage';
 import { ImproveTeamPage } from './pages/ImproveTeamPage';
 import { BettingPage } from './pages/BettingPage';
@@ -54,6 +56,8 @@ export const App = (): JSX.Element => {
           <main>
             <Routes>
               <Route path="/" element={<StatsPage />} />
+              <Route path="/history" element={<HistoryPage />} />
+              <Route path="/ratings" element={<Ratings2kPage />} />
               <Route path="/fantasy" element={<FantasyPage isLoggedIn={isLoggedIn} />} />
               <Route path="/improve" element={<ImproveTeamPage isLoggedIn={isLoggedIn} />} />
               <Route path="/betting" element={<BettingPage isLoggedIn={isLoggedIn} />} />
