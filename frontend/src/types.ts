@@ -331,3 +331,141 @@ export interface Rating2kDetail {
   badges: Rating2kBadge[];
   rating_history: Rating2kRatingHistoryEntry[];
 }
+
+/**
+ * The nine fantasy categories plus minutes, as keyed by `/api/players/:id/analytics`.
+ * `fg_impact` / `ft_impact` are attempt-weighted excess makes rather than raw
+ * percentages, so a high-volume shooter isn't tied with a 1-for-1 bench player.
+ */
+export type AnalyticsStat =
+  | 'pts'
+  | 'reb'
+  | 'ast'
+  | 'stl'
+  | 'blk'
+  | 'fg3m'
+  | 'tov'
+  | 'fg_impact'
+  | 'ft_impact'
+  | 'minutes';
+
+export interface AnalyticsPlayer {
+  id: number;
+  nba_id: string | null;
+  name: string;
+  team: string | null;
+  position: string | null;
+  headshot_url: string | null;
+  // not part of the documented analytics contract, but the players table
+  // carries them — the header shows a badge only when they arrive.
+  injury_status?: string | null;
+  injury_detail?: string | null;
+}
+
+/** When each half of the payload was last computed. `logs` is null for a
+ *  player with no ingested game logs. */
+export interface AnalyticsAsOf {
+  logs: string | null;
+  distributions: string;
+}
+
+/** The comparison population the percentiles are drawn from. */
+export interface AnalyticsPool {
+  key: string;
+  label: string;
+  definition: string;
+  sample_size: NumericLike;
+}
+
+/** `percentile` is always "higher is better" — the server has already
+ *  reversed it for turnovers. */
+export interface StatPercentile {
+  stat: AnalyticsStat;
+  value: NumericLike;
+  percentile: NumericLike;
+}
+
+export interface DistributionBucket {
+  lo: NumericLike;
+  hi: NumericLike;
+  count: NumericLike;
+}
+
+/** Empirical histogram for one stat across the pool, plus where this player
+ *  falls in it. Buckets are counted, not modelled — there is no fitted curve. */
+export interface StatDistribution {
+  stat: AnalyticsStat;
+  mean: NumericLike;
+  stddev: NumericLike;
+  buckets: DistributionBucket[];
+  player_value: NumericLike;
+}
+
+/** One box score line. Every counting stat can be absent for a player whose
+ *  logs haven't been ingested, which is why the containing array may be empty. */
+export interface AnalyticsGameLog {
+  game_date: string;
+  opponent_team_abbr?: string | null;
+  is_home: boolean;
+  minutes: NumericLike;
+  pts: NumericLike;
+  reb: NumericLike;
+  ast: NumericLike;
+  stl: NumericLike;
+  blk: NumericLike;
+  tov: NumericLike;
+  fgm: NumericLike;
+  fga: NumericLike;
+  fg3m: NumericLike;
+  fg3a: NumericLike;
+  ftm: NumericLike;
+  fta: NumericLike;
+}
+
+/** Trailing averages aligned to the same game dates as the logs. */
+export interface AnalyticsRollingPoint {
+  game_date: string;
+  min_r5: NumericLike;
+  pts_r5: NumericLike;
+  pts_r10: NumericLike;
+  reb_r5: NumericLike;
+  ast_r5: NumericLike;
+}
+
+/** Recent form against the player's own season baseline. `z` is null when the
+ *  sample is too small to standardize. */
+export interface Last10VsSeason {
+  stat: AnalyticsStat;
+  last10: NumericLike;
+  season: NumericLike;
+  delta: NumericLike;
+  z: NumericLike | null;
+}
+
+export interface AnalyticsTrends {
+  // oldest first, up to 20 games.
+  games: AnalyticsGameLog[];
+  rolling: AnalyticsRollingPoint[];
+  last10_vs_season: Last10VsSeason[];
+}
+
+/**
+ * Forward projection. The server returns `null` until the model ships, so
+ * every field here is optional and the card renders whatever arrives.
+ */
+export interface PlayerPrediction {
+  summary?: string | null;
+  projected?: Partial<Record<AnalyticsStat, NumericLike>>;
+  confidence?: 'low' | 'medium' | 'high' | null;
+  as_of?: string | null;
+}
+
+export interface PlayerAnalytics {
+  player: AnalyticsPlayer;
+  as_of: AnalyticsAsOf;
+  pool: AnalyticsPool;
+  percentiles: StatPercentile[];
+  distributions: StatDistribution[];
+  trends: AnalyticsTrends;
+  prediction: PlayerPrediction | null;
+}

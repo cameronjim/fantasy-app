@@ -4,6 +4,7 @@ import type {
   BettingGame, BettingPicksResponse, Bet, NewBet, LedgerSummary, BetStatus,
   PlayerSeasonRow, TeamSeasonRow,
   Rating2kSummary, Rating2kDetail, Rating2kTeamType,
+  PlayerAnalytics,
 } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL
@@ -159,6 +160,26 @@ export async function getPlayers(params?: { search?: string; team?: string; posi
 export async function getPlayer(id: number): Promise<Player> {
   const { data } = await api.get(`/players/${id}`);
   return data;
+}
+
+/**
+ * Percentiles, distributions and recent-form trends for one player. The trend
+ * arrays come back empty for players with no ingested game logs, so callers
+ * must render the percentile half on its own.
+ */
+export async function getPlayerAnalytics(id: number): Promise<PlayerAnalytics> {
+  const { data } = await api.get<PlayerAnalytics>(`/players/${id}/analytics`);
+  return {
+    ...data,
+    percentiles: data.percentiles ?? [],
+    distributions: data.distributions ?? [],
+    trends: {
+      games: data.trends?.games ?? [],
+      rolling: data.trends?.rolling ?? [],
+      last10_vs_season: data.trends?.last10_vs_season ?? [],
+    },
+    prediction: data.prediction ?? null,
+  };
 }
 
 export async function getTeams(): Promise<Team[]> {

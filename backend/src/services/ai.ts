@@ -1,11 +1,7 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { query } from '../db.js';
+import { activeProviderKind, getNarrator } from './aiProvider.js';
 import { getRankedPlayers } from './fantasyScore.js';
 import type { BettingGame } from './odds.js';
-
-const client = new Anthropic();
-
-const HAIKU = 'claude-haiku-4-5-20251001';
 
 /** Pulls the JSON payload out of a model reply that may be fenced or chatty. */
 export function extractJSON(text: string): string {
@@ -16,23 +12,29 @@ export function extractJSON(text: string): string {
   return text;
 }
 
+/**
+ * The single chokepoint every AI feature routes through. Kept on its original
+ * signature so callers stay provider-agnostic; the actual protocol is chosen
+ * by the narrator in aiProvider.ts.
+ */
 export async function callClaude(
   systemPrompt: string,
   messages: Array<{ role: string; content: string }>,
   options: { model?: string; maxTokens?: number } = {}
 ): Promise<string> {
-  const response = await client.messages.create({
-    model: options.model ?? HAIKU,
-    max_tokens: options.maxTokens ?? 1024,
+  const result = await getNarrator().narrate({
     system: systemPrompt,
     messages: messages.map((m) => ({
       role: m.role as 'user' | 'assistant',
       content: m.content,
     })),
+    maxTokens: options.maxTokens,
+    // per-request overrides in this codebase are Claude model ids; forwarding
+    // one to an OpenAI-compatible gateway would 404, so they only apply when
+    // the anthropic provider is active.
+    model: activeProviderKind() === 'anthropic' ? options.model : undefined,
   });
-  const block = response.content[0];
-  if (block.type === 'text') return block.text;
-  return '';
+  return result.text;
 }
 
 type PlayerRow = Record<string, unknown>;
