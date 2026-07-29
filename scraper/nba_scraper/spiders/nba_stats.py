@@ -45,6 +45,21 @@ TEAM_META = {
     "WAS": {"conference": "East", "division": "Southeast", "full_name": "Washington Wizards"},
 }
 
+# leaguedashteamstats (Base measure type) returns TEAM_ID and TEAM_NAME but NOT
+# TEAM_ABBREVIATION. NBA team ids are permanent, so resolve abbreviations from them.
+TEAM_ID_TO_ABBR = {
+    "1610612737": "ATL", "1610612738": "BOS", "1610612751": "BKN",
+    "1610612766": "CHA", "1610612741": "CHI", "1610612739": "CLE",
+    "1610612742": "DAL", "1610612743": "DEN", "1610612765": "DET",
+    "1610612744": "GSW", "1610612745": "HOU", "1610612754": "IND",
+    "1610612746": "LAC", "1610612747": "LAL", "1610612763": "MEM",
+    "1610612748": "MIA", "1610612749": "MIL", "1610612750": "MIN",
+    "1610612740": "NOP", "1610612752": "NYK", "1610612760": "OKC",
+    "1610612753": "ORL", "1610612755": "PHI", "1610612756": "PHX",
+    "1610612757": "POR", "1610612758": "SAC", "1610612759": "SAS",
+    "1610612761": "TOR", "1610612762": "UTA", "1610612764": "WAS",
+}
+
 # required by stats.nba.com to avoid 403 errors
 NBA_API_HEADERS = {
     "Host": "stats.nba.com",
@@ -228,8 +243,14 @@ class NbaStatsSpider(scrapy.Spider):
 
         for t in teams:
             team_id = str(t.get("TEAM_ID", ""))
-            abbr = t.get("TEAM_ABBREVIATION", "")
+            team_name = t.get("TEAM_NAME", "")
+            # The Base measure type omits TEAM_ABBREVIATION, so fall back to
+            # resolving it from the permanent team id / full name.
+            abbr = t.get("TEAM_ABBREVIATION") or self._resolve_team_abbr(team_id, team_name)
             meta = TEAM_META.get(abbr, {})
+
+            if not abbr:
+                logger.warning("could not resolve abbreviation for team %s (%s)", team_name, team_id)
 
             yield TeamItem(
                 nba_id=team_id,
@@ -401,6 +422,17 @@ class NbaStatsSpider(scrapy.Spider):
             "Center": "C",
         }
         return mapping.get(pos, pos)
+
+    @classmethod
+    def _resolve_team_abbr(cls, team_id: str, team_name: str) -> str:
+        """Best-effort abbreviation: permanent team id first, then full name."""
+        abbr = TEAM_ID_TO_ABBR.get(str(team_id), "")
+        if abbr:
+            return abbr
+        # _team_name_to_abbr echoes the input back when it doesn't recognize the
+        # name, so only accept a result that actually looks like an abbreviation.
+        mapped = cls._team_name_to_abbr((team_name or "").strip())
+        return mapped if mapped in TEAM_META else ""
 
     @staticmethod
     def _team_name_to_abbr(team_name: str) -> str:
