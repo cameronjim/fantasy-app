@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   CartesianGrid,
   Legend,
@@ -8,7 +9,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import type { AnalyticsTrends } from '../types';
+import type { AnalyticsGameLog, AnalyticsTrends } from '../types';
 import { useChartColors } from '../hooks/useChartColors';
 import { formatStat } from '../utils/stats';
 import { chartNumber, deltaDisplay, formatGameDate, statLabel } from '../utils/analytics';
@@ -21,39 +22,45 @@ interface PlayerTrendsSectionProps {
 // coloring has to be flipped for it.
 const LOWER_IS_BETTER = new Set<string>(['tov']);
 
+/** Every stat the chart can switch between; the backend serves r5/r10 for each. */
+const TREND_TABS = ['pts', 'reb', 'ast', 'stl', 'blk', 'fg3m', 'tov', 'minutes'] as const;
+type TrendTab = (typeof TREND_TABS)[number];
+
+/** The rolling payload shortens `minutes` to `min_` — mirror that here. */
+const rollingKey = (stat: TrendTab, window: 5 | 10): string =>
+  `${stat === 'minutes' ? 'min' : stat}_r${window}`;
+
 interface TrendPoint {
   date: string;
-  pts: number;
-  minutes: number;
-  pts_r5: number | null;
-  pts_r10: number | null;
-  min_r5: number | null;
+  value: number;
+  r5: number | null;
+  r10: number | null;
 }
 
 /**
- * Merges the per-game logs with the rolling averages, which arrive as separate
- * arrays keyed by game date. Rolling values are null on the leading games where
- * the window isn't full yet, which recharts renders as a gap rather than a
- * drop to zero.
+ * Merges the per-game logs with the rolling averages for one selected stat.
+ * Rolling values are null on the leading games where the window isn't full
+ * yet, which recharts renders as a gap rather than a drop to zero.
  */
-function buildTrendPoints(trends: AnalyticsTrends): TrendPoint[] {
+function buildTrendPoints(trends: AnalyticsTrends, stat: TrendTab): TrendPoint[] {
   const rollingByDate = new Map(trends.rolling.map((r) => [r.game_date, r]));
+  const k5 = rollingKey(stat, 5);
+  const k10 = rollingKey(stat, 10);
   return trends.games.map((game) => {
     const rolling = rollingByDate.get(game.game_date);
     return {
       date: formatGameDate(game.game_date),
-      pts: chartNumber(game.pts),
-      minutes: chartNumber(game.minutes),
-      pts_r5: rolling ? chartNumber(rolling.pts_r5) : null,
-      pts_r10: rolling ? chartNumber(rolling.pts_r10) : null,
-      min_r5: rolling ? chartNumber(rolling.min_r5) : null,
+      value: chartNumber(game[stat as keyof AnalyticsGameLog] as number),
+      r5: rolling && rolling[k5] !== undefined ? chartNumber(rolling[k5] as number) : null,
+      r10: rolling && rolling[k10] !== undefined ? chartNumber(rolling[k10] as number) : null,
     };
   });
 }
 
 export const PlayerTrendsSection = ({ trends }: PlayerTrendsSectionProps): JSX.Element | null => {
   const colors = useChartColors();
-  const points = buildTrendPoints(trends);
+  const [stat, setStat] = useState<TrendTab>('pts');
+  const points = buildTrendPoints(trends, stat);
   const hasCharts = points.length > 0;
   const hasForm = trends.last10_vs_season.length > 0;
 
@@ -81,87 +88,65 @@ export const PlayerTrendsSection = ({ trends }: PlayerTrendsSectionProps): JSX.E
         </div>
 
         {hasCharts && (
-          <>
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wider opacity-50 mb-1">
-                Points
-              </p>
-              <div className="h-52 w-full" data-testid="points-trend-chart">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={points} margin={{ top: 8, right: 8, bottom: 0, left: -22 }}>
-                    <CartesianGrid stroke={colors.grid} strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="date" tick={axisTick} stroke={colors.grid} minTickGap={16} />
-                    <YAxis tick={axisTick} stroke={colors.grid} allowDecimals={false} />
-                    <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: colors.content }} />
-                    <Legend wrapperStyle={{ fontSize: '0.7rem', color: colors.content }} />
-                    <Line
-                      type="monotone"
-                      dataKey="pts"
-                      name="PTS"
-                      stroke={colors.content}
-                      strokeOpacity={0.35}
-                      strokeWidth={1.5}
-                      dot={false}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="pts_r5"
-                      name="5-game avg"
-                      stroke={colors.primary}
-                      strokeWidth={2}
-                      dot={false}
-                      connectNulls={false}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="pts_r10"
-                      name="10-game avg"
-                      stroke={colors.accent}
-                      strokeWidth={2}
-                      strokeDasharray="4 3"
-                      dot={false}
-                      connectNulls={false}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
+          <div>
+            <div
+              role="tablist"
+              aria-label="Trend stat"
+              className="flex flex-wrap gap-1 overflow-x-auto no-scrollbar mb-2"
+            >
+              {TREND_TABS.map((tab) => (
+                <button
+                  key={tab}
+                  role="tab"
+                  aria-selected={tab === stat}
+                  onClick={() => setStat(tab)}
+                  className={`btn btn-xs ${tab === stat ? 'btn-primary' : 'btn-ghost'}`}
+                >
+                  {statLabel(tab)}
+                </button>
+              ))}
             </div>
 
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wider opacity-50 mb-1">
-                Minutes
-              </p>
-              <div className="h-44 w-full" data-testid="minutes-trend-chart">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={points} margin={{ top: 8, right: 8, bottom: 0, left: -22 }}>
-                    <CartesianGrid stroke={colors.grid} strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="date" tick={axisTick} stroke={colors.grid} minTickGap={16} />
-                    <YAxis tick={axisTick} stroke={colors.grid} allowDecimals={false} />
-                    <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: colors.content }} />
-                    <Legend wrapperStyle={{ fontSize: '0.7rem', color: colors.content }} />
-                    <Line
-                      type="monotone"
-                      dataKey="minutes"
-                      name="MIN"
-                      stroke={colors.content}
-                      strokeOpacity={0.35}
-                      strokeWidth={1.5}
-                      dot={false}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="min_r5"
-                      name="5-game avg"
-                      stroke={colors.secondary}
-                      strokeWidth={2}
-                      dot={false}
-                      connectNulls={false}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
+            <div className="h-52 w-full" data-testid="trend-chart">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={points} margin={{ top: 8, right: 8, bottom: 0, left: -22 }}>
+                  <CartesianGrid stroke={colors.grid} strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="date" tick={axisTick} stroke={colors.grid} minTickGap={16} />
+                  <YAxis tick={axisTick} stroke={colors.grid} allowDecimals={false} />
+                  <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: colors.content }} />
+                  <Legend wrapperStyle={{ fontSize: '0.7rem', color: colors.content }} />
+                  <Line
+                    type="monotone"
+                    dataKey="value"
+                    name={statLabel(stat)}
+                    stroke={colors.content}
+                    strokeOpacity={0.35}
+                    strokeWidth={1.5}
+                    dot={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="r5"
+                    name="5-game avg"
+                    stroke={colors.primary}
+                    strokeWidth={2}
+                    dot={false}
+                    connectNulls={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="r10"
+                    name="10-game avg"
+                    stroke={colors.accent}
+                    strokeWidth={2}
+                    strokeDasharray="4 3"
+                    dot={false}
+                    connectNulls={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
-          </>
+          </div>
         )}
 
         {hasForm && (

@@ -122,13 +122,14 @@ export interface TrendGame extends TrendValues {
   fta: number;
 }
 
+/**
+ * One aligned point per returned game: `<stat>_r5` and `<stat>_r10` trailing
+ * means for every trend stat (minutes shortens to `min_`). Null while the
+ * window isn't full yet.
+ */
 export interface RollingPoint {
   game_date: string | null;
-  min_r5: number | null;
-  pts_r5: number | null;
-  pts_r10: number | null;
-  reb_r5: number | null;
-  ast_r5: number | null;
+  [rollingKey: string]: number | string | null;
 }
 
 export interface PlayerAnalytics {
@@ -644,14 +645,16 @@ export async function getPlayerAnalytics(playerId: number): Promise<PlayerAnalyt
 
   // rolling averages are computed across the whole season and then sliced to the
   // same window as `games`, so the two arrays line up index-for-index and the
-  // 10-game line is already correct at the left edge of the chart.
-  const rollingAll = {
-    min_r5: rollingMean(logs.map((g) => g.minutes), 5),
-    pts_r5: rollingMean(logs.map((g) => g.pts), 5),
-    pts_r10: rollingMean(logs.map((g) => g.pts), 10),
-    reb_r5: rollingMean(logs.map((g) => g.reb), 5),
-    ast_r5: rollingMean(logs.map((g) => g.ast), 5),
-  };
+  // 10-game line is already correct at the left edge of the chart. every trend
+  // stat gets a 5- and 10-game series so the chart's stat picker can switch
+  // between categories without a refetch.
+  const rollingAll: Record<string, Array<number | null>> = {};
+  for (const stat of TREND_STATS) {
+    const series = logs.map((g) => g[stat]);
+    const key = stat === 'minutes' ? 'min' : stat;
+    rollingAll[`${key}_r5`] = rollingMean(series, 5);
+    rollingAll[`${key}_r10`] = rollingMean(series, 10);
+  }
 
   const windowStart = Math.max(0, logs.length - TREND_GAME_COUNT);
   const recent = logs.slice(windowStart);
@@ -677,14 +680,13 @@ export async function getPlayerAnalytics(playerId: number): Promise<PlayerAnalyt
     fta: g.fta,
   }));
 
-  const rolling: RollingPoint[] = recent.map((g, i) => ({
-    game_date: g.game_date,
-    min_r5: rollingAll.min_r5[windowStart + i],
-    pts_r5: rollingAll.pts_r5[windowStart + i],
-    pts_r10: rollingAll.pts_r10[windowStart + i],
-    reb_r5: rollingAll.reb_r5[windowStart + i],
-    ast_r5: rollingAll.ast_r5[windowStart + i],
-  }));
+  const rolling: RollingPoint[] = recent.map((g, i) => {
+    const point: RollingPoint = { game_date: g.game_date };
+    for (const [key, series] of Object.entries(rollingAll)) {
+      point[key] = series[windowStart + i];
+    }
+    return point;
+  });
 
   const lastLoggedDay = logs.length > 0 ? logs[logs.length - 1].game_date : null;
 
