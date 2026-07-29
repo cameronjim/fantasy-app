@@ -82,7 +82,7 @@ export const PlayerModal = ({ player, onClose }: PlayerModalProps) => {
                 <Link
                   to={`/player/${player.id}`}
                   onClick={onClose}
-                  className="badge badge-sm badge-primary gap-1 font-semibold cursor-pointer transition-opacity hover:opacity-75"
+                  className="badge badge-sm badge-primary gap-1 font-semibold transition-opacity hover:opacity-75"
                   title="Trends, percentiles and projections"
                 >
                   <BarChart3 size={12} />
