@@ -42,6 +42,7 @@ export interface Team {
   defensive_rating: number;
   offensive_rating: number;
   net_rating: number;
+  logo_url?: string | null;
 }
 
 export interface Game {
