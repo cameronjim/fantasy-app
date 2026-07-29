@@ -35,7 +35,11 @@ test.describe('Player analytics page', () => {
 
     await analytics.goto(ALL_STAR.id);
 
-    await expect(analytics.pointsTrendChart()).toBeVisible();
+    await expect(analytics.trendChart()).toBeVisible();
+    // the chart switches stats without a refetch
+    await analytics.trendTab('REB').click();
+    await expect(analytics.trendTab('REB')).toHaveAttribute('aria-selected', 'true');
+    await expect(analytics.trendChart()).toBeVisible();
     await expect(analytics.recentGamesSection()).toBeVisible();
     await expect(analytics.freshnessFooter()).toBeVisible();
     // the api sends prediction: null until the model ships.
