@@ -61,7 +61,7 @@ test.describe('Player analytics page', () => {
     await expect(analytics.percentileSection()).toBeVisible();
     await expect(analytics.distributionChart()).toBeVisible();
     await expect(page.getByText('No game logs yet', { exact: true })).toBeVisible();
-    await expect(analytics.pointsTrendChart()).toHaveCount(0);
+    await expect(analytics.trendChart()).toHaveCount(0);
     await expect(analytics.recentGamesSection()).toHaveCount(0);
   });
 
