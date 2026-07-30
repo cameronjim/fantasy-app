@@ -453,11 +453,23 @@ export interface AnalyticsTrends {
  * Forward projection. The server returns `null` until the model ships, so
  * every field here is optional and the card renders whatever arrives.
  */
+/** P10/P50/P90 band served for stats the model quantifies uncertainty on. */
+export interface ProjectedRange {
+  p10: NumericLike;
+  p50: NumericLike;
+  p90: NumericLike;
+}
+
 export interface PlayerPrediction {
   summary?: string | null;
-  projected?: Partial<Record<AnalyticsStat, NumericLike>>;
+  projected?: Partial<Record<AnalyticsStat, NumericLike | ProjectedRange | null>>;
   confidence?: 'low' | 'medium' | 'high' | null;
   as_of?: string | null;
+  model_version?: string | null;
+  game_date?: string | null;
+  prob_active?: NumericLike | null;
+  conditional?: boolean;
+  unconditional_pts?: NumericLike | null;
 }
 
 export interface PlayerAnalytics {
@@ -468,4 +480,86 @@ export interface PlayerAnalytics {
   distributions: StatDistribution[];
   trends: AnalyticsTrends;
   prediction: PlayerPrediction | null;
+}
+
+/** Which model produced the projections currently on screen. */
+export interface PredictionRun {
+  model_version: string;
+  predicted_at: string | null;
+}
+
+/** One projected player inside a slate game. */
+export interface SlatePlayer {
+  nba_player_id: string;
+  name: string;
+  team_abbr: string | null;
+  /** Chance the player appears at all, 0-1. Null when the run didn't model it. */
+  prob_active: NumericLike | null;
+  /** Unconditional expected points — availability is already priced in. */
+  proj_pts: NumericLike | null;
+  proj_min_p50: NumericLike | null;
+}
+
+export interface SlateGame {
+  nba_game_id: string;
+  game_status: string | null;
+  home_team_id: string | null;
+  home_team_abbr: string | null;
+  away_team_id: string | null;
+  away_team_abbr: string | null;
+  /** Top projected players, best first. Empty until a run has completed. */
+  players: SlatePlayer[];
+}
+
+export interface SlateResponse {
+  date: string;
+  /** Null until a model run has completed — the page shows its own notice. */
+  run: PredictionRun | null;
+  games: SlateGame[];
+}
+
+/**
+ * Deterministic reasons a player landed on the watchlist. Computed from game
+ * logs and injury status, never from the model — each one is checkable against
+ * a box score.
+ */
+export type WatchlistReason =
+  | 'ROLE_INCREASE'
+  | 'SHOT_VOLUME_SURGE'
+  | 'RETURNING_FROM_ABSENCE'
+  | 'HOT_STREAK'
+  | 'TEAMMATE_ABSENCE';
+
+/** The numbers behind whichever reasons fired — only those keys are present. */
+export interface WatchlistEvidence {
+  min_r5?: NumericLike;
+  min_r15?: NumericLike;
+  min_delta?: NumericLike;
+  fga_r5?: NumericLike;
+  fga_r15?: NumericLike;
+  fga_delta?: NumericLike;
+  gap_days?: NumericLike;
+  last_game_date?: string;
+  pts_r5?: NumericLike;
+  pts_season?: NumericLike;
+  pts_stddev?: NumericLike;
+  pts_delta?: NumericLike;
+  teammate_out?: string;
+  teammate_out_minutes?: NumericLike;
+}
+
+export interface WatchlistPlayer {
+  nba_player_id: string;
+  name: string;
+  team_abbr: string | null;
+  /** Weighted reason count, scaled by availability when a run exists. */
+  score: NumericLike;
+  prob_active: NumericLike | null;
+  reasons: WatchlistReason[];
+  evidence: WatchlistEvidence;
+}
+
+export interface WatchlistResponse {
+  date: string;
+  players: WatchlistPlayer[];
 }
