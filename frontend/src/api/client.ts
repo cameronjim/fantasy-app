@@ -4,7 +4,7 @@ import type {
   BettingGame, BettingPicksResponse, Bet, NewBet, LedgerSummary, BetStatus,
   PlayerSeasonRow, TeamSeasonRow,
   Rating2kSummary, Rating2kDetail, Rating2kTeamType,
-  PlayerAnalytics,
+  PlayerAnalytics, SlateResponse, WatchlistResponse,
 } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL
@@ -179,6 +179,39 @@ export async function getPlayerAnalytics(id: number): Promise<PlayerAnalytics> {
       last10_vs_season: data.trends?.last10_vs_season ?? [],
     },
     prediction: data.prediction ?? null,
+  };
+}
+
+/**
+ * The day's games with each game's top projected players. `date` is a
+ * YYYY-MM-DD ET calendar day; omitting it asks the server for today.
+ *
+ * Both `run: null` (no completed model run) and an empty `games` array are
+ * normal answers, not errors — the page renders an empty state for each.
+ */
+export async function getSlate(date?: string): Promise<SlateResponse> {
+  const { data } = await api.get<SlateResponse>('/predictions/slate', {
+    params: date ? { date } : {},
+  });
+  return {
+    date: data.date,
+    run: data.run ?? null,
+    games: (data.games ?? []).map((game) => ({ ...game, players: game.players ?? [] })),
+  };
+}
+
+/** Ranked waiver-discovery candidates with the rule codes that flagged them. */
+export async function getWatchlist(date?: string): Promise<WatchlistResponse> {
+  const { data } = await api.get<WatchlistResponse>('/watchlist', {
+    params: date ? { date } : {},
+  });
+  return {
+    date: data.date,
+    players: (data.players ?? []).map((player) => ({
+      ...player,
+      reasons: player.reasons ?? [],
+      evidence: player.evidence ?? {},
+    })),
   };
 }
 

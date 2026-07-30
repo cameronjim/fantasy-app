@@ -6,6 +6,8 @@ import { StatsPage } from './pages/StatsPage';
 import { HistoryPage } from './pages/HistoryPage';
 import { PlayerPage } from './pages/PlayerPage';
 import { Ratings2kPage } from './pages/Ratings2kPage';
+import { SlatePage } from './pages/SlatePage';
+import { WatchlistPage } from './pages/WatchlistPage';
 import { FantasyPage } from './pages/FantasyPage';
 import { ImproveTeamPage } from './pages/ImproveTeamPage';
 import { BettingPage } from './pages/BettingPage';
@@ -58,6 +60,8 @@ export const App = (): JSX.Element => {
             <Routes>
               <Route path="/" element={<StatsPage />} />
               <Route path="/player/:id" element={<PlayerPage />} />
+              <Route path="/slate" element={<SlatePage />} />
+              <Route path="/watchlist" element={<WatchlistPage />} />
               <Route path="/history" element={<HistoryPage />} />
               <Route path="/ratings" element={<Ratings2kPage />} />
               <Route path="/fantasy" element={<FantasyPage isLoggedIn={isLoggedIn} />} />
