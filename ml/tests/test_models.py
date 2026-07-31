@@ -172,10 +172,17 @@ def test_null_probability_is_rejected():
 
 # ---- champion behaviour ----
 def test_production_champion_is_not_a_trained_model():
-    """pins REPORT.md section 6: no production ML in the promoted path."""
+    """pins REPORT.md section 6: no production ML in the promoted path.
+
+    minutes was deliberately promoted to lightgbm on 2026-08-17: on the full
+    four-season truth-layer dataset it beat EWMA by 2.1% MAE across all five
+    rolling origins (reports/20260817.md), past the ~2% noise line. production
+    remains EWMA — a future promotion must clear the same bar and update this
+    pin with its evidence.
+    """
     # act + assert
     assert CHAMPIONS["production"] == "ewma"
-    assert CHAMPIONS["minutes"] == "ewma"
+    assert CHAMPIONS["minutes"] == "lightgbm"
     assert CHAMPIONS["availability"] == "lightgbm"
 
 

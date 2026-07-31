@@ -27,7 +27,9 @@ DATA_DIR = ML_ROOT / "data"
 # previously trained artifacts. recorded in every registry entry.
 FEATURE_VERSION = "v1"
 
-SEASONS: list[str] = ["2023-24", "2024-25"]
+# every season the truth layer holds. the spike shipped with two; the prod
+# backfill (2026-08-17) covers four. extend this list when deeper history lands.
+SEASONS: list[str] = ["2022-23", "2023-24", "2024-25", "2025-26"]
 SEASON_TYPES: list[str] = ["Regular Season"]
 
 # ---- feature windows ----
@@ -101,17 +103,21 @@ PRODUCTION_TARGETS: tuple[str, ...] = ("PTS", "AST")
 MINUTES_TARGET = "MIN"
 
 # ---- promoted path ----
-# spike finding: availability is the only genuinely learnable target. the
+# spike finding: availability is the only strongly learnable target. the
 # conditional production estimate ships as EWMA(halflife 5); ridge and lightgbm
 # stay implemented as challengers and are never promoted automatically.
+# minutes promoted to lightgbm 2026-08-17: on the full four-season truth-layer
+# dataset it beats EWMA by 2.1% MAE, consistent across all five rolling
+# origins (reports/20260817.md) — past the ~2% noise line our own report set.
+# production stays EWMA: ridge's ~0.8% edge is inside noise.
 CHAMPIONS: dict[str, str] = {
     "availability": "lightgbm",
-    "minutes": "ewma",
+    "minutes": "lightgbm",
     "production": "ewma",
 }
 CHALLENGERS: dict[str, tuple[str, ...]] = {
     "availability": ("logistic",),
-    "minutes": ("lightgbm", "ridge"),
+    "minutes": ("ewma", "ridge"),
     "production": ("ridge", "lightgbm"),
 }
 
@@ -137,6 +143,10 @@ ORIGINS: list[tuple[str, str, str]] = [
     ("O1 valid=2024-12", "2024-12-01", "2024-12-31"),
     ("O2 valid=2025-01", "2025-01-01", "2025-01-31"),
     ("O3 valid=2025-02", "2025-02-01", "2025-02-28"),
+    # 2025-26 origins, added once the four-season prod backfill landed. the
+    # final months of 2025-26 stay untouched as the eventual test period.
+    ("O4 valid=2025-12", "2025-12-01", "2025-12-31"),
+    ("O5 valid=2026-01", "2026-01-01", "2026-01-31"),
 ]
 
 RANDOM_STATE = 17

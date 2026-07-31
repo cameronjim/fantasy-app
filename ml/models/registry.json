@@ -1,0 +1,157 @@
+{
+  "schema": 1,
+  "entries": [
+    {
+      "model_version": "20260817",
+      "feature_version": "v1",
+      "created_at": "2026-08-17T16:24:33+00:00",
+      "git_commit": "77cfb4e6a268f513c36dbabe504e881b6a22447d",
+      "universe_source": "status",
+      "training_window": {
+        "start": "2022-10-18",
+        "end": "2026-04-12",
+        "cutoff": "2026-04-14",
+        "cutoff_policy": "prediction-run timestamp; features use games strictly before it",
+        "rows": 147413,
+        "players": 895,
+        "played_rate": 0.713241
+      },
+      "champions": {
+        "availability": "lightgbm",
+        "minutes": "lightgbm",
+        "production": "ewma"
+      },
+      "hyperparams": {
+        "availability": {
+          "n_estimators": 400,
+          "learning_rate": 0.05,
+          "num_leaves": 31,
+          "min_child_samples": 50,
+          "subsample": 0.8,
+          "subsample_freq": 1,
+          "colsample_bytree": 0.8,
+          "random_state": 17,
+          "verbosity": -1,
+          "n_jobs": -1
+        },
+        "production": {
+          "estimator": "ewma",
+          "halflife": 5.0,
+          "fallbacks": {
+            "MIN": 22.572534,
+            "PTS": 10.712881,
+            "AST": 2.460743,
+            "FGA": 8.310069
+          },
+          "quantiles": {
+            "MIN": {
+              "target": "MIN",
+              "levels": [
+                0.1,
+                0.5,
+                0.9
+              ],
+              "offsets": [
+                -7.930865,
+                0.085053,
+                9.647634
+              ],
+              "n": 4552,
+              "window": [
+                "2026-03-17",
+                "2026-04-14"
+              ]
+            },
+            "PTS": {
+              "target": "PTS",
+              "levels": [
+                0.1,
+                0.5,
+                0.9
+              ],
+              "offsets": [
+                -6.564297,
+                -0.160144,
+                8.577078
+              ],
+              "n": 4552,
+              "window": [
+                "2026-03-17",
+                "2026-04-14"
+              ]
+            }
+          }
+        }
+      },
+      "metrics": {
+        "holdout_start": "2026-03-17",
+        "holdout_rows": 6527,
+        "holdout_played_rate": 0.697411,
+        "brier": 0.08883,
+        "log_loss": 0.306624,
+        "brier_skill_vs_shifted_rate": 0.271975
+      },
+      "n_features": 36,
+      "feature_cols": [
+        "roll3_MIN",
+        "roll5_MIN",
+        "roll10_MIN",
+        "roll3_PTS",
+        "roll5_PTS",
+        "roll10_PTS",
+        "roll3_AST",
+        "roll5_AST",
+        "roll10_AST",
+        "roll3_FGA",
+        "roll5_FGA",
+        "roll10_FGA",
+        "std_MIN",
+        "std_PTS",
+        "std_AST",
+        "std_FGA",
+        "ewma_MIN",
+        "ewma_PTS",
+        "ewma_AST",
+        "ewma_FGA",
+        "uncond_std_PTS",
+        "uncond_std_MIN",
+        "uncond_std_AST",
+        "n_appearances",
+        "days_since_last_app",
+        "games_since_last_app",
+        "avail_rate_10",
+        "avail_rate_20",
+        "avail_rate_std",
+        "TEAM_REST_DAYS",
+        "IS_B2B",
+        "IS_HOME",
+        "OPP_DEF_FORM",
+        "OPP_REST_DAYS",
+        "insufficient_history",
+        "has_history"
+      ],
+      "artifacts": [
+        {
+          "path": "availability_model.joblib",
+          "bytes": 1400662,
+          "sha256": "84dfc0d2764361ca47c76fd2336863f4b0f97e315caa10477872c473c7799324"
+        },
+        {
+          "path": "ewma_state.parquet",
+          "bytes": 43272,
+          "sha256": "762e474b5a4ebd4f7f6c23dae5408bc766b86030180c909d657c57427430f892"
+        },
+        {
+          "path": "feature_gain.csv",
+          "bytes": 1115,
+          "sha256": "70a40f83d5da50809c433f1d75916a9a38627d38fb533c1d0ddcf9b3b1c78ee2"
+        },
+        {
+          "path": "metadata.json",
+          "bytes": 2766,
+          "sha256": "be28a5654ad63052647944b2034523654b248b68eb6309fecf0159fe666462eb"
+        }
+      ]
+    }
+  ]
+}
