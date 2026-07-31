@@ -159,6 +159,22 @@ BACKFILL_MAX_ATTEMPTS = 4
 # don't spend rate-limit budget asking for it.
 ADVANCED_RATINGS_FIRST_SEASON_START_YEAR = 1996
 
+# nba_api documents BoxScoreSummaryV2 as having no inactive-list data for games
+# on or after this date. Past it, an empty V2 answer means "no data", NOT
+# "nobody was inactive" — conflating the two would silently recreate the exact
+# availability bias the truth layer exists to remove.
+V2_INACTIVE_UNRELIABLE_FROM = date(2025, 4, 10)
+
+
+def v2_inactive_is_unreliable(game_date: date | None) -> bool:
+    """Whether a V2 inactive list for a game on this date can be trusted.
+
+    An unknown date is treated as unreliable: the cost of wrongly distrusting
+    a good answer is one 'suspect' tag, the cost of wrongly trusting a bad one
+    is a biased training label that looks identical to a real one.
+    """
+    return game_date is None or game_date >= V2_INACTIVE_UNRELIABLE_FROM
+
 # NBA 2K ratings. nba2kapi.com is a free third-party mirror of 2kratings.com;
 # only the unauthenticated public endpoint is used, so there is no key or signup.
 NBA_2K_API_URL = "https://api.nba2kapi.com/api/public/players"
@@ -2424,14 +2440,21 @@ def _fetch_league_schedule(season: str) -> list[dict]:
     return schedule.season_games.get_data_frame().to_dict("records")
 
 
-def _fetch_inactive_players(game_id: str) -> list[dict]:
-    """The official inactive list for one game.
+def _fetch_inactive_players(game_id: str, game_date: date | None) -> tuple[list[dict], str]:
+    """The official inactive list for one game, plus which source produced it.
 
     BoxScoreSummaryV3 first: nba_api documents V2 as having no data for games on
-    or after 2025-04-10, and V2 raises a UserWarning on construction saying so.
-    V2 is still tried as a fallback because it remains the only source for older
-    seasons where V3 coverage is patchy. Both expose an InactivePlayers result
-    set; normalize_inactive_rows reconciles their column naming.
+    or after V2_INACTIVE_UNRELIABLE_FROM, and V2 raises a UserWarning on
+    construction saying so. V2 remains the fallback for older games where V3
+    coverage is patchy. Both expose an InactivePlayers result set;
+    normalize_inactive_rows reconciles their column naming.
+
+    Returns (rows, tag) where tag is 'v3', 'v2', or 'v2-suspect':
+    - a successful V3 answer is trusted as-is for games past the V2 cutoff,
+      INCLUDING a legitimately empty list — falling through to V2 there would
+      let "V2 has no data" masquerade as "nobody was inactive";
+    - a V2 answer for a game past the cutoff is tagged 'v2-suspect' so the
+      rows stay identifiable and the validation report can flag them.
     """
     from nba_api.stats.endpoints import boxscoresummaryv2, boxscoresummaryv3
 
@@ -2441,17 +2464,20 @@ def _fetch_inactive_players(game_id: str) -> list[dict]:
     def fetch_v2() -> object:
         return boxscoresummaryv2.BoxScoreSummaryV2(game_id=game_id, timeout=60)
 
+    v2_unreliable = v2_inactive_is_unreliable(game_date)
+
     try:
         summary = _fetch_with_retry(f"box score summary v3 {game_id}", fetch_v3)
         rows = summary.inactive_players.get_data_frame().to_dict("records")
-        if rows:
-            return rows
+        if rows or v2_unreliable:
+            return rows, "v3"
     except Exception as e:  # noqa: BLE001 - v2 is the whole point of the fallback
         logger.debug("v3 summary failed for %s (%s), trying v2", game_id, e)
 
     time.sleep(BACKFILL_REQUEST_DELAY_SECONDS)
     summary = _fetch_with_retry(f"box score summary v2 {game_id}", fetch_v2)
-    return summary.inactive_players.get_data_frame().to_dict("records")
+    rows = summary.inactive_players.get_data_frame().to_dict("records")
+    return rows, "v2-suspect" if v2_unreliable else "v2"
 
 
 # ---------------------------------------------------------------------------
@@ -2509,7 +2535,9 @@ def _games_needing_status(
     cur = conn.cursor()
     try:
         cur.execute(" ".join(sql), tuple(params))
-        return [str(row[0]) for row in cur.fetchall()]
+        # game_date rides along so the inactive-list fetch can judge whether a
+        # V2 fallback answer is trustworthy for that game's era.
+        return [(str(row[0]), row[1]) for row in cur.fetchall()]
     finally:
         cur.close()
 
@@ -2707,12 +2735,12 @@ def scrape_game_status(
     if since is None:
         since = date.today() - timedelta(days=GAME_STATUS_RECENT_WINDOW_DAYS)
 
-    game_ids = _games_needing_status(conn, season, since, limit)
-    if not game_ids:
+    games = _games_needing_status(conn, season, since, limit)
+    if not games:
         logger.info("game status: nothing to do, every recent game has status rows")
         return 0
 
-    logger.info("truth layer: deriving status for %d game(s)", len(game_ids))
+    logger.info("truth layer: deriving status for %d game(s)", len(games))
     run_id = _start_ingestion_run(
         conn,
         run_kind,
@@ -2720,15 +2748,16 @@ def scrape_game_status(
         dry_run=dry_run,
     )
 
-    played_by_game = _played_rows_for_games(conn, game_ids)
+    played_by_game = _played_rows_for_games(conn, [gid for gid, _ in games])
     written = 0
     failed = 0
+    suspect = 0
 
     cur = maybe_write_cursor(conn.cursor(), dry_run)
     try:
-        for index, game_id in enumerate(game_ids):
+        for index, (game_id, game_date) in enumerate(games):
             try:
-                inactive_raw = _fetch_inactive_players(game_id)
+                inactive_raw, inactive_src = _fetch_inactive_players(game_id, game_date)
             except Exception as e:  # noqa: BLE001 - one game must not end the phase
                 failed += 1
                 logger.warning("game status: %s inactive list failed (%s)", game_id, e)
@@ -2736,31 +2765,56 @@ def scrape_game_status(
                 time.sleep(delay_seconds * 2)
                 continue
 
+            if inactive_src == "v2-suspect":
+                suspect += 1
+                logger.warning(
+                    "game status: %s inactive list came from BoxScoreSummaryV2 past its "
+                    "data cutoff — rows tagged suspect; the validation report lists them",
+                    game_id,
+                )
+
             rows = derive_game_status_rows(
                 game_id,
                 played_by_game.get(game_id, []),
                 inactive_raw,
-                "boxscoresummary+playergamelogs",
+                f"boxscoresummary{inactive_src}+playergamelogs",
             )
             written += _upsert_game_status_rows(cur, rows, run_id)
 
-            if index + 1 < len(game_ids):
+            # the inactive-list crawl runs for hours at this pacing; a silent
+            # loop is indistinguishable from a hang, so report every 25 games.
+            done = index + 1
+            if done % 25 == 0 or done == len(games):
+                remaining = len(games) - done
+                eta_min = remaining * delay_seconds / 60
+                logger.info(
+                    "game status: %d/%d games (%d rows, %d failed, %d suspect, ~%.0f min left)",
+                    done, len(games), written, failed, suspect, eta_min,
+                )
+
+            if index + 1 < len(games):
                 time.sleep(delay_seconds)
     finally:
         cur.close()
 
+    run_notes: list[str] = []
+    if failed:
+        run_notes.append(f"{failed} game(s) failed")
+    if suspect:
+        run_notes.append(f"{suspect} game(s) tagged v2-suspect")
     _finish_ingestion_run(
         conn,
         run_id,
         "succeeded" if failed == 0 else "partial",
         written,
-        notes=f"{failed} game(s) failed" if failed else None,
+        notes="; ".join(run_notes) if run_notes else None,
     )
     logger.info(
-        "game status: %d row(s) across %d game(s), %d failed%s",
+        "game status: %d row(s) across %d game(s), %d failed, %d suspect%s",
         written,
-        len(game_ids) - failed,
+        len(games) - failed,
         failed,
+        suspect,
         " (dry run: nothing written)" if dry_run else "",
     )
     return written
@@ -3131,6 +3185,43 @@ def validate_game_logs(
                 """
                 SELECT nba_player_id, nba_game_id, COUNT(*) FROM player_game_logs
                  WHERE season = %s GROUP BY nba_player_id, nba_game_id HAVING COUNT(*) > 1
+                """,
+                (season,),
+            ),
+        )
+        # inactive lists sourced from BoxScoreSummaryV2 past its data cutoff:
+        # the rows exist but their listed_inactive flags cannot be trusted.
+        # fix: delete these games' status rows and re-run the backfill once v3
+        # answers for them (the backfill re-fetches games with no status rows).
+        _report_examples(
+            "no status rows sourced from v2 past its data cutoff (v2-suspect)",
+            _rows(
+                conn,
+                """
+                SELECT DISTINCT s.nba_game_id, s.source FROM player_game_status s
+                 WHERE s.source LIKE '%%v2-suspect%%'
+                   AND EXISTS (SELECT 1 FROM team_game_logs t
+                                WHERE t.nba_game_id = s.nba_game_id AND t.season = %s)
+                 ORDER BY s.nba_game_id
+                """,
+                (season,),
+            ),
+        )
+        # a game where nobody at all was listed inactive is possible but rare;
+        # a cluster of them is the signature of an empty-because-no-data source.
+        _report_examples(
+            "games whose status rows list zero inactive players (verify if many)",
+            _rows(
+                conn,
+                """
+                SELECT s.nba_game_id,
+                       COUNT(*) FILTER (WHERE s.listed_inactive) AS inactives
+                  FROM player_game_status s
+                 WHERE EXISTS (SELECT 1 FROM team_game_logs t
+                                WHERE t.nba_game_id = s.nba_game_id AND t.season = %s)
+                 GROUP BY s.nba_game_id
+                HAVING COUNT(*) FILTER (WHERE s.listed_inactive) = 0
+                 ORDER BY s.nba_game_id
                 """,
                 (season,),
             ),

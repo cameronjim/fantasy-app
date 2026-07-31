@@ -27,7 +27,9 @@ import pytest
 
 from run_scraper import (
     GAME_LOG_CORRECTION_WINDOW_DAYS,
+    V2_INACTIVE_UNRELIABLE_FROM,
     box_score_violations,
+    v2_inactive_is_unreliable,
     build_player_game_log_row,
     build_team_game_log_row,
     derive_game_status_rows,
@@ -694,3 +696,29 @@ class TestIsWriteStatement:
         # keyword, and letting one through would make --dry-run write
         sql = "WITH moved AS (DELETE FROM a RETURNING *) INSERT INTO b SELECT * FROM moved"
         assert is_write_statement(sql) is True
+
+
+class TestV2InactiveReliability:
+    """The V2 inactive list is documented as having no data on/after the cutoff.
+
+    Past it, an empty V2 answer means "no data", not "nobody was inactive" —
+    trusting it would silently recreate the availability bias the truth layer
+    exists to remove, so the tag decision is pinned here.
+    """
+
+    def test_day_before_cutoff_is_trusted(self):
+        assert v2_inactive_is_unreliable(V2_INACTIVE_UNRELIABLE_FROM - timedelta(days=1)) is False
+
+    def test_cutoff_day_itself_is_unreliable(self):
+        assert v2_inactive_is_unreliable(V2_INACTIVE_UNRELIABLE_FROM) is True
+
+    def test_after_cutoff_is_unreliable(self):
+        assert v2_inactive_is_unreliable(date(2026, 1, 15)) is True
+
+    def test_unknown_date_is_unreliable_not_trusted(self):
+        # the cost of wrongly distrusting is one suspect tag; the cost of
+        # wrongly trusting is a biased label indistinguishable from a real one
+        assert v2_inactive_is_unreliable(None) is True
+
+    def test_old_seasons_still_use_v2_freely(self):
+        assert v2_inactive_is_unreliable(date(2023, 3, 1)) is False
