@@ -37,14 +37,27 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from .config import RATE_TARGETS
+
 # P10/P50/P90. the 80% central interval is what evaluate.py already reports
 # coverage for (NOMINAL_COVERAGE), so the tails line up with the existing
 # calibration table rather than introducing a second nominal level.
 QUANTILE_LEVELS: tuple[float, ...] = (0.10, 0.50, 0.90)
 
-# stats whose quantiles ship. minutes and points are the two the serving path
-# renders; the rest stay expected values until there is a reason to widen it.
-QUANTILE_TARGETS: tuple[str, ...] = ("MIN", "PTS")
+# stats whose quantiles ship. WIDENED 2026-08-18 from (MIN, PTS) to minutes plus
+# the full 9-cat vocabulary, by the same mechanism and for the same reason the
+# point estimates were: the old pair was what the serving path happened to render,
+# not a claim that the spread of a block projection is uninteresting. A rare-event
+# stat is in fact where an interval matters MOST - "1.1 blocks" and "1.1 blocks,
+# anywhere from 0 to 3" are very different inputs to a start/sit decision, and the
+# second one is the honest one.
+#
+# NOTHING ELSE ABOUT THE CONSTRUCTION CHANGES. each target's offsets are the
+# empirical residual quantiles of the SHIPPED conditional estimator on the
+# holdout window (train.holdout_quantiles), so widening the list widens the
+# measurement rather than extrapolating the points-shaped interval onto stats
+# whose residuals have a completely different scale.
+QUANTILE_TARGETS: tuple[str, ...] = ("MIN", *RATE_TARGETS)
 
 # every stat here is a count or a duration, so a negative quantile is not a
 # conservative estimate - it is an impossible one.

@@ -5,6 +5,7 @@ expected layout in ``data_dir``::
     player_logs_2023_24.parquet          nba_api PlayerGameLogs shape
     team_logs_2023_24.parquet            nba_api TeamGameLogs shape
     player_game_status_2023_24.parquet   OPTIONAL, canonical status shape
+    player_positions.parquet             OPTIONAL, PLAYER_ID + POSITION
 
 the schedule is reconstructed from the team logs (two rows per game, MATCHUP
 tells us which side is home), which is exact — team logs are complete.
@@ -25,6 +26,7 @@ import pandas as pd
 from ..config import SEASONS, season_tag
 from .schema import (
     PLAYER_LOG_COLS,
+    POSITION_COLS,
     SCHEDULE_COLS,
     STAT_COLS,
     STATUS_COLS,
@@ -102,12 +104,45 @@ class ParquetSource:
         require_columns(raw, ("TEAM_ID", "GAME_ID", "GAME_DATE", "PTS", "MATCHUP"), "team log")
 
         keep = ["TEAM_ID", "TEAM_ABBREVIATION", "GAME_ID", "SEASON", "GAME_DATE",
-                "MATCHUP", "PTS"]
+                "MATCHUP", "PTS", "MIN", "FGA", "FTA", "TOV"]
         out = raw[keep].copy()
         out = normalise_ids(normalise_dates(out))
+        for col in ("PTS", "MIN", "FGA", "FTA", "TOV"):
+            out[col] = pd.to_numeric(out[col], errors="coerce").astype(float)
         require_columns(out, TEAM_LOG_COLS, "canonical team log")
         log.info("parquet team logs: %d rows, seasons %s", len(out), found)
         return out.reset_index(drop=True)
+
+    # ------------------------------------------------------------------
+    def load_player_positions(self) -> pd.DataFrame | None:
+        """positions from an optional ``player_positions.parquet``, else None.
+
+        THIS FORMAT HAS NO POSITION SOURCE. the nba_api game-log exports the
+        parquet layout mirrors carry no position column at all, and there is
+        nothing in a game log to derive one from. a directory that supplies the
+        file (the test fixtures do, synthetically) exercises the positional half
+        of the teammate features; the spike's own data dir does not, and the
+        consequence is documented rather than papered over: ``POS_GROUP`` is
+        null, so ``vacated_minutes_pos`` and ``depth_rank_available_pos`` are
+        null for every row and LightGBM treats them as missing.
+
+        no season suffix - a position is reference data, not a per-game fact,
+        so it is one file rather than one per season.
+        """
+        path = self.data_dir / "player_positions.parquet"
+        if not path.exists():
+            log.warning(
+                "no player_positions.parquet in %s - POS_GROUP will be null and the "
+                "positional teammate features (vacated_minutes_pos, "
+                "depth_rank_available_pos) will be null for every row",
+                self.data_dir,
+            )
+            return None
+        raw = pd.read_parquet(path)
+        require_columns(raw, POSITION_COLS, "player positions")
+        out = normalise_ids(raw[list(POSITION_COLS)].copy())
+        log.info("parquet player positions: %d rows", len(out))
+        return out.drop_duplicates("PLAYER_ID").reset_index(drop=True)
 
     # ------------------------------------------------------------------
     def load_schedule(self) -> pd.DataFrame:
