@@ -60,7 +60,7 @@ export const App = (): JSX.Element => {
             <Routes>
               <Route path="/" element={<StatsPage />} />
               <Route path="/player/:id" element={<PlayerPage />} />
-              <Route path="/slate" element={<SlatePage />} />
+              <Route path="/projections" element={<SlatePage />} />
               <Route path="/watchlist" element={<WatchlistPage />} />
               <Route path="/history" element={<HistoryPage />} />
               <Route path="/ratings" element={<Ratings2kPage />} />

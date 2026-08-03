@@ -14,7 +14,7 @@ import { teamsRouter } from './routes/teams.js';
 import { gamesRouter } from './routes/games.js';
 import { historyRouter } from './routes/history.js';
 import { analyticsRouter, playerAnalyticsRouter } from './routes/analytics.js';
-import { predictionsRouter, watchlistRouter } from './routes/predictions.js';
+import { predictionsRouter, watchlistRouter, playerPredictionsRouter } from './routes/predictions.js';
 import { ratings2kRouter } from './routes/ratings2k.js';
 import { fantasyRouter } from './routes/fantasy.js';
 import { aiRouter } from './routes/ai.js';
@@ -63,6 +63,9 @@ app.use('/api/players', playersRouter);
 // /api/players/:id/analytics — percentiles and trends for one player, public
 // like the player row it hangs off.
 app.use('/api/players', playerAnalyticsRouter);
+// /api/players/:id/predictions — every game the latest model run has for one
+// player. Public for the same reason the analytics are.
+app.use('/api/players', playerPredictionsRouter);
 app.use('/api/teams', teamsRouter);
 app.use('/api/games', gamesRouter);
 // season-by-season history — public, same as /api/players.

@@ -122,7 +122,7 @@ export const SlatePage = (): JSX.Element => {
         <div>
           <h1 className="font-bold text-xl sm:text-2xl leading-tight flex items-center gap-2">
             <CalendarDays size={20} className="opacity-60" />
-            Today&apos;s Slate
+            Today&apos;s Projections
           </h1>
           <p className="text-sm opacity-60 mt-0.5">
             {formatSlateDate(data?.date ?? date)}

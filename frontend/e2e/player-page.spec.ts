@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { PlayerAnalyticsPage, StatsPage } from './pages';
 import { mockApi } from './fixtures/apiMock';
-import { ALL_STAR, ALL_STAR_ANALYTICS } from './fixtures/players';
+import { ALL_STAR, ALL_STAR_ANALYTICS, ALL_STAR_PREDICTIONS } from './fixtures/players';
 
 test.describe('Player analytics page', () => {
   test('renders the header, percentile bars and the distribution chart', async ({ page }) => {
@@ -63,6 +63,46 @@ test.describe('Player analytics page', () => {
     await expect(page.getByText('No game logs yet', { exact: true })).toBeVisible();
     await expect(analytics.trendChart()).toHaveCount(0);
     await expect(analytics.recentGamesSection()).toHaveCount(0);
+  });
+
+  test('lists every game in the run, keeps a doubtful player’s line, and filters by stat', async ({
+    page,
+  }) => {
+    await mockApi(page, {
+      playerAnalytics: ALL_STAR_ANALYTICS,
+      playerPredictions: ALL_STAR_PREDICTIONS,
+    });
+    const analytics = new PlayerAnalyticsPage(page);
+
+    await analytics.goto(ALL_STAR.id);
+
+    await expect(analytics.upcomingGamesSection()).toBeVisible();
+    await expect(analytics.upcomingGameRows()).toHaveCount(2);
+    await expect(page.getByText('vs CHA')).toBeVisible();
+    await expect(page.getByText('@ POR')).toBeVisible();
+
+    // the 11%-to-play game keeps its full "if he plays" line — the badge is
+    // what carries the absence, not a blanked-out row.
+    await expect(page.getByText('OUT-ish')).toBeVisible();
+    await expect(page.getByText('30.2')).toBeVisible();
+
+    // the picker narrows the columns without a refetch
+    await analytics.upcomingStatTab('PTS').click();
+    await expect(analytics.upcomingStatTab('PTS')).toHaveAttribute('aria-selected', 'true');
+    await expect(
+      analytics.upcomingGamesTable().getByRole('columnheader', { name: 'MIN' })
+    ).toHaveCount(0);
+  });
+
+  test('says no run has been published when the endpoint has none', async ({ page }) => {
+    await mockApi(page, { playerAnalytics: ALL_STAR_ANALYTICS });
+    const analytics = new PlayerAnalyticsPage(page);
+
+    await analytics.goto(ALL_STAR.id);
+
+    await expect(analytics.upcomingGamesSection()).toBeVisible();
+    await expect(page.getByText('No prediction run published yet')).toBeVisible();
+    await expect(analytics.upcomingGamesTable()).toHaveCount(0);
   });
 
   test('the player modal links through to the analytics page', async ({ page }) => {

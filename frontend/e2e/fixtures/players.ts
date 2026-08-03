@@ -5,7 +5,7 @@
 // the shape must match `Player` in src/types.ts, plus the optional
 // `fantasy_score` / `fantasy_rank` overlay added by the players route.
 
-import type { PlayerAnalytics } from '../../src/types';
+import type { PlayerAnalytics, PlayerPredictionsResponse } from '../../src/types';
 
 export interface PlayerFixture {
   id: number;
@@ -199,4 +199,51 @@ export const ALL_STAR_ANALYTICS: PlayerAnalytics = {
     ],
   },
   prediction: null,
+};
+
+// Upcoming-games payload for ALL_STAR, matching `/api/players/:id/predictions`.
+// Two games on purpose, and a doubtful second one: the section's whole point is
+// that a player the model expects to sit keeps his "if he plays" line.
+export const ALL_STAR_PREDICTIONS: PlayerPredictionsResponse = {
+  player_id: ALL_STAR.id,
+  nba_player_id: '2544',
+  run: {
+    id: 1,
+    model_version: 'bt20260115',
+    feature_version: 'v3',
+    predicted_at: '2026-02-04T14:00:00Z',
+    forecast_cutoff_at: '2026-02-04T12:00:00Z',
+    horizon: 'gameday (T-6h)',
+  },
+  stats: ['minutes', 'pts', 'ast'],
+  games: [
+    {
+      nba_game_id: '0022500586',
+      game_date: '2026-02-05',
+      opponent_abbr: 'CHA',
+      is_home: true,
+      game_status: 'Scheduled',
+      prob_active: 0.91,
+      prob_active_model: 0.91,
+      stats: {
+        minutes: { expected: 36.3, p10: 28.5, p50: 36.2, p90: 43.5, unconditional: 33.2 },
+        pts: { expected: 32.3, p10: 25.8, p50: 31.7, p90: 39.9, unconditional: 29.6 },
+        ast: { expected: 9.1, p10: null, p50: null, p90: null, unconditional: 8.3 },
+      },
+    },
+    {
+      nba_game_id: '0022500601',
+      game_date: '2026-02-07',
+      opponent_abbr: 'POR',
+      is_home: false,
+      game_status: 'Scheduled',
+      prob_active: 0.11,
+      prob_active_model: 0.11,
+      stats: {
+        minutes: { expected: 30.4, p10: 22.1, p50: 30.2, p90: 38.4, unconditional: 3.3 },
+        pts: { expected: 27.2, p10: 19.4, p50: 27, p90: 35.1, unconditional: 3 },
+        ast: { expected: 8.5, p10: null, p50: null, p90: null, unconditional: 0.9 },
+      },
+    },
+  ],
 };

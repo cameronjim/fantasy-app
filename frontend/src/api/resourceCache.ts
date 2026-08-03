@@ -44,6 +44,11 @@ export function playerAnalyticsKey(playerId: number): string {
   return `player-analytics:${playerId}`;
 }
 
+/** The upcoming-games predictions for one player, cached alongside his analytics. */
+export function playerPredictionsKey(playerId: number): string {
+  return `player-predictions:${playerId}`;
+}
+
 /** One key per 2K roster (current / classic / all-time) so toggling between
  *  them never refetches a list we already have. */
 export function ratings2kPlayersKey(teamType: string): string {

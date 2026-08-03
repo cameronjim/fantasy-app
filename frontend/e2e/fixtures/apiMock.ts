@@ -3,7 +3,7 @@ import { ALL_PLAYERS, type PlayerFixture } from './players';
 import type {
   Team, Game, TeamAnalysis,
   BettingGame, BettingPicksResponse, Bet, LedgerSummary,
-  PlayerAnalytics,
+  PlayerAnalytics, PlayerPredictionsResponse,
 } from '../../src/types';
 
 // route handlers that satisfy the api calls the app makes on first paint.
@@ -33,6 +33,10 @@ export interface MockOptions {
   // payload for /api/players/:id/analytics; omitted means the endpoint 404s,
   // which is what a player with no computed analytics looks like.
   playerAnalytics?: PlayerAnalytics;
+  // payload for /api/players/:id/predictions. omitted means "no run has
+  // completed", which is production's state today and the section's own empty
+  // state — never a 404, because the endpoint answers 200 with a null run.
+  playerPredictions?: PlayerPredictionsResponse;
   rosterRequiresAuth?: boolean;
   teamAnalysis?: TeamAnalysis;
   waiverSuggestions?: WaiverSuggestionsResponse;
@@ -91,6 +95,19 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<void>
       return;
     }
     route.fulfill({ json: opts.playerAnalytics });
+  });
+
+  // same reason this sits after the players list route: `**/api/players*` does
+  // not cross a slash, so this path would otherwise go unhandled.
+  await page.route('**/api/players/*/predictions*', (route) => {
+    const fallback: PlayerPredictionsResponse = {
+      player_id: 0,
+      nba_player_id: null,
+      run: null,
+      stats: [],
+      games: [],
+    };
+    route.fulfill({ json: opts.playerPredictions ?? fallback });
   });
 
   await page.route('**/api/teams', (route) => route.fulfill({ json: teams }));

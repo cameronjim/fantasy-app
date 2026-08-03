@@ -57,6 +57,26 @@ export class PlayerAnalyticsPage {
     return this.page.getByRole('heading', { name: /Projection/i });
   }
 
+  upcomingGamesSection(): Locator {
+    return this.page.getByTestId('upcoming-games-section');
+  }
+
+  upcomingGamesTable(): Locator {
+    return this.page.getByTestId('upcoming-games-table');
+  }
+
+  upcomingGameRows(): Locator {
+    return this.page.getByTestId('upcoming-game-row');
+  }
+
+  // scoped: the trends and distribution sections both carry stat tablists with
+  // the same labels.
+  upcomingStatTab(statLabel: string): Locator {
+    return this.page
+      .getByRole('tablist', { name: 'Prediction stat' })
+      .getByRole('tab', { name: statLabel, exact: true });
+  }
+
   freshnessFooter(): Locator {
     return this.page.getByText(/Game logs as of/i);
   }

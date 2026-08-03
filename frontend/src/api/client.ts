@@ -4,7 +4,7 @@ import type {
   BettingGame, BettingPicksResponse, Bet, NewBet, LedgerSummary, BetStatus,
   PlayerSeasonRow, TeamSeasonRow,
   Rating2kSummary, Rating2kDetail, Rating2kTeamType,
-  PlayerAnalytics, SlateResponse, WatchlistResponse,
+  PlayerAnalytics, PlayerPredictionsResponse, SlateResponse, WatchlistResponse,
 } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL
@@ -179,6 +179,40 @@ export async function getPlayerAnalytics(id: number): Promise<PlayerAnalytics> {
       last10_vs_season: data.trends?.last10_vs_season ?? [],
     },
     prediction: data.prediction ?? null,
+  };
+}
+
+export interface PlayerPredictionsParams {
+  /** Inclusive lower bound on game date, YYYY-MM-DD. */
+  from?: string;
+  /** Games to return; the server defaults to 14. */
+  limit?: number;
+}
+
+/**
+ * Every game the latest completed model run has a prediction for, for one
+ * player, earliest first.
+ *
+ * `from` IS DELIBERATELY OMITTED BY DEFAULT. The server applies no date filter
+ * without it, which matters because the only run published so far is a backtest
+ * of a week in January — asking for "today onwards" would render an empty
+ * section on a page that is working perfectly.
+ *
+ * `run: null` (no completed run) and an empty `games` array are both normal
+ * answers, not errors; the section renders a different empty state for each.
+ */
+export async function getPlayerPredictions(
+  id: number,
+  params: PlayerPredictionsParams = {}
+): Promise<PlayerPredictionsResponse> {
+  const { data } = await api.get<PlayerPredictionsResponse>(`/players/${id}/predictions`, {
+    params,
+  });
+  return {
+    ...data,
+    run: data.run ?? null,
+    stats: data.stats ?? [],
+    games: (data.games ?? []).map((game) => ({ ...game, stats: game.stats ?? {} })),
   };
 }
 
