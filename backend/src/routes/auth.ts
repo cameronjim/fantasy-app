@@ -184,6 +184,14 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
         audience: process.env.GOOGLE_CLIENT_ID,
       });
       const payload = ticket.getPayload();
+      // Require a verified email, matching the access_token path below. This
+      // matters because the account-linking branch below matches an existing
+      // account BY EMAIL: without this check, an account holding an
+      // unverified address could be used to link into someone else's account.
+      if (payload && String(payload.email_verified) !== 'true') {
+        res.status(401).json({ error: 'Google email is not verified' });
+        return;
+      }
       googleId = payload?.sub;
       email = payload?.email?.toLowerCase();
     } else if (accessToken) {
