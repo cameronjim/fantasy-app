@@ -285,10 +285,7 @@ fantasy-app/
 │   └── seed.ts                   # sample players/teams/games
 ├── scraper/
 │   ├── requirements.txt
-│   ├── run_scraper.py            # the scraper that actually runs in CI
-│   ├── scrapy.cfg
-│   ├── debug_*.py                # one-off debug helpers
-│   └── nba_scraper/              # legacy Scrapy project, not invoked by CI
+│   └── run_scraper.py            # players, teams, games, injuries
 ├── backend/
 │   ├── package.json
 │   ├── serverless.yml            # Lambda + HTTP API definition
