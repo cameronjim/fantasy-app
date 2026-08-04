@@ -49,6 +49,9 @@ const aiDailyLimit = rateLimit({
   limit: 200,
   windowSeconds: 86_400,
   keyFor: (req) => String((req as AuthRequest).userId),
+  // this cap is the only bound on Anthropic spend, so a counter outage must
+  // not silently uncap it.
+  failClosed: true,
 });
 
 app.use('/api/auth', authRouter);

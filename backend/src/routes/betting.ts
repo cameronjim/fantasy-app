@@ -40,6 +40,8 @@ const picksLimiter = rateLimit({
   limit: 60,
   windowSeconds: 86_400,
   keyFor: (req) => String((req as AuthRequest).userId),
+  // Claude-backed, so the same spend argument as the ai scope applies.
+  failClosed: true,
 });
 
 const PARLAY_EV_NOTE =
