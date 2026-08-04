@@ -14,3 +14,7 @@ backend/.serverless/
 frontend/test-results/
 frontend/playwright-report/
 frontend/playwright/.cache/
+
+# Local operator notes — intentionally untracked. Describes the full
+# infrastructure setup and is for the maintainer's reference only.
+SETUP_GUIDE.txt
