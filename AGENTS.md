@@ -25,6 +25,12 @@ Fantasy NBA is a small personal full-stack app:
 - **Stats `/`** — searchable/sortable player and team tables, live scoreboard
 - **My Team `/fantasy`** — personal fantasy roster with Claude-powered 9-category analysis
 - **Improve Team `/improve`** — Claude-powered trade-target and waiver-pickup suggestions
+- **Betting `/betting`** — ESPN odds board, Claude-generated picks, and a bet ledger
+
+Plus supporting pages: `/profile`, `/preferences` (Team Preferences
+questionnaire), `/about`, and `/admin` (admin-only Developer Tools, authorized
+server-side on every request). Auth covers email/password, Google Sign-In, and
+SES password reset. Theming is a 7-theme daisyUI picker.
 
 There is no league system or multi-team play (the personal-pool plan was
 archived).
@@ -36,7 +42,7 @@ archived).
 | Frontend | React 18, Vite 6, TypeScript, Tailwind 4, DaisyUI 5, React Router 7                |
 | Backend  | Express 4, TypeScript (ESM, NodeNext), pg, jsonwebtoken, bcryptjs, Anthropic SDK   |
 | Database | PostgreSQL (Neon in prod) with hand-written schema and sequential migrations       |
-| Scraper  | Python + Scrapy + nba_api, runs in GitHub Actions on a 6-hour cron                 |
+| Scraper  | Python + nba_api + requests + Beautiful Soup, runs in GitHub Actions on a 6-hour cron |
 | Tests    | Vitest (unit + api), Supertest, React Testing Library, Playwright                  |
 | CI       | GitHub Actions — backend, frontend, e2e jobs gate every PR to `main`               |
 | Deploy   | AWS Lambda + API Gateway (backend via Serverless Framework) + S3 + CloudFront (frontend) |
@@ -54,7 +60,7 @@ archived).
 | `backend/tests/`| Vitest unit + api tests                                              |
 | `db/`           | PostgreSQL schema and migrations                                     |
 | `scraper/`      | Python scraper (cron-driven by GitHub Actions)                       |
-| `test/`         | README explaining where each test layer lives                        |
+| `db/`           | schema.sql, sequential migrations, seed script                        |
 | `.github/`      | GitHub Actions workflows (scraper cron, CI)                          |
 
 ### Files to read before editing each area
@@ -71,7 +77,7 @@ archived).
 | API client             | `frontend/src/api/client.ts`                                               |
 | Types shared by both   | `frontend/src/types.ts`                                                    |
 | Database schema        | `db/schema.sql`, then any later files in `db/migrations/`                  |
-| Scraper                | `scraper/run_scraper.py`, `scraper/nba_scraper/`                           |
+| Scraper                | `scraper/run_scraper.py`                                                   |
 | Deployment             | `backend/serverless.yml`, `backend/src/lambda.ts`, `.env.example`, `.github/workflows/deploy.yml` |
 | Tests                  | `backend/tests/`, `frontend/test/`, `frontend/e2e/`, this file's §6        |
 
@@ -371,10 +377,10 @@ The following are not allowed in committed code:
 | Playwright page objects   | `frontend/e2e/pages/`              | POM classes             |
 | Playwright fixtures       | `frontend/e2e/fixtures/`           | route mocks, sample data|
 
-The repo-root `test/` directory contains a README map only — the actual
-test files live alongside the package's `node_modules` because Vitest's
-module resolution can't follow tests outside the project root for CJS
-deps like supertest and jsonwebtoken.
+Test files live inside each package (`backend/tests/`, `frontend/test/`,
+`frontend/e2e/`) rather than in a repo-root directory, because Vitest's module
+resolution can't follow tests outside the project root for CJS deps like
+supertest and jsonwebtoken.
 
 ### Commands
 
