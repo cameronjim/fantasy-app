@@ -5,6 +5,7 @@ import { PlayerTable } from '../components/PlayerTable';
 import { TeamTable } from '../components/TeamTable';
 import { PlayerModal } from '../components/PlayerModal';
 import { CompareModal } from '../components/CompareModal';
+import { SegmentedFilter } from '../components/SegmentedFilter';
 import { getPlayers, getTeams } from '../api/client';
 import { useCachedResource } from '../hooks/useCachedResource';
 import { CACHE_KEYS } from '../api/resourceCache';
@@ -81,17 +82,12 @@ export const StatsPage = () => {
           )}
 
           {view === 'teams' && (
-            <div className="join">
-              {(['All', 'East', 'West'] as const).map((conf) => (
-                <button
-                  key={conf}
-                  onClick={() => setConfFilter(conf)}
-                  className={`btn btn-sm join-item ${confFilter === conf ? 'btn-primary' : ''}`}
-                >
-                  {conf}
-                </button>
-              ))}
-            </div>
+            <SegmentedFilter
+              options={(['All', 'East', 'West'] as const).map((conf) => ({ value: conf, label: conf }))}
+              value={confFilter}
+              onChange={setConfFilter}
+              ariaLabel="Conference"
+            />
           )}
         </div>
 
@@ -120,17 +116,12 @@ export const StatsPage = () => {
               ))}
             </select>
 
-            <div className="join">
-              {POSITIONS.map((pos) => (
-                <button
-                  key={pos}
-                  onClick={() => setPosFilter(pos)}
-                  className={`btn btn-sm join-item ${posFilter === pos ? 'btn-primary' : ''}`}
-                >
-                  {pos}
-                </button>
-              ))}
-            </div>
+            <SegmentedFilter
+              options={POSITIONS.map((pos) => ({ value: pos, label: pos }))}
+              value={posFilter}
+              onChange={setPosFilter}
+              ariaLabel="Position"
+            />
           </div>
         )}
 
