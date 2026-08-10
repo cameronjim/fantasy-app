@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CalendarDays } from 'lucide-react';
+import { CalendarDays, Flame } from 'lucide-react';
 import { getSlate } from '../api/client';
 import { useCachedResource } from '../hooks/useCachedResource';
 import { formatTimestamp } from '../utils/analytics';
@@ -52,22 +52,115 @@ const AvailabilityBadge = ({ value }: { value: SlatePlayer['prob_active'] }): JS
   );
 };
 
+/**
+ * Total projected impact, as a signed z-score sum against the slate pool. 0 is
+ * an average night on this slate, so the sign carries most of the meaning and
+ * is always shown.
+ */
+const ImpactBadge = ({ player }: { player: SlatePlayer }): JSX.Element => {
+  const impact = toStatNumber(player.impact);
+  if (impact === null) {
+    return (
+      <span
+        className="badge badge-ghost badge-sm tabular-nums"
+        title="The run did not project every category for this player"
+      >
+        —
+      </span>
+    );
+  }
+  // primary for a slate-wide standout, a softer outline for the rest, so the
+  // two spotlight tiers read differently without leaving the daisyUI palette.
+  const tone = player.slate_spotlight
+    ? 'badge-primary'
+    : player.spotlight
+      ? 'badge-primary badge-outline'
+      : 'badge-ghost';
+  return (
+    <span
+      className={`badge badge-sm tabular-nums font-semibold ${tone}`}
+      title="Projected total fantasy impact across all nine categories, against tonight's slate. 0 is an average night."
+    >
+      {impact > 0 ? '+' : ''}
+      {impact.toFixed(1)}
+    </span>
+  );
+};
+
+/** The six counting categories under the name, in box-score order. */
+const CATEGORY_LABELS: ReadonlyArray<[keyof SlatePlayer['projected'], string]> = [
+  ['reb', 'REB'],
+  ['ast', 'AST'],
+  ['stl', 'STL'],
+  ['blk', 'BLK'],
+  ['fg3m', '3PM'],
+  ['tov', 'TOV'],
+];
+
+const CategoryLine = ({ player }: { player: SlatePlayer }): JSX.Element | null => {
+  const parts = CATEGORY_LABELS.filter(
+    ([key]) => toStatNumber(player.projected?.[key]) !== null
+  ).map(([key, label]) => `${formatStat(player.projected[key])} ${label}`);
+  if (parts.length === 0) return null;
+  return (
+    <span className="text-[11px] opacity-50 tabular-nums">{parts.join(' · ')}</span>
+  );
+};
+
 const PlayerRow = ({ player }: { player: SlatePlayer }): JSX.Element => (
-  <li className="grid grid-cols-[1fr_auto_auto] items-center gap-2 sm:gap-3 py-1.5">
-    <span className="min-w-0">
-      <span className="text-sm font-medium truncate block">{player.name}</span>
-      {player.team_abbr && (
-        <span className="text-[11px] opacity-50 uppercase tracking-wider">{player.team_abbr}</span>
-      )}
-    </span>
+  <li
+    className={
+      'flex flex-col gap-0.5 py-1.5 px-2 -mx-2 rounded-md ' +
+      (player.slate_spotlight
+        ? 'bg-primary/10 ring-1 ring-primary/30'
+        : player.spotlight
+          ? 'bg-base-300/50'
+          : '')
+    }
+  >
+    <div className="flex items-center gap-2">
+      <span className="min-w-0 flex items-center gap-1.5">
+        {player.slate_spotlight && (
+          <Flame
+            size={13}
+            className="text-primary shrink-0"
+            aria-label="Top projected impact on the slate"
+          />
+        )}
+        <span
+          className={
+            'text-sm truncate ' +
+            (player.name_is_placeholder ? 'font-mono text-xs italic opacity-60' : 'font-medium')
+          }
+          title={
+            player.name_is_placeholder
+              ? 'This player has predictions but no roster row yet, so only his NBA id is known'
+              : undefined
+          }
+        >
+          {player.name}
+        </span>
+        {player.team_abbr && (
+          <span className="text-[11px] opacity-50 uppercase tracking-wider shrink-0">
+            {player.team_abbr}
+          </span>
+        )}
+      </span>
 
-    <span className="text-xs tabular-nums opacity-70 text-right whitespace-nowrap">
-      <span className="font-semibold opacity-100">{formatStat(player.proj_pts)}</span> pts
-      <span className="opacity-40"> · </span>
-      {formatStat(player.proj_min_p50)} min
-    </span>
+      <span className="ml-auto flex items-center gap-1.5 shrink-0">
+        <ImpactBadge player={player} />
+        <AvailabilityBadge value={player.prob_active} />
+      </span>
+    </div>
 
-    <AvailabilityBadge value={player.prob_active} />
+    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+      <span className="text-xs tabular-nums opacity-70 whitespace-nowrap">
+        <span className="font-semibold opacity-100">{formatStat(player.proj_pts)}</span> pts
+        <span className="opacity-40"> · </span>
+        {formatStat(player.proj_min_p50)} min
+      </span>
+      <CategoryLine player={player} />
+    </div>
   </li>
 );
 
@@ -87,7 +180,7 @@ const GameCard = ({ game }: { game: SlateGame }): JSX.Element => (
       {game.players.length === 0 ? (
         <p className="text-xs opacity-50 py-2">No projected players for this game yet.</p>
       ) : (
-        <ul className="divide-y divide-base-300">
+        <ul className="flex flex-col gap-0.5">
           {game.players.map((player) => (
             <PlayerRow key={player.nba_player_id} player={player} />
           ))}
@@ -115,6 +208,7 @@ export const SlatePage = (): JSX.Element => {
   );
 
   const predictedAt = formatTimestamp(data?.run?.predicted_at ?? null);
+  const pool = data?.pool ?? null;
 
   return (
     <div className="max-w-[900px] mx-auto px-4 py-6 pb-20">
@@ -184,18 +278,47 @@ export const SlatePage = (): JSX.Element => {
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {data.games.map((game) => (
-                <GameCard key={game.nba_game_id} game={game} />
-              ))}
-            </div>
+            <>
+              {data.run && (
+                <p className="text-[11px] opacity-60 flex items-center gap-1.5 flex-wrap">
+                  <Flame size={13} className="text-primary" />
+                  <span>
+                    Highlighted rows are the slate&apos;s standouts — the players projected to do
+                    the most tonight. An outlined score leads its own game.
+                  </span>
+                </p>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {data.games.map((game) => (
+                  <GameCard key={game.nba_game_id} game={game} />
+                ))}
+              </div>
+            </>
           )}
         </div>
       )}
 
-      <footer className="text-[11px] opacity-40 mt-6 pt-3 border-t border-base-300">
-        Projected points are unconditional — the chance of playing is already priced in, so a
-        game-time decision projects lower than the same player would if he were certain to suit up.
+      <footer className="text-[11px] opacity-40 mt-6 pt-3 border-t border-base-300 flex flex-col gap-1">
+        <span>
+          Players and games are ordered by projected TOTAL impact: each of the nine fantasy
+          categories is z-scored against the rest of the slate and the scores are summed, with
+          turnovers counting against and shooting scored by volume rather than by percentage. 0 is
+          an average night.
+          {/* the pool is described by the server, so this page never states a
+              definition the numbers were not actually computed against. */}
+          {pool && pool.definition && (
+            <>
+              {' '}
+              Compared against {pool.label.toLowerCase()}: {pool.definition}
+              {pool.sample_size > 0 && ` (${pool.sample_size} players)`}.
+            </>
+          )}
+        </span>
+        <span>
+          Every projection is unconditional — the chance of playing is already priced in, so a
+          game-time decision projects lower than the same player would if he were certain to suit
+          up.
+        </span>
       </footer>
     </div>
   );
