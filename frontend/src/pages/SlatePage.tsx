@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CalendarDays, Flame } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight, CalendarDays, Flame } from 'lucide-react';
 import { getSlate } from '../api/client';
 import { useCachedResource } from '../hooks/useCachedResource';
 import { formatTimestamp } from '../utils/analytics';
@@ -107,7 +107,63 @@ const CategoryLine = ({ player }: { player: SlatePlayer }): JSX.Element | null =
   );
 };
 
-const PlayerRow = ({ player }: { player: SlatePlayer }): JSX.Element => (
+/**
+ * "+6.2 min vs usual" — shown only when tonight's minutes projection departs
+ * from the player's own recent average by at least the deviation the SERVER
+ * calls notable (`baseline.notable_min_delta`, the same bar the Watchlist calls
+ * a role increase). The threshold is never hardcoded here: a page that invented
+ * its own would eventually disagree with the badge on the other page.
+ *
+ * Minutes only, deliberately. `min_vs_usual` compares two per-appearance
+ * numbers, so it is a statement about his ROLE. `pts_vs_usual` compares an
+ * unconditional projection against a per-appearance average and so also carries
+ * availability, which would read as "he lost points" for a player who is merely
+ * a game-time decision. It stays in the tooltip, where it can be explained.
+ *
+ * An absent baseline renders nothing rather than a zero: a player with too little
+ * history has no usual, which is not the same as being unchanged.
+ */
+const VsUsualChip = ({
+  player,
+  threshold,
+}: {
+  player: SlatePlayer;
+  threshold: number;
+}): JSX.Element | null => {
+  const delta = toStatNumber(player.min_vs_usual);
+  const usual = toStatNumber(player.usual_min);
+  if (delta === null || usual === null || threshold <= 0) return null;
+  if (Math.abs(delta) < threshold) return null;
+
+  const up = delta > 0;
+  const ptsDelta = toStatNumber(player.pts_vs_usual);
+  const ptsPart =
+    ptsDelta === null
+      ? ''
+      : ` Projected points are ${ptsDelta > 0 ? '+' : ''}${ptsDelta.toFixed(1)} against the same window, availability included.`;
+
+  return (
+    <span
+      className={
+        'badge badge-xs tabular-nums gap-0.5 ' +
+        (up ? 'badge-success badge-outline' : 'badge-warning badge-outline')
+      }
+      title={`He averages ${usual.toFixed(1)} minutes over his recent games played; tonight projects ${formatStat(player.proj_min_p50)}.${ptsPart}`}
+    >
+      {up ? <ArrowUpRight size={10} /> : <ArrowDownRight size={10} />}
+      {up ? '+' : ''}
+      {delta.toFixed(1)} min vs usual
+    </span>
+  );
+};
+
+const PlayerRow = ({
+  player,
+  notableMinDelta,
+}: {
+  player: SlatePlayer;
+  notableMinDelta: number;
+}): JSX.Element => (
   <li
     className={
       'flex flex-col gap-0.5 py-1.5 px-2 -mx-2 rounded-md ' +
@@ -160,11 +216,18 @@ const PlayerRow = ({ player }: { player: SlatePlayer }): JSX.Element => (
         {formatStat(player.proj_min_p50)} min
       </span>
       <CategoryLine player={player} />
+      <VsUsualChip player={player} threshold={notableMinDelta} />
     </div>
   </li>
 );
 
-const GameCard = ({ game }: { game: SlateGame }): JSX.Element => (
+const GameCard = ({
+  game,
+  notableMinDelta,
+}: {
+  game: SlateGame;
+  notableMinDelta: number;
+}): JSX.Element => (
   <section className="card bg-base-200 border border-base-300">
     <div className="card-body p-4 sm:p-5 gap-2">
       <div className="flex items-baseline justify-between gap-2">
@@ -182,7 +245,11 @@ const GameCard = ({ game }: { game: SlateGame }): JSX.Element => (
       ) : (
         <ul className="flex flex-col gap-0.5">
           {game.players.map((player) => (
-            <PlayerRow key={player.nba_player_id} player={player} />
+            <PlayerRow
+              key={player.nba_player_id}
+              player={player}
+              notableMinDelta={notableMinDelta}
+            />
           ))}
         </ul>
       )}
@@ -209,6 +276,10 @@ export const SlatePage = (): JSX.Element => {
 
   const predictedAt = formatTimestamp(data?.run?.predicted_at ?? null);
   const pool = data?.pool ?? null;
+  const baseline = data?.baseline ?? null;
+  // 0 disables the chips, which is what an older server (or one caught
+  // mid-deploy) that sends no baseline descriptor should produce.
+  const notableMinDelta = baseline?.definition ? baseline.notable_min_delta : 0;
 
   return (
     <div className="max-w-[900px] mx-auto px-4 py-6 pb-20">
@@ -290,7 +361,11 @@ export const SlatePage = (): JSX.Element => {
               )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {data.games.map((game) => (
-                  <GameCard key={game.nba_game_id} game={game} />
+                  <GameCard
+                    key={game.nba_game_id}
+                    game={game}
+                    notableMinDelta={notableMinDelta}
+                  />
                 ))}
               </div>
             </>
@@ -319,6 +394,15 @@ export const SlatePage = (): JSX.Element => {
           game-time decision projects lower than the same player would if he were certain to suit
           up.
         </span>
+        {/* the window and the threshold are the server's, so this note and the
+            Watchlist's role-increase badge can never describe different bars. */}
+        {notableMinDelta > 0 && baseline && (
+          <span>
+            A &ldquo;vs usual&rdquo; chip appears when tonight&apos;s minutes projection is at least{' '}
+            {notableMinDelta} away from {baseline.label} — {baseline.definition}. The Watchlist
+            ranks by that gap; this page ranks by tonight&apos;s absolute impact.
+          </span>
+        )}
       </footer>
     </div>
   );

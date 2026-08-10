@@ -15,7 +15,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:unit": "vitest run tests/unit",
-    "test:api": "vitest run tests/api"
+    "test:api": "vitest run tests/api",
+    "backtest:watchlist": "tsx scripts/watchlistBacktest.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

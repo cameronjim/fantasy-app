@@ -1,6 +1,18 @@
 import { query } from '../db.js';
 import { etIsoDate } from './dates.js';
 import { mean, stddev } from './analytics.js';
+// `baselines.ts` imports this file's coercion helpers, so the two form a cycle.
+// It is benign and intentional: every binding crossing it in either direction is
+// a hoisted `function` declaration, which ESM initialises before either module
+// body runs, and neither module's top-level code reads the other's values.
+import {
+  baselineDescriptor,
+  deltaOf,
+  fetchBaselines,
+  hasUsableBaseline,
+  type BaselineDescriptor,
+  type PlayerBaseline,
+} from './baselines.js';
 
 /**
  * The day's slate: every scheduled game plus the players the latest model run
@@ -191,6 +203,31 @@ export interface SlatePlayer {
   /** Unconditional expectations for the categories the card lists. */
   projected: SlateProjectedCategories;
   /**
+   * ===================== THE VS-USUAL PAIR =====================
+   * His own recent per-appearance averages, and tonight's projection minus them.
+   * `baselines.ts` owns the window and is the SAME read the Watchlist ranks on,
+   * so a "+6 min vs usual" chip here can never contradict a ROLE_INCREASE badge
+   * there for the same player on the same night.
+   *
+   * Null when he has too little history to have a usual (see
+   * `MIN_BASELINE_GAMES`) — that is a different fact from "no deviation", and a
+   * page must not render a rookie as unchanged.
+   *
+   * The minutes comparison is honest only because both halves are
+   * per-APPEARANCE: `proj_min_p50` is the conditional median, and the baseline
+   * averages games he played. `proj_pts` is UNCONDITIONAL, so `pts_vs_usual`
+   * carries availability as well as role — a doubtful starter reads as below his
+   * usual, which for a page about tonight's expected production is the intended
+   * reading. Minutes is the one to trust for "did his role change".
+   * =============================================================
+   */
+  usual_min: number | null;
+  usual_pts: number | null;
+  min_vs_usual: number | null;
+  pts_vs_usual: number | null;
+  /** Played games the baseline rests on. 0 when there is no baseline. */
+  baseline_games: number;
+  /**
    * Projected total fantasy impact: the sum of this player's z-scores across
    * the nine categories, measured against `pool`. 0 is an average night on this
    * slate; null means the run did not project every category in play for him.
@@ -218,6 +255,11 @@ export interface SlateResponse {
   date: string;
   run: SlateRun | null;
   pool: SlatePool;
+  /**
+   * What "usual" means, and the deviation worth showing a chip for, so the page
+   * never hardcodes the definition or the threshold of a number it displays.
+   */
+  baseline: BaselineDescriptor;
   games: SlateGame[];
 }
 
@@ -653,15 +695,20 @@ export async function getSlate(date: string): Promise<SlateResponse> {
   const schedule = await fetchSchedule(date);
   const run = await getLatestCompleteRun();
   const runSummary = run ? { model_version: run.model_version, predicted_at: run.predicted_at } : null;
+  const baseline = baselineDescriptor();
 
   // no games means nothing to hang predictions off; skip the remaining round
   // trips entirely.
   if (schedule.length === 0) {
-    return { date, run: runSummary, pool: poolDescriptor(0), games: [] };
+    return { date, run: runSummary, pool: poolDescriptor(0), baseline, games: [] };
   }
 
   const teamAbbrs = await fetchTeamAbbrs();
   const predictions = run ? await fetchPredictions(run.id, date) : [];
+  // one extra round trip, and only when there is something to compare: with no
+  // projections there is no deviation to describe.
+  const baselines =
+    predictions.length > 0 ? await fetchBaselines(date) : new Map<string, PlayerBaseline>();
 
   // the pool is every player-game the run has for this date — see THE POOL.
   const inputs: ImpactInput[] = predictions.map((row) => {
@@ -677,15 +724,25 @@ export async function getSlate(date: string): Promise<SlateResponse> {
     const projected = {} as SlateProjectedCategories;
     for (const cat of DISPLAY_CATEGORIES) projected[cat] = round(inputs[i][cat], 1);
 
+    const own = baselines.get(nbaPlayerId);
+    const usable = hasUsableBaseline(own) ? (own as PlayerBaseline) : null;
+    const projMin = num(row.proj_min_p50);
+    const projPts = inputs[i].pts;
+
     return {
       nba_player_id: nbaPlayerId,
       name,
       name_is_placeholder: placeholder,
       team_abbr: text(row.team_abbr),
       prob_active: round(num(row.prob_active), 3),
-      proj_pts: round(inputs[i].pts, 1),
-      proj_min_p50: round(num(row.proj_min_p50), 1),
+      proj_pts: round(projPts, 1),
+      proj_min_p50: round(projMin, 1),
       projected,
+      usual_min: round(usable?.avg.minutes ?? null, 1),
+      usual_pts: round(usable?.avg.pts ?? null, 1),
+      min_vs_usual: round(deltaOf(projMin, usable?.avg.minutes ?? null), 1),
+      pts_vs_usual: round(deltaOf(projPts, usable?.avg.pts ?? null), 1),
+      baseline_games: usable?.games ?? 0,
       impact: impacts[i],
       spotlight: false,
       slate_spotlight: false,
@@ -734,5 +791,5 @@ export async function getSlate(date: string): Promise<SlateResponse> {
     (a, b) => byValueDesc(a.top_impact, b.top_impact) || a.nba_game_id.localeCompare(b.nba_game_id)
   );
 
-  return { date, run: runSummary, pool: poolDescriptor(players.length), games };
+  return { date, run: runSummary, pool: poolDescriptor(players.length), baseline, games };
 }
