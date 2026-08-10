@@ -1,9 +1,10 @@
 import type { Page, Route } from '@playwright/test';
 import { ALL_PLAYERS, type PlayerFixture } from './players';
+import { watchlistFixture } from './watchlist';
 import type {
   Team, Game, TeamAnalysis,
   BettingGame, BettingPicksResponse, Bet, LedgerSummary,
-  PlayerAnalytics, PlayerPredictionsResponse,
+  PlayerAnalytics, PlayerPredictionsResponse, WatchlistResponse,
 } from '../../src/types';
 
 // route handlers that satisfy the api calls the app makes on first paint.
@@ -43,6 +44,12 @@ export interface MockOptions {
   bettingOdds?: BettingGame[];
   bettingPicks?: BettingPicksResponse;
   bets?: { bets: Bet[]; summary: LedgerSummary };
+  /**
+   * Payload for /api/watchlist. A function receives the request's own query
+   * params, which is how a spec drives the window and position controls and gets
+   * an answer that actually reflects them. Omitted means `watchlistFixture`.
+   */
+  watchlist?: WatchlistResponse | ((params: URLSearchParams) => WatchlistResponse);
   // extra handlers applied before the defaults — useful for forcing a
   // specific status code or asserting that a particular call was made.
   custom?: Array<{ url: RegExp | string; handler: (route: Route) => Promise<void> | void }>;
@@ -108,6 +115,17 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<void>
       games: [],
     };
     route.fulfill({ json: opts.playerPredictions ?? fallback });
+  });
+
+  // the watchlist answers from the request's own window and position, so a spec
+  // clicking a chip gets back what that chip actually asked for.
+  await page.route('**/api/watchlist*', (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    const payload =
+      typeof opts.watchlist === 'function'
+        ? opts.watchlist(params)
+        : opts.watchlist ?? watchlistFixture(params);
+    route.fulfill({ json: payload });
   });
 
   await page.route('**/api/teams', (route) => route.fulfill({ json: teams }));

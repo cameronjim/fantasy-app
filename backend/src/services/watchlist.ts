@@ -12,6 +12,7 @@ import {
   resolvePlayerName,
   round,
   rowsOrEmpty,
+  toIsoDay,
   uncondStat,
   type ImpactInput,
   type ProjectedStat,
@@ -98,6 +99,76 @@ import {
  * There is no Python mirror. `ml/fnba_ml/watchlist.py` mirrored the PREVIOUS
  * design (a weighted reason count) and was retired when this file replaced it;
  * this file is the single implementation and the single spec.
+ *
+ * ==================== THE WINDOW, AND WHY IT IS A SUM ====================
+ *
+ *     window score = SUM over his games in [date, date + days - 1] of
+ *                        max(0, upside_g) x relevance_g
+ *
+ * The per-game term is unchanged, and each game is still scored against ITS OWN
+ * night: `upside_g` divides by the spread of that deviation across THAT date's
+ * pool, and `relevance_g` is the percentile ramp inside THAT date's slate. A
+ * Tuesday two-game slate and a Wednesday eleven-game slate are different
+ * comparisons, and collapsing them into one pool would let the size of a night
+ * decide the ranking.
+ *
+ * THE AGGREGATION IS A SUM BECAUSE THE NUMBER OF GAMES IS THE POINT. The use
+ * case is a streaming pickup: a starting guard is out for two weeks, and the
+ * question is who produces the most over exactly those days. A player with five
+ * games can out-earn a better player with two, and a per-game MEAN would erase
+ * precisely that — it would rank the same on a one-game week as on a four-game
+ * week, which is the opposite of the answer a manager needs. `games_count` is
+ * carried on the row so the sum is never mistaken for per-game quality, and
+ * `score_per_game` is carried beside it so the row can be read either way.
+ *
+ * EACH GAME IS CLAMPED AT ZERO SEPARATELY, not the window total. A night the run
+ * projects him at or below his own usual contributes 0, never a debit: a flat
+ * Thursday is not a reason to pass on a player whose Monday and Saturday are
+ * both big, and letting it subtract would make an extra game a risk instead of
+ * an opportunity. So adding games can only ever help — which is the claim the
+ * page is making.
+ *
+ * WHAT IS AVERAGED RATHER THAN SUMMED, AND WHY. `upside`, `relevance`,
+ * `impact_percentile`, `prob_active` and the vs-usual pairs are PER-GAME
+ * INTENSITIES — "how big a night, and how much it matters" — so each is reported
+ * as the mean over the games it is defined for. Summing them would make them
+ * grow with the schedule and stop meaning anything on their own. `impact` and
+ * `totals` ARE summed, because those are quantities of production and the window
+ * total is what a manager is deciding on. Consequence, stated plainly: for a
+ * window longer than one day `score` is NOT `upside x relevance` — that identity
+ * holds per game, and the row's `score` is the sum of those products.
+ *
+ * ONE BASELINE FOR THE WHOLE WINDOW, taken as of `date`. A baseline recomputed
+ * at date+3 would average in the games of date..date+2, which have not been
+ * played — the same hindsight leak the `game_date < $1` cutoff in
+ * `baselines.ts` exists to prevent. "Usual" is what was known when the question
+ * was asked, and the question is asked once, at the start of the window.
+ *
+ * REASONS, EVIDENCE AND DRIVERS DESCRIBE THE BEST-SCORING GAME IN THE WINDOW,
+ * and so do `game_date`, `nba_game_id` and `opponent_team_abbr`. A union of
+ * reasons over five nights would put a badge on a row whose supporting numbers
+ * belong to a different night; one game's worth of explanation that all agrees
+ * with itself is worth more than five games' worth that does not. The rest of
+ * the window is in `games`, per game, for the reader who wants it.
+ *
+ * ============================== POSITION ==============================
+ * `players.position` is a comma-joined list of PG/SG/SF/PF/C. It is normalised
+ * into specific positions AND into G/F/C buckets (see `parsePositions`), so
+ * "SG,SF" answers a G filter, an F filter, an SG filter and an SF filter — a
+ * combo forward-guard IS both, and making the manager guess which one this app
+ * filed him under would be a worse answer than either.
+ *
+ * A player the run projects but `players` has no row for has NO position. He is
+ * INCLUDED when no position filter is asked for and EXCLUDED from every specific
+ * one: "unknown" must not be quietly rendered as "not a guard". The response
+ * carries `position_coverage` so the page can say how many rows that is instead
+ * of silently shortening the list.
+ *
+ * THE FILTER IS APPLIED AFTER SCORING, NEVER BEFORE. The pool every percentile
+ * is measured against stays the whole slate — a guard is relevant relative to
+ * everyone playing that night, not relative to other guards — and the limit is
+ * applied last, so `?position=G` returns the top twenty GUARDS rather than the
+ * guards among the top twenty.
  * ============================================================================
  */
 
@@ -175,6 +246,196 @@ export const WATCHLIST_LIMIT = 20;
 /** How many of a row's upward deviations the payload carries. */
 export const UPSIDE_DRIVERS_SHOWN = 3;
 
+/** Days a window covers when `?days=` is absent — tonight, and nothing else. */
+export const DEFAULT_WINDOW_DAYS = 1;
+
+/**
+ * The longest window the endpoint will answer for.
+ *
+ * 14 because the use case is a two-week absence, which is the modal length of the
+ * injury a manager streams around; and because it is also about as far as the
+ * NBA schedule is worth projecting — beyond two weeks the run's own uncertainty
+ * dominates, and a longer window would mostly be a longer list of guesses. It
+ * also bounds the cost: one window is one predictions query over a date range,
+ * so the cap is what keeps that range from becoming a season scan.
+ */
+export const MAX_WINDOW_DAYS = 14;
+
+/**
+ * ============================ POSITION VOCABULARY ============================
+ * `players.position` holds a comma-joined list — "PG,SG", "SF,PF", "C" — and the
+ * ORDER carries the primary position first, which is why `parsePositions`
+ * preserves it rather than sorting. `routes/players.ts` already filters that
+ * column with `= ANY(string_to_array(position, ','))`, so this vocabulary is the
+ * same one the player list uses, read in TypeScript instead of SQL because the
+ * watchlist has to filter AFTER scoring rather than in the query.
+ * ============================================================================
+ */
+
+/** The five positions the source data actually names. */
+export const SPECIFIC_POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'] as const;
+
+export type SpecificPosition = (typeof SPECIFIC_POSITIONS)[number];
+
+/** The three roster slots a fantasy manager streams into. */
+export const POSITION_BUCKETS = ['G', 'F', 'C'] as const;
+
+export type PositionBucket = (typeof POSITION_BUCKETS)[number];
+
+/** Which bucket each specific position falls in. */
+export const POSITION_BUCKET_OF: Record<SpecificPosition, PositionBucket> = {
+  PG: 'G',
+  SG: 'G',
+  SF: 'F',
+  PF: 'F',
+  C: 'C',
+};
+
+/**
+ * Every value `?position=` accepts, buckets first.
+ *
+ * `C` appears once rather than twice because the bucket and the specific
+ * position are the SAME set: a player is in bucket C exactly when one of his
+ * positions is C. Offering it twice would be two chips that filter identically.
+ */
+export const POSITION_FILTERS = ['G', 'F', 'C', 'PG', 'SG', 'SF', 'PF'] as const;
+
+export type PositionFilter = (typeof POSITION_FILTERS)[number];
+
+/** A player's positions, normalised out of one `players.position` cell. */
+export interface PlayerPositions {
+  /** Specific positions, primary first. Empty when the source names none. */
+  positions: SpecificPosition[];
+  /** G/F/C buckets, deduped, in `POSITION_BUCKETS` order. */
+  buckets: PositionBucket[];
+  /** What a row prints — "PG/SG". Null when nothing could be parsed at all. */
+  label: string | null;
+}
+
+/** Nothing known. Shared so "no position" is one object, not several. */
+const NO_POSITIONS: PlayerPositions = { positions: [], buckets: [], label: null };
+
+/**
+ * `players.position` -> positions and buckets.
+ *
+ * Splits on comma, slash, hyphen and whitespace, so "PG,SG", "PG/SG" and the
+ * "G-F" shorthand a different scrape might write all parse. Unrecognised tokens
+ * are dropped rather than guessed at.
+ *
+ * A BARE BUCKET TOKEN ("G", "F") yields a bucket and no specific position, which
+ * is the honest reading: "he is a guard" does not say whether he is a point
+ * guard, and inventing PG from G would put him under a filter the data never
+ * claimed. "C" is treated as a specific position, because there it is one.
+ */
+export function parsePositions(raw: unknown): PlayerPositions {
+  if (raw === null || raw === undefined) return NO_POSITIONS;
+  const tokens = String(raw)
+    .toUpperCase()
+    .split(/[,/\-|\s]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+
+  const positions: SpecificPosition[] = [];
+  const buckets = new Set<PositionBucket>();
+
+  for (const token of tokens) {
+    if ((SPECIFIC_POSITIONS as readonly string[]).includes(token)) {
+      const specific = token as SpecificPosition;
+      if (!positions.includes(specific)) positions.push(specific);
+      buckets.add(POSITION_BUCKET_OF[specific]);
+    } else if ((POSITION_BUCKETS as readonly string[]).includes(token)) {
+      buckets.add(token as PositionBucket);
+    }
+  }
+
+  const ordered = POSITION_BUCKETS.filter((bucket) => buckets.has(bucket));
+  const label =
+    positions.length > 0 ? positions.join('/') : ordered.length > 0 ? ordered.join('/') : null;
+
+  return { positions, buckets: ordered, label };
+}
+
+/**
+ * Whether a player answers a filter. `null` — no filter — matches everyone,
+ * INCLUDING a player with no position at all; every specific filter excludes
+ * him, because "unknown" is not "no".
+ */
+export function matchesPosition(
+  player: PlayerPositions,
+  filter: PositionFilter | null
+): boolean {
+  if (filter === null) return true;
+  if ((POSITION_BUCKETS as readonly string[]).includes(filter)) {
+    return player.buckets.includes(filter as PositionBucket);
+  }
+  return player.positions.includes(filter as SpecificPosition);
+}
+
+/**
+ * Validates `?position=`. Absent, empty, or the explicit `any` means no filter
+ * and returns null; an unknown value returns `false` so the route can 400 rather
+ * than quietly answer for every position. Case-insensitive, because a chip in a
+ * URL should not have to be shouted.
+ */
+export function parsePositionFilter(raw: unknown): PositionFilter | null | false {
+  if (raw === undefined || raw === null || raw === '') return null;
+  if (typeof raw !== 'string') return false;
+  const value = raw.trim().toUpperCase();
+  if (value === '' || value === 'ANY' || value === 'ALL') return null;
+  return (POSITION_FILTERS as readonly string[]).includes(value)
+    ? (value as PositionFilter)
+    : false;
+}
+
+/**
+ * Validates `?days=`. Absent means `DEFAULT_WINDOW_DAYS`; anything that is not a
+ * whole number in `[1, MAX_WINDOW_DAYS]` returns null so the route can 400.
+ *
+ * Out-of-range is rejected rather than clamped, for the same reason
+ * `parsePredictionDate` rejects Feb 31: answering for 14 days when 30 were asked
+ * for is a wrong answer that looks like a right one.
+ */
+export function parseWindowDays(raw: unknown): number | null {
+  if (raw === undefined || raw === null || raw === '') return DEFAULT_WINDOW_DAYS;
+  if (typeof raw !== 'string' && typeof raw !== 'number') return null;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > MAX_WINDOW_DAYS) return null;
+  return value;
+}
+
+/** `n` days from an ISO day, in UTC so no local DST shift can move a date. */
+export function shiftIsoDate(date: string, days: number): string {
+  const base = Date.parse(`${date}T00:00:00Z`);
+  if (Number.isNaN(base)) return date;
+  return new Date(base + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** The inclusive range a `date` + `days` request covers. */
+export function windowRange(date: string, days: number): WatchlistWindow {
+  return { from: date, to: shiftIsoDate(date, days - 1), days };
+}
+
+/**
+ * The pool descriptor for a window.
+ *
+ * A one-day window echoes `slate.ts::poolDescriptor` VERBATIM — the numbers are
+ * the slate's numbers and the page must not describe them in words of its own.
+ * A longer one keeps the same key and sample count but restates the definition,
+ * because "tonight's slate" is a false description of a fortnight and every
+ * percentile in the payload was still measured one night at a time.
+ */
+export function watchlistPool(sampleSize: number, days: number): SlatePool {
+  const pool = poolDescriptor(sampleSize);
+  if (days <= 1) return pool;
+  return {
+    ...pool,
+    label: "Each night's slate",
+    definition:
+      "every player the run projects for a date, across all of that date's games — " +
+      'each night in the window is scored against its own slate',
+  };
+}
+
 /**
  * ============================ REASON THRESHOLDS ============================
  * Each of these is a rule a reader can check against a box score plus the
@@ -249,6 +510,8 @@ export interface WatchlistCandidate {
   name: string;
   name_is_placeholder: boolean;
   team_abbr: string | null;
+  /** Normalised from `players.position`; all-empty when he has no roster row. */
+  position: PlayerPositions;
   opponent_team_abbr: string | null;
   nba_game_id: string;
   game_date: string;
@@ -263,6 +526,12 @@ export interface WatchlistCandidate {
    * ranking saw, rather than from a second query that might not agree.
    */
   proj_pts_uncond: number | null;
+  /**
+   * Every unconditional projection for this game, which is what the window
+   * totals are summed from. `proj_pts_uncond` is `uncond.pts` and is kept
+   * separately only because the backtest reads it by that name.
+   */
+  uncond: ImpactInput;
   /** Played games the baseline rests on. */
   baseline_games: number;
   /** `projected - usual` per deviation stat; absent where either half is missing. */
@@ -293,43 +562,112 @@ export interface WatchlistEvidence {
   teammate_out_prob_active?: number;
 }
 
+/** One game inside the window, for the row's expandable breakdown. */
+export interface WatchlistGame {
+  game_date: string;
+  nba_game_id: string;
+  opponent_team_abbr: string | null;
+  /** Conditional P50 minutes — the same line the Projections tab prints. */
+  minutes_p50: number | null;
+  /** Unconditional projected points — the number the Projections tab ranks by. */
+  proj_pts: number | null;
+  /** This game's absolute projected impact, against its own night's slate. */
+  impact: number | null;
+  /** This game's contribution to the window total: `max(0, upside) x relevance`. */
+  score: number;
+}
+
 export interface WatchlistPlayer {
   nba_player_id: string;
   name: string;
   /** True when `name` is a stand-in built from the id (see slate.ts). */
   name_is_placeholder: boolean;
   team_abbr: string | null;
-  opponent_team_abbr: string | null;
-  nba_game_id: string;
+  /**
+   * His positions as one printable string — "PG/SG". Null when the run projects
+   * him but `players` has no row for him, which is a different fact from "no
+   * position" and is why the page prints it differently.
+   */
+  position: string | null;
+  /**
+   * The window's BEST-SCORING game, and so are `nba_game_id`,
+   * `opponent_team_abbr`, `reasons`, `evidence` and `drivers` — one game's worth
+   * of explanation that agrees with itself. See THE WINDOW at the top.
+   */
   game_date: string;
-  /** `max(0, upside) x relevance`. See THE SCORE at the top of this file. */
+  nba_game_id: string;
+  opponent_team_abbr: string | null;
+  /** Games the run projects for him inside the window. The streaming argument. */
+  games_count: number;
+  /** Every one of those games, earliest first. */
+  games: WatchlistGame[];
+  /**
+   * The window TOTAL: the sum over `games` of `max(0, upside) x relevance`. For a
+   * one-day window that is the single game's product; for longer ones it is not
+   * `upside x relevance`, deliberately — see THE WINDOW.
+   */
   score: number;
-  /** The deviation term: scaled projection-minus-usual, weighted mean. */
+  /** `score / games_count`, so a row reads as rate as well as total. */
+  score_per_game: number;
+  /** The deviation term, averaged over his games in the window. */
   upside: number;
-  /** Which deviations point up, biggest contribution first. Capped. */
+  /** Which deviations point up in his best game, biggest contribution first. */
   drivers: UpsideDriver[];
-  /** The absolute floor term, 0-1. Exactly 0 below the impact percentile floor. */
+  /** The absolute floor term, 0-1, averaged over his games in the window. */
   relevance: number;
-  /** Tonight's absolute projected impact — the same number the slate shows. */
+  /** Absolute projected impact SUMMED over the window — total, not per game. */
   impact: number | null;
-  /** Where that impact sits in tonight's pool, 0-100. */
+  /** Mean over his games of where that night's impact sat in that night's pool. */
   impact_percentile: number;
+  /**
+   * Mean availability over his games in the window — read it as the share of
+   * these games the run expects him to appear in. Null when it never had one.
+   */
   prob_active: number | null;
+  /** Usual is the one baseline; projected and delta are means over the window. */
   minutes: VsUsual;
   points: VsUsual;
+  /** Unconditional projections SUMMED over the window, per stat. */
+  totals: Partial<Record<ProjectedStat, number>>;
   baseline_games: number;
   reasons: ReasonCode[];
   evidence: WatchlistEvidence;
 }
 
+/** The days a request covers, echoed so the page never computes its own range. */
+export interface WatchlistWindow {
+  /** First date in the window — the `?date=` that was asked for. */
+  from: string;
+  /** Last date, inclusive. Equal to `from` for a one-day window. */
+  to: string;
+  days: number;
+}
+
+/** How many of the window's ranked-eligible candidates have a position at all. */
+export interface PositionCoverage {
+  known: number;
+  unknown: number;
+}
+
 export interface WatchlistResponse {
+  /** The window's first date, kept for callers that only ever asked for one day. */
   date: string;
+  window: WatchlistWindow;
   /** Null until a run has completed — the page shows its own notice. */
   run: SlateRun | null;
-  /** The pool the impact percentile is measured in — slate.ts's pool, verbatim. */
+  /** The pool the impact percentile is measured in — slate.ts's pool, per night. */
   pool: SlatePool;
   /** What "usual" means, so the page never states a definition of its own. */
   baseline: BaselineDescriptor;
+  /** The position filter that was applied, or null for every position. */
+  position: PositionFilter | null;
+  /** Every filter this server honours, so the page never offers one it will not. */
+  position_options: PositionFilter[];
+  /**
+   * Counted BEFORE the position filter, so the page can say how many candidates
+   * a specific filter could not consider rather than silently shortening.
+   */
+  position_coverage: PositionCoverage;
   players: WatchlistPlayer[];
 }
 
@@ -619,10 +957,75 @@ export function scoreCandidates(candidates: WatchlistCandidate[]): ScoredCandida
 }
 
 /**
- * The ranked list. Anything scoring 0 is DROPPED rather than shown at the
- * bottom: a zero means either "not projected above his own usual" or "in the
- * bottom half of tonight's slate", and neither is a claim worth a row. An empty
- * list on a quiet night is the honest answer, not a bug.
+ * Candidates grouped by their own `game_date`, so each night is scored against
+ * its own pool.
+ *
+ * This is what makes the window honest rather than convenient: scoring a
+ * fortnight as one pool would set the deviation scales and the impact
+ * percentiles from a mixture of two-game Tuesdays and eleven-game Wednesdays,
+ * and a player's standing would then depend on which nights happened to be in
+ * the request.
+ */
+export function groupByDate(
+  candidates: WatchlistCandidate[]
+): Array<{ date: string; candidates: WatchlistCandidate[] }> {
+  const byDate = new Map<string, WatchlistCandidate[]>();
+  for (const candidate of candidates) {
+    const list = byDate.get(candidate.game_date) ?? [];
+    list.push(candidate);
+    byDate.set(candidate.game_date, list);
+  }
+  return [...byDate.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, group]) => ({ date, candidates: group }));
+}
+
+/** A running mean that ignores the games a term is not defined for. */
+class Mean {
+  private sum = 0;
+  private count = 0;
+
+  add(value: number | null | undefined): void {
+    if (value === null || value === undefined || !Number.isFinite(value)) return;
+    this.sum += value;
+    this.count += 1;
+  }
+
+  get value(): number | null {
+    return this.count === 0 ? null : this.sum / this.count;
+  }
+}
+
+/** One player's window, accumulated a game at a time. */
+interface WindowAccumulator {
+  /** The best-scoring game so far — the one that explains the row. */
+  best: ScoredCandidate;
+  scoreTotal: number;
+  upside: Mean;
+  relevance: Mean;
+  percentile: Mean;
+  probActive: Mean;
+  minutesProjected: Mean;
+  pointsProjected: Mean;
+  impactTotal: number;
+  /** Null stays null: a run with no impact for any of his games has no total. */
+  impactKnown: boolean;
+  totals: Partial<Record<ProjectedStat, number>>;
+  games: WatchlistGame[];
+}
+
+/**
+ * The ranked list for a window, which may be a single day.
+ *
+ * Anything whose WINDOW TOTAL is 0 is DROPPED rather than shown at the bottom: a
+ * zero means he is projected at or below his own usual on every night he plays,
+ * or is below the impact floor on every one of them, and neither is a claim worth
+ * a row. An empty list on a quiet week is the honest answer, not a bug.
+ *
+ * `position` filters the RANKED rows, after scoring and before the limit, so the
+ * caller gets `limit` players at that position rather than the players at that
+ * position who happened to make the overall top `limit`. Candidates with no
+ * position survive a null filter and no other.
  *
  * A placeholder name loses a tie to a real one, matching
  * `slate.ts::rankSlatePlayers` — an unidentified player must never win a tie
@@ -630,40 +1033,117 @@ export function scoreCandidates(candidates: WatchlistCandidate[]): ScoredCandida
  */
 export function rankCandidates(
   candidates: WatchlistCandidate[],
-  limit: number = WATCHLIST_LIMIT
+  limit: number = WATCHLIST_LIMIT,
+  position: PositionFilter | null = null
 ): WatchlistPlayer[] {
+  const accumulators = new Map<string, WindowAccumulator>();
+
+  for (const { candidates: nightly } of groupByDate(candidates)) {
+    for (const scored of scoreCandidates(nightly)) {
+      const { candidate, score } = scored;
+      const id = candidate.nba_player_id;
+      // a null score is an unknown night, not a bad one: it still counts as a
+      // game he plays, and contributes nothing to the total.
+      const contribution = score ?? 0;
+
+      let accumulator = accumulators.get(id);
+      if (!accumulator) {
+        accumulator = {
+          best: scored,
+          scoreTotal: 0,
+          upside: new Mean(),
+          relevance: new Mean(),
+          percentile: new Mean(),
+          probActive: new Mean(),
+          minutesProjected: new Mean(),
+          pointsProjected: new Mean(),
+          impactTotal: 0,
+          impactKnown: false,
+          totals: {},
+          games: [],
+        };
+        accumulators.set(id, accumulator);
+      } else if (contribution > (accumulator.best.score ?? 0)) {
+        accumulator.best = scored;
+      }
+
+      accumulator.scoreTotal += contribution;
+      accumulator.upside.add(scored.upside === null ? null : Math.max(0, scored.upside));
+      accumulator.relevance.add(scored.relevance);
+      accumulator.percentile.add(scored.impact_percentile);
+      accumulator.probActive.add(candidate.prob_active);
+      accumulator.minutesProjected.add(candidate.minutes.projected);
+      accumulator.pointsProjected.add(candidate.points.projected);
+      if (candidate.impact !== null) {
+        accumulator.impactTotal += candidate.impact;
+        accumulator.impactKnown = true;
+      }
+      for (const stat of PROJECTED_STATS) {
+        const value = candidate.uncond[stat];
+        if (value === null || !Number.isFinite(value)) continue;
+        accumulator.totals[stat] = (accumulator.totals[stat] ?? 0) + value;
+      }
+      accumulator.games.push({
+        game_date: candidate.game_date,
+        nba_game_id: candidate.nba_game_id,
+        opponent_team_abbr: candidate.opponent_team_abbr,
+        minutes_p50: round(candidate.minutes.projected, 1),
+        proj_pts: round(candidate.uncond.pts, 1),
+        impact: candidate.impact,
+        score: round(contribution, 3) as number,
+      });
+    }
+  }
+
   const ranked: WatchlistPlayer[] = [];
 
-  for (const scored of scoreCandidates(candidates)) {
-    const { candidate, score, upside, drivers, relevance } = scored;
-    if (score === null || score <= 0) continue;
+  for (const accumulator of accumulators.values()) {
+    if (accumulator.scoreTotal <= 0) continue;
+    const candidate = accumulator.best.candidate;
+    if (!matchesPosition(candidate.position, position)) continue;
 
+    const gamesCount = accumulator.games.length;
     const reasons = reasonsFor(candidate);
+    const totals: Partial<Record<ProjectedStat, number>> = {};
+    for (const stat of PROJECTED_STATS) {
+      const value = accumulator.totals[stat];
+      if (value !== undefined) totals[stat] = round(value, 1) as number;
+    }
+    const minutesProjected = accumulator.minutesProjected.value;
+    const pointsProjected = accumulator.pointsProjected.value;
+    const usualMinutes = candidate.minutes.usual;
+    const usualPoints = candidate.points.usual;
+
     ranked.push({
       nba_player_id: candidate.nba_player_id,
       name: candidate.name,
       name_is_placeholder: candidate.name_is_placeholder,
       team_abbr: candidate.team_abbr,
+      position: candidate.position.label,
       opponent_team_abbr: candidate.opponent_team_abbr,
       nba_game_id: candidate.nba_game_id,
       game_date: candidate.game_date,
-      score,
-      upside: round(Math.max(0, upside as number), 3) as number,
-      drivers: drivers.slice(0, UPSIDE_DRIVERS_SHOWN),
-      relevance: relevance as number,
-      impact: candidate.impact,
-      impact_percentile: scored.impact_percentile,
-      prob_active: round(candidate.prob_active, 3),
+      games_count: gamesCount,
+      games: [...accumulator.games].sort((a, b) => a.game_date.localeCompare(b.game_date)),
+      score: round(accumulator.scoreTotal, 3) as number,
+      score_per_game: round(accumulator.scoreTotal / gamesCount, 3) as number,
+      upside: round(accumulator.upside.value ?? 0, 3) as number,
+      drivers: accumulator.best.drivers.slice(0, UPSIDE_DRIVERS_SHOWN),
+      relevance: round(accumulator.relevance.value ?? 0, 3) as number,
+      impact: accumulator.impactKnown ? (round(accumulator.impactTotal, 2) as number) : null,
+      impact_percentile: round(accumulator.percentile.value ?? 0, 1) as number,
+      prob_active: round(accumulator.probActive.value, 3),
       minutes: {
-        usual: round(candidate.minutes.usual, 1),
-        projected: round(candidate.minutes.projected, 1),
-        delta: round(candidate.minutes.delta, 1),
+        usual: round(usualMinutes, 1),
+        projected: round(minutesProjected, 1),
+        delta: round(deltaOf(minutesProjected, usualMinutes), 1),
       },
       points: {
-        usual: round(candidate.points.usual, 1),
-        projected: round(candidate.points.projected, 1),
-        delta: round(candidate.points.delta, 1),
+        usual: round(usualPoints, 1),
+        projected: round(pointsProjected, 1),
+        delta: round(deltaOf(pointsProjected, usualPoints), 1),
       },
+      totals,
       baseline_games: candidate.baseline_games,
       reasons,
       evidence: evidenceFor(candidate, reasons),
@@ -682,12 +1162,14 @@ export function rankCandidates(
     .slice(0, limit);
 }
 
-/** One pivoted (game, player) row: fixed columns, then one per stat read. */
+/** One pivoted (date, game, player) row: fixed columns, then one per stat read. */
 type PredictionRow = {
+  game_date: unknown;
   nba_game_id: unknown;
   nba_player_id: unknown;
   name: unknown;
   team_abbr: unknown;
+  position: unknown;
   prob_active: unknown;
   proj_min_p50: unknown;
 } & { [K in ProjectedStat as `u_${K}`]: unknown } & {
@@ -695,10 +1177,11 @@ type PredictionRow = {
 };
 
 /**
- * Parameter layout: $1 run, $2 date, $3 prob_active, $4 minutes, $5 the minutes
- * quantile, then one per unconditional stat, then one per conditional stat.
+ * Parameter layout: $1 run, $2 window start, $3 window end, $4 prob_active,
+ * $5 minutes, $6 the minutes quantile, then one per unconditional stat, then one
+ * per conditional stat.
  */
-const UNCOND_PARAM_OFFSET = 6;
+const UNCOND_PARAM_OFFSET = 7;
 const COND_PARAM_OFFSET = UNCOND_PARAM_OFFSET + PROJECTED_STATS.length;
 
 /**
@@ -735,27 +1218,48 @@ const COND_PIVOT_SQL = CONDITIONAL_STATS.map(
                        THEN pgp.value END)::float AS c_${stat}`
 ).join(',\n              ');
 
-async function fetchPredictions(runId: number, date: string): Promise<PredictionRow[]> {
+/**
+ * Every projected player-game in `[from, to]`, in ONE round trip.
+ *
+ * A window is a date RANGE rather than a loop over `days` single-date queries:
+ * fourteen round trips to Neon from a Lambda is fourteen times the latency for
+ * the same rows, and the grouping the per-night pools need is something
+ * `groupByDate` can do in memory for free. `game_date` joins the GROUP BY so a
+ * player appears once per game rather than once per window.
+ *
+ * `players` is a LEFT JOIN for the reason `slate.ts::fetchPredictions` documents
+ * — a run can project a player the roster scrape has not written yet. That is
+ * also the only way `position` comes back NULL.
+ */
+async function fetchPredictions(
+  runId: number,
+  from: string,
+  to: string
+): Promise<PredictionRow[]> {
   return rowsOrEmpty<PredictionRow>(() =>
     query(
-      `SELECT pgp.nba_game_id,
+      `SELECT pgp.game_date,
+              pgp.nba_game_id,
               pgp.nba_player_id,
               MAX(p.name) AS name,
               MAX(p.team) AS team_abbr,
-              MAX(CASE WHEN pgp.stat = $3 AND pgp.quantile IS NULL
+              MAX(p.position) AS position,
+              MAX(CASE WHEN pgp.stat = $4 AND pgp.quantile IS NULL
                        THEN pgp.value END)::float AS prob_active,
-              MAX(CASE WHEN pgp.stat = $4 AND pgp.quantile = $5
+              MAX(CASE WHEN pgp.stat = $5 AND pgp.quantile = $6
                        THEN pgp.value END)::float AS proj_min_p50,
               ${UNCOND_PIVOT_SQL},
               ${COND_PIVOT_SQL}
        FROM player_game_predictions pgp
        LEFT JOIN players p ON p.nba_id = pgp.nba_player_id
        WHERE pgp.prediction_run_id = $1
-         AND pgp.game_date = $2
-       GROUP BY pgp.nba_game_id, pgp.nba_player_id`,
+         AND pgp.game_date >= $2
+         AND pgp.game_date <= $3
+       GROUP BY pgp.game_date, pgp.nba_game_id, pgp.nba_player_id`,
       [
         runId,
-        date,
+        from,
+        to,
         PROB_ACTIVE_STAT,
         MINUTES_STAT,
         MINUTES_QUANTILE,
@@ -776,14 +1280,21 @@ interface GameRow {
  * game id -> the two teams' abbreviations, for naming the opponent. Read from
  * `nba_schedule`, which carries both abbreviations directly; a game the schedule
  * has no row for simply has no opponent to name.
+ *
+ * Keyed by game id alone, so one range query serves the whole window: an
+ * `nba_game_id` already identifies its date.
  */
-async function fetchGameTeams(date: string): Promise<Map<string, [string | null, string | null]>> {
+async function fetchGameTeams(
+  from: string,
+  to: string
+): Promise<Map<string, [string | null, string | null]>> {
   const rows = await rowsOrEmpty<GameRow>(() =>
     query(
       `SELECT nba_game_id, home_team_abbr, away_team_abbr
        FROM nba_schedule
-       WHERE game_date = $1`,
-      [date]
+       WHERE game_date >= $1
+         AND game_date <= $2`,
+      [from, to]
     )
   );
 
@@ -818,11 +1329,25 @@ export function opponentOf(
  * the backtest harness ranks exactly what the endpoint ranks rather than a
  * reimplementation of it.
  *
+ * Rows may span several dates, and the IMPACT POOL IS BUILT PER DATE: each
+ * player-game's z-scores are measured against the other player-games on ITS OWN
+ * night, matching `slate.ts`'s pool exactly. Pooling a window would let a quiet
+ * Tuesday's rows be graded against a loaded Wednesday's.
+ *
+ * `date` is the fallback for a row whose `game_date` cannot be read — impossible
+ * from the range query, which filters on that column, so it exists only so a
+ * hand-built row is attributed somewhere rather than dropped.
+ *
  * Players with no usable baseline are DROPPED: "more than usual" is undefined
  * without a usual, and inventing one from three games would put every call-up at
  * the top of the list. That is also what keeps rookies and offseason signings
  * off the page — they have projections and no NBA history, so there is nothing
  * to deviate from.
+ *
+ * One baseline serves every date in the window, taken as of its first day — see
+ * ONE BASELINE FOR THE WHOLE WINDOW at the top of this file. `days_since_played`
+ * is still computed against each row's OWN date, because the gap to a game three
+ * days out really is three days longer.
  */
 export function buildCandidates(
   rows: PredictionRow[],
@@ -830,10 +1355,8 @@ export function buildCandidates(
   gameTeams: Map<string, [string | null, string | null]>,
   date: string
 ): WatchlistCandidate[] {
-  // the pool is every player-game the run has for this date, matching
-  // slate.ts's pool exactly — including the players without a baseline, so the
-  // impact percentile is measured against the whole slate rather than against
-  // the subset that happens to be rankable.
+  const dates = rows.map((row) => toIsoDay(row.game_date) ?? date);
+
   const inputs: ImpactInput[] = rows.map((row) => {
     const entry = {} as ImpactInput;
     for (const stat of PROJECTED_STATS) {
@@ -841,16 +1364,34 @@ export function buildCandidates(
     }
     return entry;
   });
-  const impacts = impactScores(inputs);
 
-  // usual minutes per player-game, so a teammate's absence can be weighed by
-  // the minutes it actually frees.
+  // one pool per date, including the players without a baseline, so the impact
+  // percentile is measured against the whole night's slate rather than against
+  // the subset that happens to be rankable.
+  const impacts: Array<number | null> = new Array(rows.length).fill(null);
+  const indexByDate = new Map<string, number[]>();
+  dates.forEach((day, i) => {
+    const list = indexByDate.get(day) ?? [];
+    list.push(i);
+    indexByDate.set(day, list);
+  });
+  for (const indices of indexByDate.values()) {
+    const nightly = impactScores(indices.map((i) => inputs[i]));
+    indices.forEach((i, n) => {
+      impacts[i] = nightly[n];
+    });
+  }
+
+  // usual minutes per player, so a teammate's absence can be weighed by the
+  // minutes it actually frees.
   const usualMinutes = new Map<string, number | null>();
   for (const row of rows) {
     const id = String(row.nba_player_id);
     usualMinutes.set(id, baselines.get(id)?.avg.minutes ?? null);
   }
 
+  // keyed by game id, which already identifies a single date, so a window's
+  // teams never bleed into each other.
   const byGameTeam = new Map<string, Array<{ id: string; name: string; prob: number | null }>>();
   rows.forEach((row) => {
     const team = row.team_abbr === null || row.team_abbr === undefined ? null : String(row.team_abbr);
@@ -869,6 +1410,7 @@ export function buildCandidates(
     const baseline = baselines.get(id);
     if (!hasUsableBaseline(baseline)) return;
     const usual = (baseline as PlayerBaseline).avg;
+    const gameDate = dates[i];
 
     const projMinutes = num(row.proj_min_p50);
     const deltas: Partial<Record<DeviationStat, number>> = {};
@@ -899,12 +1441,14 @@ export function buildCandidates(
       name,
       name_is_placeholder: placeholder,
       team_abbr: team,
+      position: parsePositions(row.position),
       opponent_team_abbr: opponentOf(team, gameTeams.get(String(row.nba_game_id))),
       nba_game_id: String(row.nba_game_id),
-      game_date: date,
+      game_date: gameDate,
       prob_active: num(row.prob_active),
       impact: impacts[i],
       proj_pts_uncond: inputs[i].pts,
+      uncond: inputs[i],
       baseline_games: (baseline as PlayerBaseline).games,
       deltas,
       minutes: {
@@ -914,7 +1458,7 @@ export function buildCandidates(
       },
       points: { usual: usual.pts, projected: projPts, delta: deltaOf(projPts, usual.pts) },
       shots: { usual: usual.fga, projected: projFga, delta: deltaOf(projFga, usual.fga) },
-      days_since_played: daysSince(date, (baseline as PlayerBaseline).last_played_date),
+      days_since_played: daysSince(gameDate, (baseline as PlayerBaseline).last_played_date),
       last_played_date: (baseline as PlayerBaseline).last_played_date,
       pts_recent: (baseline as PlayerBaseline).pts_recent,
       pts_sd: (baseline as PlayerBaseline).pts_sd,
@@ -925,15 +1469,67 @@ export function buildCandidates(
   return candidates;
 }
 
-/** Options the backtest harness needs and the endpoint does not. */
+/** Options the endpoint passes through, plus the two the backtest harness needs. */
 export interface WatchlistOptions {
   /** Score against THIS run instead of the newest complete one. */
   run?: (SlateRun & { id: number }) | null;
   limit?: number;
+  /** Days the window covers, starting at `date`. Defaults to one. */
+  days?: number;
+  /** Keep only players answering this position. Null keeps every position. */
+  position?: PositionFilter | null;
+}
+
+/** Everything one window's read produces, before scoring. */
+export interface WatchlistCandidateWindow {
+  /** Player-games the run has across the whole window — the summed pool size. */
+  pool_size: number;
+  /** Distinct rankable players with and without a position, before filtering. */
+  position_coverage: PositionCoverage;
+  candidates: WatchlistCandidate[];
 }
 
 /**
- * Every candidate one run has for one date, before scoring. Exported so
+ * Every candidate one run has across a window, before scoring.
+ *
+ * Three round trips regardless of how many days the window covers: one ranged
+ * predictions query, one baseline query as of the window's FIRST day, and one
+ * ranged schedule query for the opponents.
+ */
+export async function fetchWatchlistWindow(
+  window: WatchlistWindow,
+  runId: number
+): Promise<WatchlistCandidateWindow> {
+  const empty: WatchlistCandidateWindow = {
+    pool_size: 0,
+    position_coverage: { known: 0, unknown: 0 },
+    candidates: [],
+  };
+
+  const rows = await fetchPredictions(runId, window.from, window.to);
+  if (rows.length === 0) return empty;
+
+  const baselines = await fetchBaselines(window.from);
+  const gameTeams = await fetchGameTeams(window.from, window.to);
+  const candidates = buildCandidates(rows, baselines, gameTeams, window.from);
+
+  // counted over distinct PLAYERS, not player-games, so a four-game week does
+  // not report the same missing roster row four times.
+  const known = new Set<string>();
+  const unknown = new Set<string>();
+  for (const candidate of candidates) {
+    (candidate.position.label === null ? unknown : known).add(candidate.nba_player_id);
+  }
+
+  return {
+    pool_size: rows.length,
+    position_coverage: { known: known.size, unknown: unknown.size },
+    candidates,
+  };
+}
+
+/**
+ * Every candidate one run has for ONE date, before scoring. Exported so
  * `scripts/watchlistBacktest.ts` evaluates the SHIPPED pipeline — the same
  * pivot, the same baseline query, the same eligibility rule — rather than a
  * reimplementation of it that could quietly diverge and make the backtest
@@ -943,24 +1539,20 @@ export async function fetchWatchlistCandidates(
   date: string,
   runId: number
 ): Promise<{ pool_size: number; candidates: WatchlistCandidate[] }> {
-  const rows = await fetchPredictions(runId, date);
-  if (rows.length === 0) return { pool_size: 0, candidates: [] };
-
-  const baselines = await fetchBaselines(date);
-  const gameTeams = await fetchGameTeams(date);
-  return { pool_size: rows.length, candidates: buildCandidates(rows, baselines, gameTeams, date) };
+  const { pool_size, candidates } = await fetchWatchlistWindow(windowRange(date, 1), runId);
+  return { pool_size, candidates };
 }
 
 /**
- * The ranked big-night list for one date.
+ * The ranked big-night list for a window of `days` starting at `date`.
  *
  * Degrades to an empty list, never an error: with no complete run there are no
  * projections to compare against a baseline, and with no game logs there are no
  * baselines. Both are ordinary states — the first is production before the first
- * model run — and each returns `players: []` with the pool and baseline
+ * model run — and each returns `players: []` with the window, pool and baseline
  * descriptors still echoed so the page can explain itself.
  *
- * Note the change in kind from the previous version: this list cannot be
+ * Note the change in kind from the pre-projection version: this list cannot be
  * produced from game logs alone. The old page ranked rule hits and so had
  * something to say without a run; this one ranks projection-minus-baseline, and
  * without a projection there is nothing to rank.
@@ -969,24 +1561,40 @@ export async function getWatchlist(
   date: string,
   options: WatchlistOptions = {}
 ): Promise<WatchlistResponse> {
+  const days = options.days ?? DEFAULT_WINDOW_DAYS;
+  const position = options.position ?? null;
+  const window = windowRange(date, days);
   const run = options.run !== undefined ? options.run : await getLatestCompleteRun();
   const runSummary = run
     ? { model_version: run.model_version, predicted_at: run.predicted_at }
     : null;
   const baseline = baselineDescriptor();
+  const shared = {
+    date,
+    window,
+    baseline,
+    position,
+    position_options: [...POSITION_FILTERS],
+  };
 
   if (!run) {
-    return { date, run: null, pool: poolDescriptor(0), baseline, players: [] };
+    return {
+      ...shared,
+      run: null,
+      pool: watchlistPool(0, days),
+      position_coverage: { known: 0, unknown: 0 },
+      players: [],
+    };
   }
 
-  const { pool_size, candidates } = await fetchWatchlistCandidates(date, run.id);
+  const { pool_size, position_coverage, candidates } = await fetchWatchlistWindow(window, run.id);
 
   return {
-    date,
+    ...shared,
     run: runSummary,
-    pool: poolDescriptor(pool_size),
-    baseline,
-    players: rankCandidates(candidates, options.limit ?? WATCHLIST_LIMIT),
+    pool: watchlistPool(pool_size, days),
+    position_coverage,
+    players: rankCandidates(candidates, options.limit ?? WATCHLIST_LIMIT, position),
   };
 }
 

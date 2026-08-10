@@ -1,7 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { query } from '../db.js';
 import { getSlate, parsePredictionDate } from '../services/slate.js';
-import { getWatchlist } from '../services/watchlist.js';
+import {
+  MAX_WINDOW_DAYS,
+  POSITION_FILTERS,
+  getWatchlist,
+  parsePositionFilter,
+  parseWindowDays,
+} from '../services/watchlist.js';
 import { parsePlayerId } from '../services/analytics.js';
 import {
   MAX_UPCOMING_LIMIT,
@@ -17,6 +23,8 @@ const INVALID_DATE = 'date must be a calendar day formatted YYYY-MM-DD';
 const INVALID_FROM = 'from must be a calendar day formatted YYYY-MM-DD';
 const INVALID_LIMIT = `limit must be a whole number between 1 and ${MAX_UPCOMING_LIMIT}`;
 const INVALID_PLAYER_ID = 'A numeric player id is required';
+const INVALID_DAYS = `days must be a whole number between 1 and ${MAX_WINDOW_DAYS}`;
+const INVALID_POSITION = `position must be one of ${POSITION_FILTERS.join(', ')}, or any`;
 
 /** Mounted at /api/predictions. */
 const predictionsRouter = Router();
@@ -43,7 +51,16 @@ predictionsRouter.get('/slate', async (req: Request, res: Response): Promise<voi
 /** Mounted at /api/watchlist — a top-level resource, not a prediction of one. */
 const watchlistRouter = Router();
 
-/** Ranked discovery candidates with the rule codes that put them there. */
+/**
+ * Ranked discovery candidates over a window of `days` starting at `date`, with
+ * the rule codes that put them there.
+ *
+ * `days` defaults to 1 — the request the page made before windows existed, so an
+ * older client keeps getting exactly what it got. `position` filters to a roster
+ * slot (G/F/C) or an exact position (PG/SG/SF/PF/C); absent means every
+ * position. Both are rejected rather than clamped or ignored, so a typo is a 400
+ * instead of a list that quietly answers a different question.
+ */
 watchlistRouter.get('/', async (req: Request, res: Response): Promise<void> => {
   const date = parsePredictionDate(req.query.date);
   if (date === null) {
@@ -51,8 +68,20 @@ watchlistRouter.get('/', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
+  const days = parseWindowDays(req.query.days);
+  if (days === null) {
+    res.status(400).json({ error: INVALID_DAYS });
+    return;
+  }
+
+  const position = parsePositionFilter(req.query.position);
+  if (position === false) {
+    res.status(400).json({ error: INVALID_POSITION });
+    return;
+  }
+
   try {
-    res.json(await getWatchlist(date));
+    res.json(await getWatchlist(date, { days, position }));
   } catch {
     res.status(500).json({ error: 'Failed to fetch watchlist' });
   }
