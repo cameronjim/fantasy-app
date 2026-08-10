@@ -615,13 +615,26 @@ def attach_cross_fit_context(features: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def build_dataset(source) -> pd.DataFrame:
-    """source -> universe -> features -> cross-fit context, the offline pipeline."""
+def build_dataset(source, with_v4_candidate: bool = True) -> pd.DataFrame:
+    """source -> universe -> features -> cross-fit context, the offline pipeline.
+
+    ``with_v4_candidate`` appends the P2 matchup / blowout / stakes / start-rate
+    columns (:mod:`fnba_ml.matchup`). It is ON by default and it is PURELY ADDITIVE:
+    ``FEATURE_COLS`` does not contain any of them, so ``available_features`` returns
+    the same 51 names it always did and every model in the promoted path sees the
+    same contract. The columns are on the dataset so that ``config.FEATURE_SETS["v4"]``
+    can be evaluated against ``v3-honest`` over IDENTICAL ROWS, which is the only
+    honest form of a "the new features helped" claim.
+    """
     from .universe import build_universe  # local import avoids a cycle
 
     universe = build_universe(source)
     feats = build_features(universe)
     feats = attach_cross_fit_context(feats)
+    if with_v4_candidate:
+        from .matchup import attach_v4_features  # local import avoids a cycle
+
+        feats = attach_v4_features(feats, source.load_team_game_logs())
     log.info("features: %d rows, %d feature columns", len(feats), len(FEATURE_COLS))
     return feats
 

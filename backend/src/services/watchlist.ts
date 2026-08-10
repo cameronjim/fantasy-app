@@ -95,17 +95,9 @@ import {
  * relative to himself but big enough to matter". A reason is a label on a number,
  * never the number.
  *
- * ============================== STALE MIRROR ==============================
- * `ml/fnba_ml/watchlist.py` was written as a Python mirror of the PREVIOUS
- * design — a weighted reason count scaled by availability — and its header still
- * claims the two implement the same rules. As of this change they do not: the
- * score here is a product of a deviation and an absolute floor, reason weights no
- * longer exist, the star exclusion is gone, and TEAMMATE_ABSENCE reads the run's
- * availability estimate rather than `players.injury_status`. That module is
- * outside this file's ownership and is deliberately left alone; anyone reading it
- * as documentation of this endpoint should read this file instead until it is
- * either updated or retired.
- * ==========================================================================
+ * There is no Python mirror. `ml/fnba_ml/watchlist.py` mirrored the PREVIOUS
+ * design (a weighted reason count) and was retired when this file replaced it;
+ * this file is the single implementation and the single spec.
  * ============================================================================
  */
 

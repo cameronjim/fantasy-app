@@ -45,6 +45,21 @@ TEAM_LOG_COLS: tuple[str, ...] = (
     "TEAM_ID", "GAME_ID", "SEASON", "GAME_DATE", "PTS", "MIN", "FGA", "FTA", "TOV",
 )
 
+# FG3A joined the team log for the P2 matchup family (2026-08-19) and it is
+# OPTIONAL rather than required, which is a deliberate asymmetry with FTA above.
+# The v2 usage feature could not be computed at all without team FTA, so a source
+# that lacked it was a source the package could not use. ``opp_fg3a_allowed_per100``
+# is one feature of twenty-one in a candidate set, and the spike's own nba_api
+# parquet exports predate it; making it required would break every offline parquet
+# run to add a column to a candidate. Absent, :mod:`fnba_ml.matchup` logs a warning
+# and leaves the derived column null, which LightGBM routes as missing.
+#
+# WHAT IS NOT HERE AND CANNOT BE. Offensive rebounds. ``team_game_logs`` carries
+# ``reb`` with no offensive/defensive split and no other table has one, so the
+# possession estimate uses the OREB-free fallback - see
+# ``config.POSSESSION_USES_OREB`` for the formula and what the omission costs.
+TEAM_LOG_OPTIONAL_COLS: tuple[str, ...] = ("FG3A",)
+
 # per-player position strings, the one piece of reference data that is not a
 # per-game fact. optional: a source that has no positions returns None and the
 # positional half of the teammate-context features is null rather than wrong.

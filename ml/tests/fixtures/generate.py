@@ -251,7 +251,7 @@ def _build(seed: int) -> dict[str, pd.DataFrame]:
                 for team in (home, away):
                     roster = rosters[(season, team)]
                     pts_total = 0
-                    totals = {"FGA": 0.0, "FTA": 0.0, "TOV": 0.0}
+                    totals = {"FGA": 0.0, "FTA": 0.0, "TOV": 0.0, "FG3A": 0.0}
 
                     # PASS ONE: who suits up. availability has to be settled for the
                     # whole roster before anyone's minutes can be drawn, because the
@@ -327,11 +327,24 @@ def _build(seed: int) -> dict[str, pd.DataFrame]:
                             fg3m = max(0.0, round(pts / 9.0 + rng.normal(0, 0.6), 1))
                             fgm = round(max(0.0, (pts - ftm - fg3m) / 2.0), 1)
                             fgm = round(min(max(fgm, fg3m), fga), 1)
+                            # FG3A is DERIVED from FG3M at a fixed 36% clip and
+                            # capped at FGA, exactly as FGM is derived rather than
+                            # drawn, and for the same two reasons: the ingest
+                            # validation gate requires FG3A <= FGA and FG3M <= FG3A,
+                            # and a derivation makes NO rng call - so every other
+                            # column's draw sequence, and therefore every previously
+                            # recorded fixture number in this repo, is byte-identical
+                            # to before FG3A existed. It exists only to give the P2
+                            # matchup family's opponent-style feature
+                            # (opp_fg3a_allowed_per100) a non-null column to be
+                            # tested against; the team total is what matchup.py reads.
+                            fg3a = round(min(max(fg3m, fg3m / 0.36), fga), 1)
                             row["MIN"] = round(minutes, 1)
                             pts_total += int(round(pts))
                             totals["FGA"] += fga
                             totals["FTA"] += fta
                             totals["TOV"] += tov
+                            totals["FG3A"] += fg3a
                             log_rows.append({
                                 "PLAYER_ID": player_id,
                                 "PLAYER_NAME": names[player_id],
@@ -347,6 +360,7 @@ def _build(seed: int) -> dict[str, pd.DataFrame]:
                                 "FGA": fga,
                                 "FTA": fta,
                                 "FG3M": fg3m,
+                                "FG3A": fg3a,
                                 "FGM": fgm,
                                 "FTM": ftm,
                                 "TOV": tov,
@@ -378,6 +392,11 @@ def _build(seed: int) -> dict[str, pd.DataFrame]:
                         "FGA": round(team_totals[team]["FGA"], 1),
                         "FTA": round(team_totals[team]["FTA"], 1),
                         "TOV": round(team_totals[team]["TOV"], 1),
+                        # the P2 matchup family's only new team-log column; summed
+                        # from the same player lines as the other three so an
+                        # opponent-style rate is coherent with the box scores it
+                        # came from
+                        "FG3A": round(team_totals[team]["FG3A"], 1),
                     })
 
     return {
