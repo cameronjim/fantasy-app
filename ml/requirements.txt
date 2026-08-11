@@ -1,5 +1,19 @@
 # pinned to the versions this package was developed and verified against on
 # Python 3.14.5 (Windows). all of these had cp314 wheels available.
+#
+# THESE PINS ARE ALSO WHAT .github/workflows/predictions.yml INSTALLS, and they are
+# the reason that workflow runs 3.14 rather than the 3.12 the scraper uses. The daily
+# run LOADS THE FROZEN SERVING ARTIFACT - joblib pickles of scikit-learn 1.9.0 and
+# LightGBM 4.7.0 estimators, whose sha256 digests are pinned in
+# config.PROSPECTIVE_ARTIFACT_CHECKSUMS and must not be regenerated (MODEL.md 13.2).
+# Python 3.12 cannot install these versions at all: the newest cp312 wheels are
+# pandas 2.3.2 and scikit-learn 1.7.2, so a 3.12 job would silently install an older
+# scikit-learn and then be asked to unpickle a NEWER one, which scikit-learn does not
+# support in that direction. Matching the artifact's own library versions is the
+# constraint; the interpreter version follows from it.
+#
+# every pin below has a cp314 manylinux_2_28_x86_64 wheel (checked 2026-08-19), which
+# is what ubuntu-latest resolves, so nothing on the runner is built from source.
 pandas==3.0.5
 numpy==2.5.2
 pyarrow==25.0.1
@@ -11,7 +25,14 @@ lightgbm==4.7.0
 tabulate==0.10.0
 
 # postgres source only. never imported by a parquet-mode run or by the tests.
-psycopg2-binary==2.9.10
-python-dotenv==1.1.1
+# 2.9.12 rather than 2.9.10: it is what the dev venv holds and it is the oldest
+# release with a cp314 wheel, so the pin and the runner agree.
+psycopg2-binary==2.9.12
+python-dotenv==1.2.3
+
+# zoneinfo's database. Linux has one in /usr/share/zoneinfo and Windows has none, so
+# without this ZoneInfo("America/New_York") - which daily_run.py uses to work out
+# which Eastern calendar dates it is serving - raises on a fresh Windows venv.
+tzdata==2026.3
 
 pytest==9.1.1
