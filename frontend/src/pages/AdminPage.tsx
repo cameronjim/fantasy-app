@@ -5,6 +5,7 @@ import {
   getAuthToken, getCurrentUser, getAdminStats, getAdminUsers, getAdminViews,
   type AdminStats, type AdminUser, type AdminPageView,
 } from '../api/client';
+import { STAT_PLACEHOLDER } from '../utils/stats';
 
 type AdminState =
   | { status: 'loading' }
@@ -13,7 +14,7 @@ type AdminState =
   | { status: 'ready'; stats: AdminStats; users: AdminUser[]; views: AdminPageView[] };
 
 function formatDate(iso: string | null): string {
-  if (!iso) return '—';
+  if (!iso) return STAT_PLACEHOLDER;
   return new Date(iso).toLocaleString([], {
     month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
   });
@@ -133,7 +134,7 @@ export const AdminPage = (): JSX.Element => {
                       {user.username}
                       {user.is_admin && <span className="badge badge-primary badge-sm ml-2">admin</span>}
                     </td>
-                    <td>{user.email ?? '—'}</td>
+                    <td>{user.email ?? STAT_PLACEHOLDER}</td>
                     <td>
                       <div className="flex gap-1">
                         {user.has_password && <span className="badge badge-ghost badge-sm">password</span>}

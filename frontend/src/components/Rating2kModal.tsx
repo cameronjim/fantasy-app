@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import type { Rating2kSummary } from '../types';
 import { useRating2kDetail } from '../hooks/useRating2kDetail';
 import { PLAYER_IMAGE_FALLBACK } from '../utils/playerImage';
@@ -20,6 +21,15 @@ interface Rating2kModalProps {
  * Full 2K attribute breakdown for one rated player: every attribute as a
  * labelled bar grouped into sections, the badge list, and the overall rating
  * across past game versions.
+ *
+ * Portalled to `document.body` so the same component gets the same width
+ * wherever it is opened from. daisyUI's `.modal-box` carries `scale: 1` and
+ * `translate: 0`, and a non-`none` scale/translate makes an element the
+ * containing block for `position: fixed` descendants. Rendered in place inside
+ * another modal's box (the Stats tab opens this from inside `PlayerModal`), the
+ * `.modal`'s `inset: 0` would resolve against that 512px box instead of the
+ * viewport, `max-w-3xl` would never bind, and the attribute columns would be
+ * squeezed into ~420px and clipped by the outer box's `overflow`.
  */
 export const Rating2kModal = ({ slug, summary, onClose }: Rating2kModalProps): JSX.Element => {
   const { detail, loading, error, notFound, reload } = useRating2kDetail(slug);
@@ -166,7 +176,7 @@ export const Rating2kModal = ({ slug, summary, onClose }: Rating2kModalProps): J
     );
   };
 
-  return (
+  return createPortal(
     <div className="modal modal-open" role="dialog" aria-label="2K ratings">
       {/* scrolls inside the box — 35 attributes are taller than a phone screen */}
       <div className="modal-box max-w-3xl max-h-[85vh] overflow-y-auto">
@@ -216,6 +226,7 @@ export const Rating2kModal = ({ slug, summary, onClose }: Rating2kModalProps): J
         </div>
       </div>
       <div className="modal-backdrop" onClick={onClose} />
-    </div>
+    </div>,
+    document.body
   );
 };

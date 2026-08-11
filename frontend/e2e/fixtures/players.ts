@@ -5,6 +5,8 @@
 // the shape must match `Player` in src/types.ts, plus the optional
 // `fantasy_score` / `fantasy_rank` overlay added by the players route.
 
+import type { PlayerAnalytics, PlayerPredictionsResponse } from '../../src/types';
+
 export interface PlayerFixture {
   id: number;
   name: string;
@@ -123,3 +125,125 @@ export const INJURED: PlayerFixture = {
 };
 
 export const ALL_PLAYERS: PlayerFixture[] = [ALL_STAR, ROLE_PLAYER, UNRANKED_ROOKIE, INJURED];
+
+// Analytics payload for ALL_STAR, matching `/api/players/:id/analytics`. The
+// player analytics page is the only surface that reads this, so it lives here
+// rather than in every spec that needs one.
+export const ALL_STAR_ANALYTICS: PlayerAnalytics = {
+  player: {
+    id: ALL_STAR.id,
+    nba_id: '2544',
+    name: ALL_STAR.name,
+    team: ALL_STAR.team,
+    position: ALL_STAR.position,
+    headshot_url: null,
+  },
+  as_of: { logs: '2026-02-04T12:00:00Z', distributions: '2026-02-04T13:00:00Z' },
+  pool: {
+    key: 'rotation',
+    label: 'Rotation players',
+    definition: 'GP >= 15 and MPG >= 12 this season',
+    sample_size: 312,
+  },
+  percentiles: [
+    { stat: 'pts', value: 28.5, percentile: 94 },
+    { stat: 'reb', value: 7.1, percentile: 71 },
+    { stat: 'tov', value: 3.1, percentile: 22 },
+    { stat: 'fg_impact', value: 1.8, percentile: 81 },
+    { stat: 'ft_impact', value: 0.6, percentile: 64 },
+  ],
+  distributions: [
+    {
+      stat: 'pts',
+      mean: 14.2,
+      stddev: 5.6,
+      player_value: 28.5,
+      buckets: [
+        { lo: 0, hi: 10, count: 90 },
+        { lo: 10, hi: 20, count: 150 },
+        { lo: 20, hi: 30, count: 60 },
+        { lo: 30, hi: 40, count: 12 },
+      ],
+    },
+    {
+      stat: 'reb',
+      mean: 5.1,
+      stddev: 2.4,
+      player_value: 7.1,
+      buckets: [
+        { lo: 0, hi: 5, count: 140 },
+        { lo: 5, hi: 10, count: 150 },
+      ],
+    },
+  ],
+  trends: {
+    games: [
+      {
+        game_date: '2026-02-01', opponent_team_abbr: 'BOS', is_home: true,
+        minutes: 35, pts: 31, reb: 8, ast: 9, stl: 2, blk: 1, tov: 3,
+        fgm: 11, fga: 21, fg3m: 3, fg3a: 7, ftm: 6, fta: 7,
+      },
+      {
+        game_date: '2026-02-03', opponent_team_abbr: 'GSW', is_home: false,
+        minutes: 33, pts: 24, reb: 6, ast: 7, stl: 1, blk: 0, tov: 4,
+        fgm: 9, fga: 19, fg3m: 2, fg3a: 6, ftm: 4, fta: 4,
+      },
+    ],
+    rolling: [
+      { game_date: '2026-02-01', min_r5: 34.2, pts_r5: 27.5, pts_r10: 26.9, reb_r5: 7.0, ast_r5: 8.1 },
+      { game_date: '2026-02-03', min_r5: 34.0, pts_r5: 28.1, pts_r10: 27.2, reb_r5: 7.2, ast_r5: 8.3 },
+    ],
+    last10_vs_season: [
+      { stat: 'pts', last10: 31.2, season: 28.5, delta: 2.7, z: 1.6 },
+      { stat: 'blk', last10: 0.9, season: 0.6, delta: 0.3, z: null },
+    ],
+  },
+  prediction: null,
+};
+
+// Upcoming-games payload for ALL_STAR, matching `/api/players/:id/predictions`.
+// Two games on purpose, and a doubtful second one: the section's whole point is
+// that a player the model expects to sit keeps his "if he plays" line.
+export const ALL_STAR_PREDICTIONS: PlayerPredictionsResponse = {
+  player_id: ALL_STAR.id,
+  nba_player_id: '2544',
+  run: {
+    id: 1,
+    model_version: 'bt20260115',
+    feature_version: 'v3',
+    predicted_at: '2026-02-04T14:00:00Z',
+    forecast_cutoff_at: '2026-02-04T12:00:00Z',
+    horizon: 'gameday (T-6h)',
+  },
+  stats: ['minutes', 'pts', 'ast'],
+  games: [
+    {
+      nba_game_id: '0022500586',
+      game_date: '2026-02-05',
+      opponent_abbr: 'CHA',
+      is_home: true,
+      game_status: 'Scheduled',
+      prob_active: 0.91,
+      prob_active_model: 0.91,
+      stats: {
+        minutes: { expected: 36.3, p10: 28.5, p50: 36.2, p90: 43.5, unconditional: 33.2 },
+        pts: { expected: 32.3, p10: 25.8, p50: 31.7, p90: 39.9, unconditional: 29.6 },
+        ast: { expected: 9.1, p10: null, p50: null, p90: null, unconditional: 8.3 },
+      },
+    },
+    {
+      nba_game_id: '0022500601',
+      game_date: '2026-02-07',
+      opponent_abbr: 'POR',
+      is_home: false,
+      game_status: 'Scheduled',
+      prob_active: 0.11,
+      prob_active_model: 0.11,
+      stats: {
+        minutes: { expected: 30.4, p10: 22.1, p50: 30.2, p90: 38.4, unconditional: 3.3 },
+        pts: { expected: 27.2, p10: 19.4, p50: 27, p90: 35.1, unconditional: 3 },
+        ast: { expected: 8.5, p10: null, p50: null, p90: null, unconditional: 0.9 },
+      },
+    },
+  ],
+};

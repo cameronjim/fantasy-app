@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { History, Search } from 'lucide-react';
 import { SeasonPlayerTable } from '../components/SeasonPlayerTable';
+import { PlayerCareerModal } from '../components/PlayerCareerModal';
 import { getHistoryPlayers, getHistorySeasons, type HistoryPlayersResponse } from '../api/client';
 import { useCachedResource } from '../hooks/useCachedResource';
 import { CACHE_KEYS, historyPlayersKey } from '../api/resourceCache';
+import type { PlayerSeasonRow } from '../types';
 
 // the api caps a page at 500 rows, which covers every player in a season, so
 // one request per season is enough and the search box can filter in memory.
@@ -16,6 +18,8 @@ const SEASON_ROW_LIMIT = 1000;
 export const HistoryPage = (): JSX.Element => {
   const [selectedSeason, setSelectedSeason] = useState('');
   const [search, setSearch] = useState('');
+  // the clicked row, which already carries the id the career endpoint wants.
+  const [selectedPlayer, setSelectedPlayer] = useState<PlayerSeasonRow | null>(null);
 
   // cached copies render instantly on tab return; a silent background refetch
   // keeps them current, same as the Stats page.
@@ -74,7 +78,7 @@ export const HistoryPage = (): JSX.Element => {
       );
     }
 
-    return <SeasonPlayerTable rows={filtered} />;
+    return <SeasonPlayerTable rows={filtered} onSelect={setSelectedPlayer} />;
   };
 
   return (
@@ -85,7 +89,8 @@ export const HistoryPage = (): JSX.Element => {
           <h1 className="text-xl font-bold">Season History</h1>
         </div>
         <p className="text-sm opacity-50 mb-5">
-          Per-game averages for every player, season by season.
+          Per-game averages for every player, season by season. Click a player for his other
+          seasons.
         </p>
 
         {loadingSeasons ? (
@@ -151,6 +156,14 @@ export const HistoryPage = (): JSX.Element => {
           </>
         )}
       </div>
+
+      {selectedPlayer && (
+        <PlayerCareerModal
+          playerName={selectedPlayer.player_name}
+          nbaPlayerId={selectedPlayer.nba_player_id}
+          onClose={() => setSelectedPlayer(null)}
+        />
+      )}
     </div>
   );
 };

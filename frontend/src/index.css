@@ -14,6 +14,38 @@
   --brand-red: #ef4444;   /* tailwind red-500 — matches the original error-toast look */
 }
 
+/* tailwind 4's preflight leaves <button> at the native `cursor: default`, so
+   any clickable button styled without daisyui's `btn` class (badges, chips,
+   icon buttons) silently loses its pointer affordance. restore the old
+   behavior app-wide; disabled buttons keep the default cursor. */
+@layer base {
+  button:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+/* tooltips: the bubble inherits typography (uppercase, tracking, weight)
+   from whatever element it sits inside, which makes long hints shouty and
+   oversized. give every bubble its own plain, compact typography. lives in
+   the utilities layer AFTER daisyui's plugin css so these declarations win
+   the cascade against .tooltip's own font-size/padding/text-align.
+   (never place a .tooltip inside an ancestor with opacity < 1 — the bubble
+   inherits the transparency and gets trapped under later content.) */
+@layer utilities {
+  .tooltip:before,
+  .tooltip > .tooltip-content {
+    max-width: 240px;
+    text-align: left;
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 400;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    padding: 0.5rem 0.65rem;
+    z-index: 50;
+  }
+}
+
 /* the two built-in themes don't carry the brand green/red, so override them
    here. the custom themes below bake the brand values in directly. */
 [data-theme="lofi"],

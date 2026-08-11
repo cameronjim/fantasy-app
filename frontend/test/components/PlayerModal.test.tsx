@@ -1,8 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { PlayerModal } from '../../src/components/PlayerModal';
 import type { Player, Rating2kDetail, Rating2kSummary } from '../../src/types';
+
+// the header's "Full analytics" link is a react-router Link, so the modal
+// needs a router in context.
+const renderModal = (player: Player | null, onClose: () => void = () => {}) =>
+  render(
+    <MemoryRouter>
+      <PlayerModal player={player} onClose={onClose} />
+    </MemoryRouter>
+  );
 
 // mock the api boundary — the modal's 2K badge and career section both call it.
 vi.mock('../../src/api/client', async (importOriginal) => {
@@ -74,7 +84,7 @@ const samplePlayer: Player = {
 describe('PlayerModal', () => {
   it('renders nothing when no player is selected', () => {
     // arrange + act
-    const { container } = render(<PlayerModal player={null} onClose={() => {}} />);
+    const { container } = renderModal(null);
 
     // assert
     expect(container.firstChild).toBeNull();
@@ -82,7 +92,7 @@ describe('PlayerModal', () => {
 
   it('renders the player name, team, position, and formatted stats', () => {
     // arrange + act
-    render(<PlayerModal player={samplePlayer} onClose={() => {}} />);
+    renderModal(samplePlayer);
 
     // assert
     expect(screen.getByRole('heading', { name: 'Test Player' })).toBeInTheDocument();
@@ -96,7 +106,7 @@ describe('PlayerModal', () => {
     const injured: Player = { ...samplePlayer, injury_status: 'Day_To_Day', injury_detail: 'ankle' };
 
     // act
-    render(<PlayerModal player={injured} onClose={() => {}} />);
+    renderModal(injured);
 
     // assert
     expect(screen.getByText(/Day To Day/i)).toBeInTheDocument();
@@ -106,7 +116,7 @@ describe('PlayerModal', () => {
   it('calls onClose when the close button is clicked', async () => {
     // arrange
     const onClose = vi.fn();
-    render(<PlayerModal player={samplePlayer} onClose={onClose} />);
+    renderModal(samplePlayer, onClose);
     const user = userEvent.setup();
 
     // act
@@ -119,7 +129,7 @@ describe('PlayerModal', () => {
   it('shows a clickable 2K badge when the name resolves to a rated player', async () => {
     // arrange
     byNameMock.mockResolvedValue(RATING_2K);
-    render(<PlayerModal player={samplePlayer} onClose={() => {}} />);
+    renderModal(samplePlayer);
     const user = userEvent.setup();
 
     // act
@@ -134,7 +144,7 @@ describe('PlayerModal', () => {
 
   it('renders nothing extra when the name has no 2K match', async () => {
     // arrange + act
-    render(<PlayerModal player={samplePlayer} onClose={() => {}} />);
+    renderModal(samplePlayer);
 
     // assert
     await waitFor(() => {
@@ -149,7 +159,7 @@ describe('PlayerModal', () => {
     byNameMock.mockRejectedValue(new Error('ratings down'));
 
     // act
-    render(<PlayerModal player={samplePlayer} onClose={() => {}} />);
+    renderModal(samplePlayer);
 
     // assert
     await waitFor(() => {

@@ -1,0 +1,220 @@
+{
+  "model_version": "20260817d",
+  "feature_version": "v3",
+  "git_commit": "7c9960c4d636a0cd070ebb105bbbe7e43eefa412",
+  "artifact_checksum": "64110db58f93a0bb5181f8b7605f33738a3d94c0642266563d40019032db828a",
+  "minutes_artifact_checksum": "747cebc263aa07428db743a37acc8f0184ce43eeaee58c6689444cb0c6619d8c",
+  "base_artifact_checksum": "24ef72482bb606524bab4d74c7858528d0eea1bec554b338b6154eee8a442a36",
+  "context": {
+    "stage1_feature_cols": [
+      "roll3_MIN",
+      "roll5_MIN",
+      "roll10_MIN",
+      "roll3_PTS",
+      "roll5_PTS",
+      "roll10_PTS",
+      "roll3_AST",
+      "roll5_AST",
+      "roll10_AST",
+      "roll3_FGA",
+      "roll5_FGA",
+      "roll10_FGA",
+      "std_MIN",
+      "std_PTS",
+      "std_AST",
+      "std_FGA",
+      "ewma_MIN",
+      "ewma_PTS",
+      "ewma_AST",
+      "ewma_FGA",
+      "uncond_std_PTS",
+      "uncond_std_MIN",
+      "uncond_std_AST",
+      "n_appearances",
+      "days_since_last_app",
+      "games_since_last_app",
+      "avail_rate_10",
+      "avail_rate_20",
+      "avail_rate_std",
+      "TEAM_REST_DAYS",
+      "IS_B2B",
+      "IS_HOME",
+      "OPP_DEF_FORM",
+      "OPP_REST_DAYS",
+      "insufficient_history",
+      "has_history"
+    ],
+    "stage2_cross_fit_freq": "MS",
+    "stage2_min_train_rows": 5000,
+    "context_p_prior": 0.7,
+    "magnitude_window": 20,
+    "magnitude_shrink_k": 10.0,
+    "magnitude_priors": {
+      "MIN": 10.0,
+      "FGA": 6.0,
+      "USG": 15.0
+    },
+    "iterations": 1
+  },
+  "champions": {
+    "availability": "lightgbm",
+    "minutes": "lightgbm",
+    "production": "ewma",
+    "composition": "decomposed_p_x_minutes_x_ppm"
+  },
+  "availability_hyperparams": {
+    "n_estimators": 400,
+    "learning_rate": 0.05,
+    "num_leaves": 31,
+    "min_child_samples": 50,
+    "subsample": 0.8,
+    "subsample_freq": 1,
+    "colsample_bytree": 0.8,
+    "random_state": 17,
+    "verbosity": -1,
+    "n_jobs": -1
+  },
+  "minutes_hyperparams": {
+    "n_estimators": 400,
+    "learning_rate": 0.05,
+    "num_leaves": 31,
+    "min_child_samples": 50,
+    "subsample": 0.8,
+    "subsample_freq": 1,
+    "colsample_bytree": 0.8,
+    "random_state": 17,
+    "verbosity": -1,
+    "n_jobs": -1
+  },
+  "production": {
+    "composition": "decomposed_p_x_minutes_x_ppm",
+    "estimator": "ewma_per_minute",
+    "halflife": 5.0,
+    "rate_minutes_floor": 4.0,
+    "rate_fallbacks": {
+      "PTS": 0.474598,
+      "AST": 0.109015
+    },
+    "fallbacks": {
+      "MIN": 22.572319,
+      "PTS": 10.712779,
+      "AST": 2.46072,
+      "FGA": 8.30999
+    },
+    "quantiles": {
+      "MIN": {
+        "target": "MIN",
+        "levels": [
+          0.1,
+          0.5,
+          0.9
+        ],
+        "offsets": [
+          -8.065229,
+          -0.211426,
+          8.615328
+        ],
+        "n": 4552,
+        "window": [
+          "2026-03-17",
+          "2026-04-14"
+        ]
+      },
+      "PTS": {
+        "target": "PTS",
+        "levels": [
+          0.1,
+          0.5,
+          0.9
+        ],
+        "offsets": [
+          -6.503014,
+          -0.100067,
+          8.551495
+        ],
+        "n": 4552,
+        "window": [
+          "2026-03-17",
+          "2026-04-14"
+        ]
+      }
+    }
+  },
+  "training_window": {
+    "start": "2022-10-18",
+    "end": "2026-04-12",
+    "cutoff": "2026-04-14",
+    "cutoff_policy": "prediction-run timestamp; features use games strictly before it",
+    "rows": 147413,
+    "players": 895,
+    "played_rate": 0.713248
+  },
+  "universe_source": "status",
+  "feature_cols": [
+    "roll3_MIN",
+    "roll5_MIN",
+    "roll10_MIN",
+    "roll3_PTS",
+    "roll5_PTS",
+    "roll10_PTS",
+    "roll3_AST",
+    "roll5_AST",
+    "roll10_AST",
+    "roll3_FGA",
+    "roll5_FGA",
+    "roll10_FGA",
+    "std_MIN",
+    "std_PTS",
+    "std_AST",
+    "std_FGA",
+    "ewma_MIN",
+    "ewma_PTS",
+    "ewma_AST",
+    "ewma_FGA",
+    "uncond_std_PTS",
+    "uncond_std_MIN",
+    "uncond_std_AST",
+    "n_appearances",
+    "days_since_last_app",
+    "games_since_last_app",
+    "avail_rate_10",
+    "avail_rate_20",
+    "avail_rate_std",
+    "TEAM_REST_DAYS",
+    "IS_B2B",
+    "IS_HOME",
+    "OPP_DEF_FORM",
+    "OPP_REST_DAYS",
+    "insufficient_history",
+    "has_history",
+    "usg_ewma",
+    "exp_vacated_minutes",
+    "exp_vacated_fga",
+    "exp_vacated_usg",
+    "exp_vacated_minutes_pos",
+    "exp_depth_rank",
+    "exp_depth_rank_pos",
+    "p_star_out",
+    "exp_top3_usage_out",
+    "magnitude_ess",
+    "teammate_magnitude_ess",
+    "season_appearances",
+    "games_with_current_team",
+    "is_rookie",
+    "is_traded"
+  ],
+  "metrics": {
+    "holdout_start": "2026-03-17",
+    "holdout_rows": 6527,
+    "holdout_played_rate": 0.697411,
+    "brier": 0.087099,
+    "log_loss": 0.29901,
+    "brier_skill_vs_shifted_rate": 0.286162,
+    "minutes_mae": 5.22562,
+    "minutes_mae_ewma_baseline": 5.475554,
+    "pts_cond_mae": 4.754441,
+    "pts_cond_mae_ewma_baseline": 4.803369,
+    "ast_cond_mae": 1.410103,
+    "ast_cond_mae_ewma_baseline": 1.419851
+  }
+}

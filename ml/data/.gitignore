@@ -1,0 +1,3 @@
+# datasets and predictions are build artifacts, not source
+*.parquet
+*.csv

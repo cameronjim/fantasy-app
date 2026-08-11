@@ -36,7 +36,7 @@ export function useBettingPicks(isLoggedIn: boolean): UseBettingPicks {
     error: oddsError,
     reload: reloadOddsResource,
   } = useCachedResource(CACHE_KEYS.odds, getBettingOdds, {
-    errorMessage: 'Failed to load odds. ESPN may be unavailable — try again in a minute.',
+    errorMessage: 'Failed to load odds. ESPN may be unavailable. Try again in a minute.',
   });
   const odds = oddsData?.games ?? [];
   const reloadOdds = useCallback((): void => {
