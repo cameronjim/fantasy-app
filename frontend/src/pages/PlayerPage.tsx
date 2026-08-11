@@ -6,6 +6,7 @@ import { PlayerTrendsSection } from '../components/PlayerTrendsSection';
 import { RecentGamesTable } from '../components/RecentGamesTable';
 import { PlayerPredictionCard } from '../components/PlayerPredictionCard';
 import { PlayerUpcomingGames } from '../components/PlayerUpcomingGames';
+import { PlayerCareerSection } from '../components/PlayerCareerSection';
 import { getPlayerAnalytics, getPlayerPredictions } from '../api/client';
 import { useCachedResource } from '../hooks/useCachedResource';
 import { playerAnalyticsKey, playerPredictionsKey } from '../api/resourceCache';
@@ -132,7 +133,7 @@ export const PlayerPage = (): JSX.Element => {
                   {player.injury_status.replace(/_/g, ' ')}
                 </span>
                 {player.injury_detail && (
-                  <span className="text-[11px] opacity-80">— {player.injury_detail}</span>
+                  <span className="text-[11px] opacity-80">· {player.injury_detail}</span>
                 )}
               </div>
             )}
@@ -140,12 +141,7 @@ export const PlayerPage = (): JSX.Element => {
         </header>
 
         <div className="flex flex-col gap-5">
-          {prediction && (
-            <PlayerPredictionCard
-              prediction={prediction}
-              upcomingCount={predictions?.games.length ?? 0}
-            />
-          )}
+          {prediction && <PlayerPredictionCard prediction={prediction} />}
 
           <PlayerUpcomingGames data={predictions} />
 
@@ -173,6 +169,9 @@ export const PlayerPage = (): JSX.Element => {
               <RecentGamesTable games={trends.games} />
             </>
           )}
+
+          {/* renders nothing when this player has no ingested season history */}
+          <PlayerCareerSection nbaPlayerId={player.nba_id} framed />
         </div>
 
         <footer className="text-[11px] opacity-40 mt-6 pt-3 border-t border-base-300 flex flex-wrap gap-x-4 gap-y-1">

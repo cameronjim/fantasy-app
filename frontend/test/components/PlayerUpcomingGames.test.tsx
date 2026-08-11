@@ -98,11 +98,11 @@ describe('PlayerUpcomingGames', () => {
 
     // assert — minutes: median leads, band under it, unconditional under that
     expect(screen.getByText('36.2')).toBeInTheDocument();
-    expect(screen.getByText('28.5–43.5')).toBeInTheDocument();
+    expect(screen.getByText('28.5-43.5')).toBeInTheDocument();
     expect(screen.getByText('33.2 sched')).toBeInTheDocument();
     // points, same treatment
     expect(screen.getByText('31.7')).toBeInTheDocument();
-    expect(screen.getByText('25.8–39.9')).toBeInTheDocument();
+    expect(screen.getByText('25.8-39.9')).toBeInTheDocument();
   });
 
   it('serves a quantile-less stat as its expected value with no band', () => {
@@ -230,8 +230,7 @@ describe('PlayerUpcomingGames', () => {
     // assert — which model, when, and what it was allowed to know
     const footer = screen.getByText(/model bt20260115/i);
     expect(footer).toHaveTextContent(/projected /i);
-    expect(footer).toHaveTextContent(/knew nothing after /i);
-    expect(footer).toHaveTextContent(/horizon gameday \(T-6h\)/i);
+    expect(footer).toHaveTextContent(/data through /i);
   });
 
   it('says no run has been published when there is none', () => {

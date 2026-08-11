@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowUpRight, CalendarRange, TrendingUp } from 'lucide-react';
 import { getWatchlist } from '../api/client';
 import { useCachedResource } from '../hooks/useCachedResource';
-import { formatStat, toStatNumber } from '../utils/stats';
+import { formatStat, toStatNumber, STAT_PLACEHOLDER } from '../utils/stats';
 import { availabilityBadge } from '../utils/predictions';
 import { SegmentedFilter, type SegmentedOption } from '../components/SegmentedFilter';
 import type {
@@ -44,31 +44,27 @@ const REASON_META: Record<
   ROLE_INCREASE: {
     label: 'Role increase',
     badgeClass: 'badge-success',
-    description: "Tonight's projected minutes are at least 4 above his recent average.",
+    description: 'Projected for at least 4 more minutes than usual.',
   },
   SHOT_VOLUME_SURGE: {
     label: 'Shot volume',
     badgeClass: 'badge-primary',
-    description:
-      'He is projected at least 2.5 more field goal attempts than he has been averaging.',
+    description: 'Projected to take more shots than usual.',
   },
   RETURNING_FROM_ABSENCE: {
     label: 'Just back',
     badgeClass: 'badge-info',
-    description:
-      'He has not played in 7 to 45 days, and the run expects him available tonight. A longer gap is an offseason, not an absence.',
+    description: 'Expected back after a week or more out.',
   },
   HOT_STREAK: {
     label: 'Hot streak',
     badgeClass: 'badge-warning',
-    description:
-      "His last 5 games score at least 1.5 of his own standard deviations above his recent average.",
+    description: 'Scoring well above his usual over his last 5 games.',
   },
   TEAMMATE_ABSENCE: {
     label: 'Teammate out',
     badgeClass: 'badge-accent',
-    description:
-      'A teammate in this game who usually plays 28+ minutes is unlikely to appear, by the run’s own availability estimate.',
+    description: 'A teammate who usually starts is unlikely to play.',
   },
 };
 
@@ -155,9 +151,9 @@ function shortDay(iso: string): string {
   });
 }
 
-/** "Oct 20" for a single day, "Oct 20 – Oct 26" for a window. */
+/** "Oct 20" for a single day, "Oct 20 to Oct 26" for a window. */
 function formatRange(from: string, to: string): string {
-  return from === to ? shortDay(from) : `${shortDay(from)} – ${shortDay(to)}`;
+  return from === to ? shortDay(from) : `${shortDay(from)} to ${shortDay(to)}`;
 }
 
 const ReasonBadge = ({ reason }: { reason: WatchlistReason }): JSX.Element => {
@@ -192,7 +188,7 @@ const DeltaPair = ({
       {usualMin !== null && projMin !== null && (
         <span
           className="font-semibold whitespace-nowrap"
-          title={`He averages ${usualMin.toFixed(1)} minutes over his recent games played; tonight's median projection is ${projMin.toFixed(1)}.`}
+          title={`Usually ${usualMin.toFixed(1)} min, tonight ${projMin.toFixed(1)}.`}
         >
           {usualMin.toFixed(0)} <span className="opacity-40">→</span> {projMin.toFixed(0)} min
         </span>
@@ -200,7 +196,7 @@ const DeltaPair = ({
       {ptsDelta !== null && (
         <span
           className="opacity-70 whitespace-nowrap"
-          title={`Projected ${formatStat(player.points.projected)} points against a ${formatStat(player.points.usual)} recent average.`}
+          title={`Projected ${formatStat(player.points.projected)} points, usually ${formatStat(player.points.usual)}.`}
         >
           {ptsDelta > 0 ? '+' : ''}
           {ptsDelta.toFixed(1)} pts vs usual
@@ -227,7 +223,7 @@ const Drivers = ({ drivers }: { drivers: UpsideDriver[] }): JSX.Element | null =
   return (
     <span
       className="text-[11px] opacity-50 tabular-nums whitespace-nowrap"
-      title="The projections furthest above his own recent averages, biggest first"
+      title="The categories furthest above his usual, biggest first"
     >
       up vs usual: {parts.join(' · ')}
     </span>
@@ -258,7 +254,7 @@ const PositionChip = ({ position }: { position: string | null }): JSX.Element =>
     return (
       <span
         className="badge badge-ghost badge-sm opacity-50 shrink-0"
-        title="The run projects him but the roster table has no position for him, so a position filter cannot include him"
+        title="No position on record, so position filters skip him"
       >
         pos ?
       </span>
@@ -267,7 +263,7 @@ const PositionChip = ({ position }: { position: string | null }): JSX.Element =>
   return (
     <span
       className="badge badge-outline badge-sm shrink-0 font-semibold"
-      title={`Listed at ${position.split('/').join(' and ')}. A combo player answers every one of his positions.`}
+      title={`Listed at ${position.split('/').join(' and ')}`}
     >
       {position}
     </span>
@@ -292,7 +288,7 @@ const GamesCount = ({
   return (
     <span
       className="badge badge-primary badge-sm tabular-nums whitespace-nowrap"
-      title={`The run projects ${count} game${count === 1 ? '' : 's'} for him inside this window. The score is the SUM over those games, so more games is worth more — that is the whole point of picking a window.`}
+      title={`${count} game${count === 1 ? '' : 's'} projected in this window. The score adds them up, so more games ranks higher.`}
     >
       {count} game{count === 1 ? '' : 's'} {phrase}
     </span>
@@ -322,7 +318,7 @@ const GameBreakdown = ({ games }: { games: WatchlistGame[] }): JSX.Element | nul
         {games.map((game) => (
           <tr key={`${game.game_date}-${game.nba_game_id}`}>
             <td className="whitespace-nowrap">{shortDay(game.game_date)}</td>
-            <td className="uppercase opacity-60">{game.opponent_team_abbr ?? '—'}</td>
+            <td className="uppercase opacity-60">{game.opponent_team_abbr ?? STAT_PLACEHOLDER}</td>
             <td className="text-right">{formatStat(game.minutes_p50, 0)}</td>
             <td className="text-right">{formatStat(game.proj_pts)}</td>
             <td className="text-right opacity-60">{formatStat(game.impact)}</td>
@@ -355,17 +351,17 @@ function evidenceLines(
   const minutesDelta = toStatNumber(player.minutes.delta);
   if (minutesDelta !== null) {
     lines.push(
-      `Minutes: ${formatStat(player.minutes.projected)} projected${per} against a ${formatStat(player.minutes.usual)} average over his last ${player.baseline_games} games played (${minutesDelta > 0 ? '+' : ''}${formatStat(minutesDelta)})`
+      `Minutes: ${formatStat(player.minutes.projected)} projected${per}, usually ${formatStat(player.minutes.usual)} (${minutesDelta > 0 ? '+' : ''}${formatStat(minutesDelta)})`
     );
   }
   if (multi) {
     lines.push(
-      `Window: ${player.games_count} game${player.games_count === 1 ? '' : 's'} projected, adding up to a ${formatStat(player.score, 2)} total at ${formatStat(player.score_per_game, 2)} a game — the ranking sums the games, so volume counts`
+      `Window: ${player.games_count} game${player.games_count === 1 ? '' : 's'} projected, ${formatStat(player.score, 2)} total at ${formatStat(player.score_per_game, 2)} a game`
     );
   }
   if (evidence.fga_delta !== undefined) {
     lines.push(
-      `Shots: ${formatStat(evidence.fga_projected)} attempts projected against ${formatStat(evidence.fga_usual)} usual (+${formatStat(evidence.fga_delta)})`
+      `Shots: ${formatStat(evidence.fga_projected)} projected, usually ${formatStat(evidence.fga_usual)} (+${formatStat(evidence.fga_delta)})`
     );
   }
   if (evidence.days_since_played !== undefined) {
@@ -374,7 +370,7 @@ function evidenceLines(
   }
   if (evidence.pts_recent_delta !== undefined) {
     lines.push(
-      `Recent form: ${formatStat(evidence.pts_recent)} points over his last 5 against a ${formatStat(player.points.usual)} average (sd ${formatStat(evidence.pts_sd)})`
+      `Recent form: ${formatStat(evidence.pts_recent)} points over his last 5, usually ${formatStat(player.points.usual)}`
     );
   }
   if (evidence.teammate_out !== undefined) {
@@ -390,11 +386,9 @@ function evidenceLines(
   const impact = toStatNumber(player.impact);
   if (impact !== null) {
     const scope = multi
-      ? `projected total impact across the window, averaging the ${formatStat(player.impact_percentile, 0)}th percentile of a night's slate`
-      : `projected total impact tonight, the ${formatStat(player.impact_percentile, 0)}th percentile of the slate`;
-    lines.push(
-      `Absolute floor: ${impact > 0 ? '+' : ''}${impact.toFixed(1)} ${scope} — each game's score is multiplied by that standing, so a big jump by a player who cannot produce scores nothing`
-    );
+      ? `across the window, averaging the ${formatStat(player.impact_percentile, 0)}th percentile of a night's slate`
+      : `tonight, the ${formatStat(player.impact_percentile, 0)}th percentile of the slate`;
+    lines.push(`Impact: ${impact > 0 ? '+' : ''}${impact.toFixed(1)} ${scope}`);
   }
 
   return lines;
@@ -435,7 +429,7 @@ const CandidateRow = ({
                 }
                 title={
                   player.name_is_placeholder
-                    ? 'This player has predictions but no roster row yet, so only his NBA id is known'
+                    ? 'Not on a roster yet, so this is his NBA id'
                     : undefined
                 }
               >
@@ -443,7 +437,7 @@ const CandidateRow = ({
               </span>
               <PositionChip position={player.position} />
               <span className="text-[11px] opacity-50 uppercase tracking-wider shrink-0">
-                {player.team_abbr ?? '—'}
+                {player.team_abbr ?? STAT_PLACEHOLDER}
                 {/* over a window there is no single opponent to name — the
                     breakdown lists them instead. */}
                 {!multi && player.opponent_team_abbr && (
@@ -475,8 +469,8 @@ const CandidateRow = ({
               className="badge badge-ghost badge-sm tabular-nums"
               title={
                 multi
-                  ? "Projected total fantasy impact summed over the window, each night measured against that night's slate. 0 is an average night."
-                  : 'Projected total fantasy impact tonight, against the whole slate. 0 is an average night — the same number the Projections tab ranks by.'
+                  ? 'Projected impact over the window. 0 is an average night.'
+                  : 'Projected impact tonight. 0 is an average night.'
               }
             >
               {impact > 0 ? '+' : ''}
@@ -490,8 +484,8 @@ const CandidateRow = ({
             className="text-sm font-bold tabular-nums w-10 text-right"
             title={
               multi
-                ? `Window total: every game's gap above his own usual, weighted by how much that night's impact matters, added up. ${formatStat(player.score_per_game, 2)} a game across ${player.games_count}.`
-                : "How far above his own usual, times how much tonight's absolute impact matters"
+                ? `Window total: ${formatStat(player.score_per_game, 2)} a game across ${player.games_count}.`
+                : 'How far above his usual tonight projects him, and how much that matters tonight'
             }
           >
             {formatStat(player.score, 2)}
@@ -540,8 +534,8 @@ const Legend = ({ days }: { days: number }): JSX.Element => (
             <span className="badge badge-outline badge-sm font-semibold">PG/SG</span>
           </span>
           <span className="text-xs opacity-60">
-            Every position he is listed at. A combo player answers a filter for each of them, so
-            &ldquo;PG/SG&rdquo; shows up under both Guards and PG.
+            Every position he is listed at, so &ldquo;PG/SG&rdquo; shows up under both Guards and
+            PG.
           </span>
         </li>
         {days > 1 && (
@@ -550,17 +544,13 @@ const Legend = ({ days }: { days: number }): JSX.Element => (
               <span className="badge badge-primary badge-sm">4 games</span>
             </span>
             <span className="text-xs opacity-60">
-              Games the run projects for him inside the window. The score adds up his games rather
-              than averaging them, so this number is part of the ranking, not decoration.
+              Games projected in the window. The score adds them up, so more games ranks higher.
             </span>
           </li>
         )}
       </ul>
       <p className="text-xs opacity-60 pt-1 border-t border-base-300 mt-1">
-        Badges explain a row; they do not rank it. The ranking is how far each projection sits above
-        the player&apos;s own recent averages, multiplied by where his absolute projected impact
-        stands on that night&apos;s slate. A bench player tripling his minutes scores nothing,
-        because the second term is what makes the first one worth acting on.
+        Badges explain a row; they do not rank it.
       </p>
     </div>
   </section>
@@ -579,16 +569,14 @@ const RankingNote = ({ days }: { days: number }): JSX.Element => (
     <ArrowUpRight size={13} className="text-success shrink-0 mt-0.5" />
     {days > 1 ? (
       <span>
-        Ranked by TOTAL over the window: each projected game earns how far it sits above his own
-        recent averages, weighted by how much that night&apos;s absolute impact matters, and the
-        games are <strong className="font-semibold">added up</strong>. So a player with more games
-        can outrank a better player with fewer — which is the point when you are covering an
-        injury. Open a row to see every game and what it adds.
+        Ranked by how far above his usual each game projects,{' '}
+        <strong className="font-semibold">added up</strong> over the window. So more games can
+        outrank a better player with fewer. Open a row to see every game.
       </span>
     ) : (
       <span>
-        Each row shows where his minutes usually sit and where tonight projects. The score on the
-        right is that gap, weighted by how much tonight&apos;s absolute impact matters.
+        Each row shows his usual minutes and where tonight projects. The score on the right is that
+        gap, weighted by how much it matters tonight.
       </span>
     )}
   </p>
@@ -663,8 +651,7 @@ const PositionPicker = ({
 
 const NO_CANDIDATES = 'Nobody is projected above their own usual tonight';
 const NO_CANDIDATES_WINDOW = 'Nobody is projected above their own usual in this window';
-const NO_RUN_NOTICE =
-  'No prediction run yet — this page compares projections against each player’s own recent form, so there is nothing to rank until a run completes.';
+const NO_RUN_NOTICE = 'No prediction run yet. Check back after the next model run.';
 
 /**
  * Players projected to do more than they usually do over a window the manager
@@ -699,7 +686,6 @@ export const WatchlistPage = (): JSX.Element => {
   );
 
   const baseline = data?.baseline ?? null;
-  const pool = data?.pool ?? null;
   // the resolved window is the SERVER's, so the page can never describe a window
   // the numbers on screen were not computed over. That matters while a new window
   // is still in flight: the rows still hold the previous payload, and labelling
@@ -723,8 +709,7 @@ export const WatchlistPage = (): JSX.Element => {
             Watchlist
           </h1>
           <p className="text-sm opacity-60 mt-0.5">
-            Players projected to do more than they usually do — ranked against themselves, not
-            against the league.
+            Players projected to do more than they usually do.
           </p>
         </div>
 
@@ -802,8 +787,7 @@ export const WatchlistPage = (): JSX.Element => {
                   {shownDays > 1 ? 'in this window' : 'tonight'}
                 </p>
                 <p className="text-xs opacity-60 max-w-md">
-                  Nobody at that position is both above his own recent form and high enough on a
-                  night&apos;s slate to matter. Try a longer window, a wider slot, or{' '}
+                  Try a longer window, a wider slot, or{' '}
                   <button
                     type="button"
                     className="link link-primary"
@@ -815,8 +799,8 @@ export const WatchlistPage = (): JSX.Element => {
                   {unplaced > 0 && (
                     <>
                       {' '}
-                      {unplaced} projected player{unplaced === 1 ? '' : 's'} could not be considered
-                      at all: the roster table has no position for {unplaced === 1 ? 'him' : 'them'}.
+                      {unplaced} projected player{unplaced === 1 ? '' : 's'}{' '}
+                      {unplaced === 1 ? 'has' : 'have'} no position on record.
                     </>
                   )}
                 </p>
@@ -830,12 +814,12 @@ export const WatchlistPage = (): JSX.Element => {
                 </p>
                 <p className="text-xs opacity-60 max-w-md">
                   {data.run
-                    ? "Nobody the run projects in this window is both above his own recent form and high enough on a night's slate to matter. That is a normal answer, and a common one on a quiet stretch."
+                    ? 'That is a normal answer on a quiet stretch.'
                     : 'Check back after the next model run.'}{' '}
                   <Link to="/projections" className="link link-primary">
                     The projections
                   </Link>{' '}
-                  still rank who is best tonight in absolute terms.
+                  still rank who is best tonight.
                 </p>
               </div>
             </div>
@@ -863,10 +847,9 @@ export const WatchlistPage = (): JSX.Element => {
               <RankingNote days={shownDays} />
               {data.position !== null && (
                 <p className="text-[11px] opacity-50" data-testid="position-note">
-                  Showing {POSITION_LABELS[data.position].toLowerCase()} only, ranked among the whole
-                  slate rather than among each other.
+                  Showing {POSITION_LABELS[data.position].toLowerCase()} only.
                   {unplaced > 0 &&
-                    ` ${unplaced} projected player${unplaced === 1 ? '' : 's'} ${unplaced === 1 ? 'has' : 'have'} no position on record and cannot appear under a position filter.`}
+                    ` ${unplaced} projected player${unplaced === 1 ? '' : 's'} ${unplaced === 1 ? 'has' : 'have'} no position on record.`}
                 </p>
               )}
               <ul className="flex flex-col gap-2">
@@ -884,27 +867,14 @@ export const WatchlistPage = (): JSX.Element => {
 
           <Legend days={shownDays} />
 
-          {/* both definitions come from the server, so this page never states a
-              window or a pool the numbers were not actually computed against. */}
+          {/* the label comes from the server, so this page never names a
+              baseline the numbers were not actually computed against. */}
           <footer className="text-[11px] opacity-40 pt-1 flex flex-col gap-1">
-            {baseline?.definition && (
-              <span>
-                &ldquo;Usual&rdquo; means {baseline.label}: {baseline.definition}. Game logs, not
-                season averages, and taken once as of {from} — so a game later in the window is never
-                compared against itself.
-              </span>
-            )}
-            {pool?.definition && (
-              <span>
-                Absolute impact is measured against {pool.label.toLowerCase()}: {pool.definition}
-                {pool.sample_size > 0 && ` (${pool.sample_size} player-games)`}.
-              </span>
-            )}
+            {baseline?.label && <span>&ldquo;Usual&rdquo; means {baseline.label}.</span>}
             {shownDays > 1 && (
               <span>
-                A row&apos;s minutes, points and availability are averages over his games in the
-                window; its impact, projected totals and score are sums over them. Availability
-                reads as the share of these games he is expected to appear in.
+                Over a window, minutes and points are per-game averages; impact and score are
+                totals.
               </span>
             )}
           </footer>

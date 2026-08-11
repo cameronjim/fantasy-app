@@ -181,7 +181,7 @@ function weekPayload(overrides: Partial<WatchlistResponse> = {}): WatchlistRespo
       key: 'slate',
       label: "Each night's slate",
       definition:
-        "every player the run projects for a date, across all of that date's games — each night in the window is scored against its own slate",
+        "every player the run projects for a date, across all of that date's games; each night in the window is scored against its own slate",
       sample_size: 1712,
     },
     players: [weekLong],
@@ -230,7 +230,7 @@ describe('WatchlistPage', () => {
 
     // assert — the deltas are the claim; the score is only the ordering. The
     // arrow sits in its own span, so the row is read as text rather than matched.
-    const minutes = screen.getByTitle(/He averages 22\.0 minutes/);
+    const minutes = screen.getByTitle(/Usually 22\.0 min/);
     expect(minutes.textContent?.replace(/\s+/g, ' ')).toBe('22 → 31 min');
     expect(screen.getByText(/\+8\.4 pts vs usual/)).toBeInTheDocument();
   });
@@ -286,12 +286,12 @@ describe('WatchlistPage', () => {
     renderPage();
     await screen.findByRole('heading', { name: /What the badges mean/i });
 
-    // assert — the legend documents the full rule set, not just what fired
-    expect(screen.getByText(/at least 4 above his recent average/i)).toBeInTheDocument();
-    expect(screen.getByText(/2\.5 more field goal attempts/i)).toBeInTheDocument();
-    expect(screen.getByText(/7 to 45 days/i)).toBeInTheDocument();
-    expect(screen.getByText(/1\.5 of his own standard deviations/i)).toBeInTheDocument();
-    expect(screen.getByText(/usually plays 28\+ minutes is unlikely to appear/i)).toBeInTheDocument();
+    // assert — the legend documents every badge, not just the ones that fired
+    expect(screen.getByText(/at least 4 more minutes than usual/i)).toBeInTheDocument();
+    expect(screen.getByText(/take more shots than usual/i)).toBeInTheDocument();
+    expect(screen.getByText(/back after a week or more out/i)).toBeInTheDocument();
+    expect(screen.getByText(/above his usual over his last 5 games/i)).toBeInTheDocument();
+    expect(screen.getByText(/teammate who usually starts is unlikely to play/i)).toBeInTheDocument();
   });
 
   it('says the badges explain the ranking rather than being it', async () => {
@@ -301,7 +301,8 @@ describe('WatchlistPage', () => {
 
     // assert
     expect(screen.getByText(/Badges explain a row; they do not rank it/i)).toBeInTheDocument();
-    expect(screen.getByText(/tripling his minutes scores nothing/i)).toBeInTheDocument();
+    // and it stops there: the scoring formula is no longer spelled out
+    expect(screen.queryByText(/tripling his minutes scores nothing/i)).toBeNull();
   });
 
   it('shows the evidence behind the reasons that fired, and the absolute floor', async () => {
@@ -312,7 +313,7 @@ describe('WatchlistPage', () => {
     // assert
     const evidence = screen.getByTestId('evidence-1630559');
     expect(
-      within(evidence).getByText(/31\.0 projected against a 22\.0 average over his last 15 games/)
+      within(evidence).getByText(/Minutes: 31\.0 projected, usually 22\.0 \(\+9\.0\)/)
     ).toBeInTheDocument();
     expect(
       within(evidence).getByText(/Franchise Player usually plays 34\.6 minutes, 12% to play/)
@@ -385,7 +386,7 @@ describe('WatchlistPage', () => {
     // assert
     expect(await screen.findByText('NBA #1642850 (new roster)')).toBeInTheDocument();
     expect(
-      screen.getByTitle(/no roster row yet, so only his NBA id is known/i)
+      screen.getByTitle(/Not on a roster yet, so this is his NBA id/i)
     ).toBeInTheDocument();
   });
 
@@ -397,8 +398,9 @@ describe('WatchlistPage', () => {
     renderPage();
 
     // assert
-    expect(await screen.findByText(/No prediction run yet/i)).toBeInTheDocument();
-    expect(screen.getByText(/nothing to rank until a run completes/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText('No prediction run yet. Check back after the next model run.')
+    ).toBeInTheDocument();
   });
 
   it('drops the notice once a run has scored the date', async () => {
@@ -429,16 +431,17 @@ describe('WatchlistPage', () => {
     expect(screen.getByRole('heading', { name: /What the badges mean/i })).toBeInTheDocument();
   });
 
-  it('describes the baseline and the pool the server used, never its own', async () => {
+  it("names the server's baseline without restating how it is computed", async () => {
     // arrange + act
     renderPage();
     await screen.findByText('Breakout Wing');
 
-    // assert
+    // assert — the label still comes from the payload, never from this page
     expect(screen.getByText(/his own recent form/i)).toBeInTheDocument();
-    expect(screen.getByText(/last 15 games played before this date/i)).toBeInTheDocument();
-    expect(screen.getByText(/every player the run projects for this date/i)).toBeInTheDocument();
-    expect(screen.getByText(/244 player-games/)).toBeInTheDocument();
+    // the mechanics behind it are gone
+    expect(screen.queryByText(/last 15 games played before this date/i)).toBeNull();
+    expect(screen.queryByText(/every player the run projects for this date/i)).toBeNull();
+    expect(screen.queryByText(/244 player-games/)).toBeNull();
   });
 
   it('refetches for another date when the picker changes', async () => {
@@ -496,7 +499,7 @@ describe('WatchlistPage', () => {
     // assert
     expect(screen.getByText('pos ?')).toBeInTheDocument();
     expect(
-      screen.getByTitle(/roster table has no position for him, so a position filter cannot include him/i)
+      screen.getByTitle(/No position on record, so position filters skip him/i)
     ).toBeInTheDocument();
   });
 
@@ -537,7 +540,7 @@ describe('WatchlistPage window picker', () => {
 
     // assert — the range comes from the payload, never from the page's own maths
     expect(lastRequestWindow()).toEqual([7, null]);
-    expect(await screen.findByText(/Feb 4 – Feb 10/)).toBeInTheDocument();
+    expect(await screen.findByText(/Feb 4 to Feb 10/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Week' })).toHaveAttribute('aria-pressed', 'true');
   });
 
@@ -611,9 +614,11 @@ describe('WatchlistPage window picker', () => {
     // assert
     const evidence = screen.getByTestId('evidence-1630559');
     expect(
-      within(evidence).getByText(/4 games projected, adding up to a 2\.40 total at 0\.60 a game/)
+      within(evidence).getByText(/4 games projected, 2\.40 total at 0\.60 a game/)
     ).toBeInTheDocument();
-    expect(within(evidence).getByText(/projected per game against a 22\.0 average/)).toBeInTheDocument();
+    expect(
+      within(evidence).getByText(/projected per game, usually 22\.0/)
+    ).toBeInTheDocument();
   });
 
   it('explains the game-count badge in the legend once a window is chosen', async () => {
@@ -625,7 +630,7 @@ describe('WatchlistPage window picker', () => {
     await screen.findByText('Breakout Wing');
 
     // assert
-    expect(screen.getByText(/adds up his games rather than averaging them/i)).toBeInTheDocument();
+    expect(screen.getByText(/score adds them up, so more games ranks higher/i)).toBeInTheDocument();
   });
 });
 
@@ -696,7 +701,7 @@ describe('WatchlistPage position filter', () => {
     expect(await screen.findByText(/No centers clear the bar in this window/i)).toBeInTheDocument();
     expect(screen.getByText(/Try a longer window, a wider slot/i)).toBeInTheDocument();
     expect(
-      screen.getByText(/3 projected players could not be considered at all/i)
+      screen.getByText(/3 projected players have no position on record/i)
     ).toBeInTheDocument();
     // and it is NOT the "nobody at all" state
     expect(
