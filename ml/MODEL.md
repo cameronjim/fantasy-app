@@ -2179,8 +2179,17 @@ things must not be the same object.
 | `base_availability_model.joblib` | 1,400,822 | `3d5fcdeb180f4e8c6650b9c3542d4ef1714401f4048a3d14605de7747262adba` |
 | `minutes_model.joblib` | 1,164,395 | `2fd13615d64ba1d62e33bc903cfa4851ff63b602f2a2dec4e96af9343f28115a` |
 | `ewma_state.parquet` | 229,388 | `bcc83dec9e55375645f80165df6f490c6056d9659215bde497d31ced99943328` |
-| `feature_gain.csv` | 1,647 | `c72a76ed319ddd72fa8d752b3c0fe2b96eeff119ec851d32b90a1c590d017241` |
-| `metadata.json` | 10,435 | `5f54e4c6a8ae176477390a51ba87a365eb2e2668e21be23f2ef3c7c1646936bb` |
+| `feature_gain.csv` | 1,595 | `f2765c542b452e1ff8726be27e556c0a1a4a7b323b503ca2cdd01dc191728b94` |
+| `metadata.json` | 9,952 | `24978b3261261ad52d28cae7e7fceee6378655d20e515c26882391545adae3fe` |
+
+*Correction, 2026-08-24.* The two rows above originally carried checksums copied from a
+registry snapshot taken before `feature_gain.csv` and `metadata.json` reached the bytes
+the freeze commit actually pinned, so the recorded values never described any committed
+file and the daily-run preflight refused every slate. The four model/state files were
+recorded correctly, `metadata.json`'s own `artifact_checksum` fields name exactly the
+pinned `.joblib` bytes, and every content assertion in `test_prospective_freeze.py`
+passes, so the served configuration never moved: this is a record fix under the 13.2
+carve-out ("provably does not change any emitted number"), not a re-freeze.
 
 The checksum set is asserted to cover the **whole** directory, so a file *added* to the
 served artifact fails too — six per-file assertions would all pass while a seventh file
