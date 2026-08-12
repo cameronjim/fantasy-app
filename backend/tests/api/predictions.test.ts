@@ -64,6 +64,7 @@ function baselineRow(
 //   3. team_id -> abbreviation
 //   4. the run's per-player predictions (skipped when there is no run)
 //   5. the vs-usual baselines (skipped when the run projected nobody)
+//   6. the injury overlay (same skip rule as the baselines)
 //
 // the watchlist route:
 //   1. the latest complete prediction run
@@ -152,7 +153,8 @@ describe('GET /api/predictions/slate', () => {
           }),
         ])
       )
-      .mockResolvedValueOnce(pgResult([baselineRow('201939', { minutes: 30, pts: 30 }), baselineRow('2544', { minutes: 30, pts: 30 })]));
+      .mockResolvedValueOnce(pgResult([baselineRow('201939', { minutes: 30, pts: 30 }), baselineRow('2544', { minutes: 30, pts: 30 })]))
+      .mockResolvedValueOnce(pgResult([]));
 
     // act
     const res = await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
@@ -193,9 +195,75 @@ describe('GET /api/predictions/slate', () => {
       impact: 1,
       spotlight: true,
       slate_spotlight: true,
+      injury_status: null,
+      injury_status_raw: null,
+      injury_detail: null,
+      injury_as_of: null,
+      injury_changed_after_run: false,
     });
     expect(res.body.games[0].top_impact).toBe(1);
     expect(res.body.baseline).toEqual(baseline);
+  });
+
+  it('overlays the current injury designation and flags a post-run change', async () => {
+    // arrange — two players: one ruled OUT after the run published (no
+    // designation existed at the run's boundary), one QUESTIONABLE that the
+    // run already knew about. Only the first is a change.
+    queryMock
+      .mockResolvedValueOnce(pgResult(scheduleRows))
+      .mockResolvedValueOnce(pgResult([runRow]))
+      .mockResolvedValueOnce(pgResult(teamRows))
+      .mockResolvedValueOnce(
+        pgResult([
+          predictionRow(),
+          predictionRow({ nba_player_id: '201939', name: 'Stephen Curry', team_abbr: 'GSW' }),
+        ])
+      )
+      .mockResolvedValueOnce(pgResult([]))
+      .mockResolvedValueOnce(
+        pgResult([
+          {
+            nba_id: '2544',
+            status_raw: 'Out',
+            detail: 'Ankle',
+            current_normalized: 'out',
+            current_captured_at: new Date('2026-02-04T20:00:00.000Z'),
+            run_normalized: null,
+          },
+          {
+            nba_id: '201939',
+            status_raw: 'Game Time Decision',
+            detail: 'Knee',
+            current_normalized: 'questionable',
+            current_captured_at: new Date('2026-02-04T20:00:00.000Z'),
+            run_normalized: 'questionable',
+          },
+        ])
+      );
+
+    // act
+    const res = await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
+
+    // assert
+    expect(res.status).toBe(200);
+    const byId = new Map(
+      (res.body.games[0].players as Array<Record<string, unknown>>).map((p) => [
+        p.nba_player_id,
+        p,
+      ])
+    );
+    expect(byId.get('2544')).toMatchObject({
+      injury_status: 'out',
+      injury_status_raw: 'Out',
+      injury_detail: 'Ankle',
+      injury_as_of: '2026-02-04T20:00:00.000Z',
+      injury_changed_after_run: true,
+    });
+    expect(byId.get('201939')).toMatchObject({
+      injury_status: 'questionable',
+      injury_status_raw: 'Game Time Decision',
+      injury_changed_after_run: false,
+    });
   });
 
   it('reads the unconditional stat names, not `conditional = false` on the bare ones', async () => {
@@ -207,6 +275,7 @@ describe('GET /api/predictions/slate', () => {
       .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(pgResult(teamRows))
       .mockResolvedValueOnce(pgResult([predictionRow()]))
+      .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult([]));
 
     // act
@@ -229,6 +298,7 @@ describe('GET /api/predictions/slate', () => {
       .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(pgResult(teamRows))
       .mockResolvedValueOnce(pgResult(many))
+      .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult([]));
 
     // act
@@ -253,6 +323,7 @@ describe('GET /api/predictions/slate', () => {
           predictionRow({ nba_player_id: '201939', name: 'Stephen Curry', pts: 28.4 }),
         ])
       )
+      .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult([]));
 
     // act
@@ -279,6 +350,7 @@ describe('GET /api/predictions/slate', () => {
           )
         )
       )
+      .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult([]));
 
     // act
@@ -316,6 +388,7 @@ describe('GET /api/predictions/slate', () => {
           predictionRow({ nba_game_id: '0022500999', nba_player_id: 'b', pts: 31.5 }),
         ])
       )
+      .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult([]));
 
     // act
