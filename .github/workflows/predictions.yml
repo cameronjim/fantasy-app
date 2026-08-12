@@ -15,7 +15,9 @@
 # A RED RUN IS THE ALERT. There is no retry and no notification wiring: the driver
 # exits non-zero naming the phase that failed, and the failed-workflow email is the
 # signal. A missed slate is recorded and never backfilled (13.8.2), so re-running this
-# after tipoff will correctly refuse to publish those games.
+# after tipoff will correctly refuse to publish those games. A red morning run can
+# still be re-dispatched manually before the afternoon's first tip and publish the
+# whole slate at a valid gameday offset.
 #
 # Python 3.14, not the 3.12 the scraper uses. See the header of ml/requirements.txt:
 # this job unpickles the frozen scikit-learn 1.9.0 serving artifact, and 3.12 cannot
@@ -24,12 +26,16 @@ name: NBA Predictions
 
 on:
   schedule:
-    # 21:00 UTC = 5pm EDT / 4pm EST. Ahead of every tipoff on a normal slate (the
-    # earliest regular-season tip is 7pm ET, with a handful of 3pm ET weekend
-    # afternoon games), and inside the `gameday` horizon bucket of (2, 12] hours
-    # before tipoff that section 13.8.1 commits to serving at. A 3pm ET game is
-    # already past tip at 5pm and daily_run.py drops it rather than publishing it.
-    - cron: "0 21 * * *"
+    # 16:00 UTC = noon EDT / 11am EST. Every tip from 3pm through 10:30pm ET is
+    # 3-11.5 hours out at that instant, so the WHOLE slate - afternoon games
+    # included - is served inside the `gameday` horizon bucket of (2, 12] hours
+    # before tipoff that section 13.8.1 commits to serving at. The original
+    # 21:00 UTC schedule bought fresher afternoon injury news for evening games
+    # at the price of never publishing a 3pm tip at all (already past tip at
+    # 5pm ET, so daily_run.py dropped it); moved 2026-08-24 to close that gap.
+    # See MODEL.md 16.3 for the tradeoff. Rare noon/1pm ET holiday tips land in
+    # the `lock` bucket (0, 2] - published before tip, recorded off-gameday.
+    - cron: "0 16 * * *"
   workflow_dispatch:
     inputs:
       dry_run:

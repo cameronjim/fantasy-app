@@ -59,8 +59,12 @@ class TestEasternToday:
             # EST (UTC-5). the offset changes and the rule must not.
             ("2026-12-15T04:30:00Z", date(2026, 12, 14)),
             ("2026-12-15T05:30:00Z", date(2026, 12, 15)),
-            # the cron's own instant, 21:00Z, is mid-afternoon Eastern in both halves
-            # of the year, which is the whole reason 21:00 was chosen.
+            # the cron's own instant, 16:00Z, is midday Eastern in both halves of
+            # the year, so the window it opens is the slate a manager wakes up to.
+            ("2026-10-20T16:00:00Z", date(2026, 10, 20)),
+            ("2027-01-20T16:00:00Z", date(2027, 1, 20)),
+            # and the retired 21:00Z instant still maps the same way; the date rule
+            # never depended on the cron time.
             ("2026-10-20T21:00:00Z", date(2026, 10, 20)),
             ("2027-01-20T21:00:00Z", date(2027, 1, 20)),
         ],
@@ -316,7 +320,21 @@ class TestDropTippedOff:
         assert len(upcoming) == 3
         assert tipped.empty
 
-    def test_the_cron_instant_drops_only_the_afternoon_game(self) -> None:
+    def test_the_cron_instant_keeps_the_whole_slate(self) -> None:
+        """16:00Z is noon ET: every tip, the 3pm game included, is still ahead.
+
+        this is the coverage the 2026-08-24 cron move bought; the retired 21:00Z
+        instant below shows exactly what it used to lose.
+        """
+        upcoming, tipped = daily_run.drop_tipped_off(
+            _slate(), pd.Timestamp("2026-10-20T16:00:00Z")
+        )
+        assert list(upcoming["GAME_ID"]) == [
+            "0022600001", "0022600002", "0022600003",
+        ]
+        assert tipped.empty
+
+    def test_the_retired_cron_instant_drops_only_the_afternoon_game(self) -> None:
         """21:00Z is 5pm ET: the 3pm game has started, the two evening games have not."""
         upcoming, tipped = daily_run.drop_tipped_off(
             _slate(), pd.Timestamp("2026-10-20T21:00:00Z")
