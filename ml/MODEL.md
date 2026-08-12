@@ -3390,7 +3390,7 @@ remembering to run three scripts in the right order with the right flags.**
 pipeline in seven named phases: verify the pinned artifact against the freeze, compute
 the window, read the slate, rebuild the historical dataset from the truth layer, build
 prospective rows for the window, read the latest injury designations, and score and
-write. `.github/workflows/predictions.yml` runs it once a day at 21:00 UTC and does
+write. `.github/workflows/predictions.yml` runs it once a day at 16:00 UTC and does
 nothing else. It is the same shape as `.github/workflows/scraper.yml`, which has been
 reaching `nba_api` from a GitHub runner on a six-hour cron since May.
 
@@ -3451,15 +3451,27 @@ supplies is *earlier* than almost every real tip, so an unknown tip errs toward
 dropping rather than publishing. **Games dropped this way are counted in the log and in
 the run summary. They are a recorded missed slate (13.8.2), not a backlog.**
 
-### 16.3 Why 21:00 UTC
+### 16.3 Why 16:00 UTC (moved from 21:00 UTC, 2026-08-24)
 
-5pm EDT / 4pm EST. Inside the `gameday` bucket of `(2, 12]` hours before tipoff for
-every 7pm-and-later tip, which is the overwhelming majority of the schedule, and after
-the league's 5pm-local initial participation report deadline for the following day. The
-handful of 3pm ET weekend afternoon games have already tipped at that hour and the
-driver drops them rather than publishing them — a real, small, *stated* gap in 13.8.1's
-"before every slate", and the honest options were a second earlier cron or this
-sentence. This is the sentence.
+Noon EDT / 11am EST. Every tip from 3pm through 10:30pm ET is 3–11.5 hours out at that
+instant, so the **whole slate** — the afternoon games included — is served inside the
+`gameday` bucket of `(2, 12]` hours before tipoff. The rare noon/1pm ET holiday tips
+land in the `lock` bucket `(0, 2]`: still published before tip, recorded off-gameday by
+the horizon facts.
+
+The original 21:00 UTC (5pm EDT / 4pm EST) schedule sat 2–6 hours before evening tips
+and after the league's 5pm-local initial participation report deadline for the
+following day — fresher information — but a 3pm ET game had already tipped at that
+hour and the driver dropped it, a real, small, *stated* gap in 13.8.1's "before every
+slate". The honest options were a second earlier cron, accepting the gap, or moving
+the single run earlier; a second cron would put two gameday-horizon runs on the same
+slate and make every per-slate aggregate ambiguous, so the run moved instead. **The
+price, stated just as plainly: evening games are now served 7–11.5 hours before tip
+rather than 2–6, so injury news that breaks in the afternoon lands after publication,
+and the day-ahead half of the two-day window is built before the following day's
+initial participation reports exist.** Both halves of the tradeoff serve at `gameday`;
+13.8.1's commitment is unchanged and no frozen value moved (the cron instant is an ops
+detail, not a protocol value — the horizon bucket is the protocol value).
 
 ### 16.4 The offseason no-op, and what red means
 
