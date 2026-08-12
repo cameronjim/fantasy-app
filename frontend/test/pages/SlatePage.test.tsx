@@ -418,4 +418,118 @@ describe('SlatePage', () => {
     expect(within(rows[0]).getByText('Stephen Curry')).toBeInTheDocument();
     expect(within(rows[1]).getByText('LeBron James')).toBeInTheDocument();
   });
+
+  it('shows the current injury designation in the source wording', async () => {
+    // arrange — a designation the run already knew about: chip, no marker
+    slateMock.mockResolvedValue(
+      payload({
+        games: [
+          {
+            ...payload().games[0],
+            players: [
+              slatePlayer({
+                injury_status: 'questionable',
+                injury_status_raw: 'Game Time Decision',
+                injury_detail: 'Knee',
+                injury_as_of: '2026-02-04T20:00:00Z',
+                injury_changed_after_run: false,
+              }),
+            ],
+          },
+        ],
+      })
+    );
+
+    // act
+    renderPage();
+    await screen.findByText('Stephen Curry');
+
+    // assert
+    const chip = screen.getByTestId('injury-chip');
+    expect(chip).toHaveTextContent('Game Time Decision');
+    expect(chip).not.toHaveTextContent('· new');
+  });
+
+  it('marks a designation that moved after the projection was published', async () => {
+    // arrange — ruled out after the run: the numbers on the card don't know
+    slateMock.mockResolvedValue(
+      payload({
+        games: [
+          {
+            ...payload().games[0],
+            players: [
+              slatePlayer({
+                injury_status: 'out',
+                injury_status_raw: 'Out',
+                injury_detail: 'Ankle',
+                injury_as_of: '2026-02-04T20:00:00Z',
+                injury_changed_after_run: true,
+              }),
+            ],
+          },
+        ],
+      })
+    );
+
+    // act
+    renderPage();
+    await screen.findByText('Stephen Curry');
+
+    // assert — the marker and an explanation the tooltip carries
+    const chip = screen.getByTestId('injury-chip');
+    expect(chip).toHaveTextContent('Out');
+    expect(chip).toHaveTextContent('· new');
+    expect(chip).toHaveAttribute('title', expect.stringMatching(/after this projection/i));
+  });
+
+  it('shows a clearance chip when a priced-in designation came off the report', async () => {
+    // arrange — the run expected him doubtful; he has since cleared
+    slateMock.mockResolvedValue(
+      payload({
+        games: [
+          {
+            ...payload().games[0],
+            players: [
+              slatePlayer({
+                injury_status: null,
+                injury_status_raw: null,
+                injury_detail: null,
+                injury_as_of: null,
+                injury_changed_after_run: true,
+              }),
+            ],
+          },
+        ],
+      })
+    );
+
+    // act
+    renderPage();
+    await screen.findByText('Stephen Curry');
+
+    // assert
+    const chip = screen.getByTestId('injury-chip');
+    expect(chip).toHaveTextContent('Cleared');
+    expect(chip).toHaveTextContent('· new');
+  });
+
+  it('shows no injury chip for a healthy player or an older server', async () => {
+    // arrange + act — the default payload carries no injury fields at all
+    renderPage();
+    await screen.findByText('Stephen Curry');
+
+    // assert
+    expect(screen.queryByTestId('injury-chip')).not.toBeInTheDocument();
+  });
+
+  it('explains the injury chip in the legend', async () => {
+    // arrange + act
+    renderPage();
+    await screen.findByText('Stephen Curry');
+
+    // assert
+    const legend = screen.getByTestId('slate-legend');
+    expect(legend).toHaveTextContent(/injury report now/i);
+    expect(legend).toHaveTextContent(/changed after this projection/i);
+  });
 });

@@ -8,6 +8,7 @@ import {
   TOP_PLAYERS_PER_GAME,
   categoryValues,
   impactScores,
+  injuryOverlayFields,
   isMissingRelation,
   num,
   parsePredictionDate,
@@ -40,6 +41,11 @@ function player(overrides: Partial<SlatePlayer> = {}): SlatePlayer {
     impact: null,
     spotlight: false,
     slate_spotlight: false,
+    injury_status: null,
+    injury_status_raw: null,
+    injury_detail: null,
+    injury_as_of: null,
+    injury_changed_after_run: false,
     ...overrides,
   };
 }
@@ -437,5 +443,105 @@ describe('topImpactIds', () => {
 
     // assert
     expect(top.size).toBe(0);
+  });
+});
+
+describe('injuryOverlayFields', () => {
+  const RUN_AT = '2026-02-04T16:15:00.000Z';
+
+  /** One row as `fetchInjuryOverlay` returns it. */
+  function overlayRow(overrides: Record<string, unknown> = {}): Parameters<
+    typeof injuryOverlayFields
+  >[0] {
+    return {
+      nba_id: '2544',
+      status_raw: 'Out',
+      detail: 'Ankle',
+      current_normalized: 'out',
+      current_captured_at: new Date('2026-02-04T20:00:00.000Z'),
+      run_normalized: 'out',
+      ...overrides,
+    };
+  }
+
+  it('is empty for a player with no overlay row at all', () => {
+    expect(injuryOverlayFields(undefined, RUN_AT)).toEqual({
+      injury_status: null,
+      injury_status_raw: null,
+      injury_detail: null,
+      injury_as_of: null,
+      injury_changed_after_run: false,
+    });
+  });
+
+  it('is empty for a player neither listed now nor listed at the run', () => {
+    const row = overlayRow({
+      status_raw: null,
+      detail: null,
+      current_normalized: null,
+      current_captured_at: null,
+      run_normalized: null,
+    });
+    expect(injuryOverlayFields(row, RUN_AT).injury_status).toBeNull();
+    expect(injuryOverlayFields(row, RUN_AT).injury_changed_after_run).toBe(false);
+  });
+
+  it('carries the designation without a change flag when the run already knew it', () => {
+    // the scraper appends a row every pass even when nothing changed, so a
+    // newer capture time alone must NOT read as a change.
+    const fields = injuryOverlayFields(overlayRow(), RUN_AT);
+    expect(fields).toEqual({
+      injury_status: 'out',
+      injury_status_raw: 'Out',
+      injury_detail: 'Ankle',
+      injury_as_of: '2026-02-04T20:00:00.000Z',
+      injury_changed_after_run: false,
+    });
+  });
+
+  it('flags a designation the run did not know about', () => {
+    const fields = injuryOverlayFields(overlayRow({ run_normalized: null }), RUN_AT);
+    expect(fields.injury_status).toBe('out');
+    expect(fields.injury_changed_after_run).toBe(true);
+  });
+
+  it('flags a bucket that moved after the run', () => {
+    const fields = injuryOverlayFields(
+      overlayRow({ current_normalized: 'out', run_normalized: 'questionable' }),
+      RUN_AT
+    );
+    expect(fields.injury_changed_after_run).toBe(true);
+  });
+
+  it('flags a clearance: listed at the run, off the report now', () => {
+    const fields = injuryOverlayFields(
+      overlayRow({
+        status_raw: null,
+        detail: null,
+        current_normalized: null,
+        current_captured_at: null,
+        run_normalized: 'out',
+      }),
+      RUN_AT
+    );
+    // cleared: nothing is CURRENTLY listed, but the change is worth surfacing
+    expect(fields.injury_status).toBeNull();
+    expect(fields.injury_status_raw).toBeNull();
+    expect(fields.injury_as_of).toBeNull();
+    expect(fields.injury_changed_after_run).toBe(true);
+  });
+
+  it('never flags a change without a run boundary to compare against', () => {
+    const fields = injuryOverlayFields(overlayRow({ run_normalized: null }), null);
+    expect(fields.injury_status).toBe('out');
+    expect(fields.injury_changed_after_run).toBe(false);
+  });
+
+  it('falls back to the unknown bucket when the snapshot has no normalized row', () => {
+    const fields = injuryOverlayFields(
+      overlayRow({ current_normalized: null, run_normalized: null }),
+      RUN_AT
+    );
+    expect(fields.injury_status).toBe('unknown');
   });
 });
