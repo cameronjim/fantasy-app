@@ -1,37 +1,4 @@
-"""build a prospective feature dataset for a season that has not been played.
-
-    python project_preseason.py --schedule-season 2026-27 \
-        --rosters roster_snapshot_2026_27.csv \
-        --start 2026-10-20 --end 2026-10-27 \
-        --out data/preseason_2026_27.parquet
-
-then score it with the ordinary serving path, which needs no new flags:
-
-    python predict.py --dataset data/preseason_2026_27.parquet \
-        --version 20260818 --run-at 2026-10-20 --out data/preseason_predictions.parquet
-
-WHAT THIS SCRIPT IS FOR. Between August and opening night the schedule is
-published and no player-game exists for any of it, so ``build_dataset.py`` - which
-reads ``player_game_status``, a table derived from box scores - returns nothing for
-the new season. This assembles the missing rows from the two things that DO exist:
-the schedule, and a roster observation. :mod:`fnba_ml.prospective` holds the
-construction and the argument for it; this file is the command line around it.
-
-THE ROSTER IS THE WHOLE POINT. Team assignments for an unplayed season cannot be
-derived from game logs, which is why ``player_team_stints`` - built from game logs -
-carries April's rosters all summer. ``--rosters`` takes the scraper's
-``--roster-snapshot --snapshot-out`` csv (or any frame with nba_player_id/team_id),
-and it is what puts a traded player on his new team's teammate-context sums instead
-of his old team's.
-
-HISTORY COMES FROM THE BUILT DATASET, not from the database. Every column in
-``universe.UNIVERSE_COLS`` is on the shipped parquet, so the played universe can be
-sliced back out of it - which means this runs against whatever history the dataset
-was built from rather than needing a database that holds all of it.
-
-IT WRITES A DATASET AND NOTHING ELSE. No model is fitted, no prediction is made and
-no database is touched here.
-"""
+"""build a prospective feature dataset for a season that has not been played."""
 
 from __future__ import annotations
 
@@ -82,9 +49,6 @@ WHERE s.season = %(season)s
 ORDER BY s.game_date, s.nba_game_id
 """
 
-# the roster assignments the truth layer holds, once the snapshot has been
-# written to it. The csv path exists because a dry run has deliberately not
-# written it yet.
 STINTS_SQL = """
 SELECT nba_player_id, team_id
   FROM player_team_stints
@@ -109,8 +73,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--start", required=True, help="first game date to project")
     parser.add_argument("--end", required=True, help="last game date to project")
     parser.add_argument("--rosters", type=Path, default=None,
-                        help="csv of roster assignments (nba_player_id, team_id). "
-                             "omit to read open player_team_stints from the database")
+                        help="csv of roster assignments (nba_player_id, team_id)")
     parser.add_argument("--schedule", type=Path, default=None,
                         help="csv of the schedule, instead of reading the database")
     parser.add_argument("--out", type=Path,

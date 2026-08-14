@@ -1,45 +1,7 @@
 """pull deep NBA history (player + team game logs) into a gitignored parquet dir.
 
-WHY THIS EXISTS. ``ml/data/dataset.parquet`` covers four seasons (2022-23 ..
-2025-26) because that is as far back as the *truth layer* goes - official
-per-game inactive lists, and therefore the scheduled-player-game universe, do
-not exist before 2022-23 in this repo's sources. The question this pull serves
-is narrower and answerable without them: how much does TRAINING DEPTH buy a
-conditional (appearance-only) model? For that we need raw box-score history and
-nothing else.
-
-ENDPOINT CHOICE, verified rather than assumed. ``playergamelogs.PlayerGameLogs``
-is the modern endpoint and does not reach the 1990s. ``leaguegamelog.LeagueGameLog``
-does (documented back to 1946-47) and returns the SAME column set for 1996-97 as
-for 2025-26, including MIN/FGA/FTA/TOV for both the player and the team side.
-One endpoint for every season is worth more than a marginally richer schema for
-the recent ones: a per-era endpoint switch would put a schema seam in the middle
-of the very axis the ablation is measuring.
-
-  * player side: ``player_or_team_abbreviation='P'``
-  * team side:   ``player_or_team_abbreviation='T'``
-
-KNOWN CONSEQUENCE, and it is flagged in the report rather than corrected here:
-LeagueGameLog returns MIN as an INTEGER for every season, while
-``PlayerGameLogs`` (the source behind ``dataset.parquet``) returns a float. So
-minutes MAE measured on this data is not comparable to the numbers in MODEL.md
-section 5. It is internally consistent - every configuration in the ablation
-reads the same integer minutes - which is the only property a depth ablation
-needs.
-
-NETWORK MANNERS. The retry idiom is copied from ``scraper/run_scraper.py``
-(``_is_retryable`` + ``_fetch_with_retry``): exponential backoff on
-throttling-shaped failures only, re-raise on anything else so a real bug is not
-retried four times into silence. Pacing is 3-5s of jitter between calls, which
-is the scraper's regime.
-
-IDEMPOTENT. A season whose parquet already exists is skipped without a call, so
-a killed run costs only the seasons it had not reached.
-
-usage::
-
-    ml-spike/.venv/Scripts/python ml/experiments/pull_deep_history.py
-    ml-spike/.venv/Scripts/python ml/experiments/pull_deep_history.py --seasons 1996-97 1997-98
+LeagueGameLog returns MIN as an integer for every season, so minutes measured on
+this data are not comparable to the PlayerGameLogs-based dataset.
 """
 
 from __future__ import annotations
@@ -63,37 +25,25 @@ from fnba_ml.config import season_tag  # noqa: E402
 
 log = logging.getLogger("pull_deep_history")
 
-# ---------------------------------------------------------------------------
-# where the bulk data lands. ml/data/.gitignore ignores *.parquet, verified with
-# `git check-ignore -v ml/data/deep/x.parquet` before a byte was written. the
-# subdirectory keeps 30 seasons x 2 files out of the way of dataset.parquet.
 DEEP_DATA_DIR = ML_ROOT / "data" / "deep"
 
-# 1996-97 is the oldest season pulled. it is not an endpoint limit - LeagueGameLog
-# reaches 1946 - it is a data-usefulness limit: the three-point line moved in
-# 1994-97, and pre-1996 box scores predate the modern shape of the game by enough
-# that adding them to a 2026 training set is a different experiment.
 FIRST_SEASON_START_YEAR = 1996
 LAST_SEASON_START_YEAR = 2025
 
 SEASON_TYPE = "Regular Season"
 
-# the scraper's regime. jittered so 60 sequential calls do not look like a metronome.
 REQUEST_DELAY_MIN_SECONDS = 3.0
 REQUEST_DELAY_MAX_SECONDS = 5.0
 MAX_ATTEMPTS = 4
 INITIAL_BACKOFF_SECONDS = 5.0
 REQUEST_TIMEOUT_SECONDS = 90
 
-# columns kept from the player side, named to match fnba_ml.data.schema shapes so
-# ParquetSource can read the files with no translation layer.
 PLAYER_KEEP: tuple[str, ...] = (
     "PLAYER_ID", "PLAYER_NAME", "GAME_ID", "GAME_DATE", "TEAM_ID",
     "TEAM_ABBREVIATION", "MATCHUP", "MIN", "PTS", "AST", "FGA", "FTA", "REB",
     "FG3M", "FTM", "TOV", "STL", "BLK", "PLUS_MINUS",
 )
-# MATCHUP is load-bearing on the team side: ParquetSource.load_schedule
-# reconstructs home/away from the '@' in it.
+# MATCHUP is load-bearing: load_schedule reconstructs home/away from the '@'.
 TEAM_KEEP: tuple[str, ...] = (
     "TEAM_ID", "TEAM_ABBREVIATION", "GAME_ID", "GAME_DATE", "MATCHUP",
     "PTS", "MIN", "FGA", "FTA", "TOV",
@@ -112,14 +62,10 @@ def all_seasons() -> list[str]:
     ]
 
 
-# ---------------------------------------------------------------------------
-# retry idiom, copied from scraper/run_scraper.py::_is_retryable/_fetch_with_retry
-# ---------------------------------------------------------------------------
 def _is_retryable(exc: Exception) -> bool:
     """whether a failed stats.nba.com call is worth retrying.
 
-    RequestException is checked first because it subclasses OSError, so the
-    isinstance order below is load-bearing (same note as the scraper's copy).
+    RequestException subclasses OSError, so the isinstance order is load-bearing.
     """
     import json as _json
 
@@ -128,11 +74,10 @@ def _is_retryable(exc: Exception) -> bool:
     if isinstance(exc, requests.exceptions.RequestException):
         status = getattr(getattr(exc, "response", None), "status_code", None)
         if status is None:
-            return True  # connection reset / timeout / dns, no response at all
+            return True
         return status == 429 or status >= 500
     if isinstance(exc, (ConnectionResetError, TimeoutError, OSError)):
         return True
-    # nba_api hands back a decode error when Akamai returns an html error page
     return isinstance(exc, _json.JSONDecodeError)
 
 
@@ -145,13 +90,7 @@ def _fetch_with_retry(
     max_attempts: int = MAX_ATTEMPTS,
     initial_delay: float = INITIAL_BACKOFF_SECONDS,
 ) -> _FetchResult:
-    """call fetch() with exponential backoff on throttling-shaped failures.
-
-    re-raises the last exception so the caller can fail ONE SEASON without
-    aborting the whole run - which is the behaviour this pull needs, because a
-    missing 1998-99 is a finding to record and skip, not a reason to lose the
-    other 29 seasons.
-    """
+    """call fetch() with exponential backoff on throttling-shaped failures."""
     delay = initial_delay
     for attempt in range(1, max_attempts + 1):
         try:
@@ -165,14 +104,13 @@ def _fetch_with_retry(
             )
             time.sleep(delay)
             delay *= 2
-    raise RuntimeError(f"{label}: retry loop exhausted")  # unreachable
+    raise RuntimeError(f"{label}: retry loop exhausted")
 
 
 def _pace() -> None:
     time.sleep(random.uniform(REQUEST_DELAY_MIN_SECONDS, REQUEST_DELAY_MAX_SECONDS))
 
 
-# ---------------------------------------------------------------------------
 def _fetch_league_game_log(season: str, side: str) -> pd.DataFrame:
     """one LeagueGameLog page. ``side`` is 'P' (players) or 'T' (teams)."""
     from nba_api.stats.endpoints import leaguegamelog
@@ -194,12 +132,7 @@ def _fetch_league_game_log(season: str, side: str) -> pd.DataFrame:
 
 def _normalise(raw: pd.DataFrame, keep: tuple[str, ...],
                numeric: tuple[str, ...], season: str, what: str) -> pd.DataFrame:
-    """subset + coerce to the fnba_ml frame shape. raises on a missing column.
-
-    a missing column is deliberately fatal per season rather than filled: a
-    silently-null MIN would flow all the way into the ablation's minutes target
-    and look like a modelling result.
-    """
+    """subset + coerce to the fnba_ml frame shape. raises on a missing column."""
     missing = [c for c in keep if c not in raw.columns]
     if missing:
         raise ValueError(f"{what} {season}: endpoint returned no {missing}")
@@ -237,7 +170,7 @@ def _check_player_frame(df: pd.DataFrame, season: str) -> dict:
 
 
 def _check_team_frame(df: pd.DataFrame, season: str) -> dict:
-    """the ingest gate the truth layer uses: exactly two team rows per game."""
+    """checks the ingest gate: exactly two team rows per game."""
     sizes = df.groupby("GAME_ID").size()
     bad = sizes[sizes != 2]
     if len(bad):
@@ -293,7 +226,7 @@ def pull_season(season: str, data_dir: Path, force: bool = False) -> dict:
             entry["player"]["games"], entry["player"]["players"],
             entry["player"]["first_date"], entry["player"]["last_date"],
         )
-    except Exception as exc:  # recorded and skipped, never fabricated
+    except Exception as exc:
         log.error("%s: SKIPPED - %s", season, exc)
         entry["status"] = "failed"
         entry["error"] = f"{type(exc).__name__}: {exc}"
@@ -327,10 +260,6 @@ def main(argv: list[str] | None = None) -> int:
     total_player_rows = sum(e["player"]["rows"] for e in ok)
     total_team_rows = sum(e["team"]["rows"] for e in ok)
 
-    # written as CSV, not JSON, for one boring reason: ml/data/.gitignore ignores
-    # *.parquet and *.csv but not *.json, and this run is under instruction to add
-    # nothing to git. verified with `git check-ignore -v`. the content is one flat
-    # row per season anyway, so nesting bought nothing.
     manifest_path = data_dir / "manifest.csv"
     rows = []
     for entry in manifest:

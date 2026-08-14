@@ -1,12 +1,3 @@
-"""universe construction: status-based is preferred, the approximation is BIASED.
-
-the spike's highest-priority finding is that inferring roster membership from
-game-log presence over a +/-15 day window over-predicts availability everywhere
-and caps representable absences near 16 team-games. these tests pin both halves
-of that: the status path sees the long absence, the approximation does not, and
-the approximation announces itself.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -35,19 +26,15 @@ def longest_absence_streak(universe: pd.DataFrame) -> int:
 
 
 def test_build_universe_prefers_status_when_present(source: ParquetSource):
-    # act
     universe = build_universe(source)
 
-    # assert
     assert (universe["UNIVERSE_SOURCE"] == SOURCE_STATUS).all()
 
 
 def test_approximation_is_labelled_and_warns(schedule, team_logs, raw_logs, caplog):
-    # act
     with caplog.at_level(logging.WARNING, logger="fnba_ml.universe"):
         universe = approximate_universe(schedule, team_logs, raw_logs)
 
-    # assert
     assert (universe["UNIVERSE_SOURCE"] == SOURCE_APPROXIMATION).all()
     assert any("BIASED" in record.message for record in caplog.records), (
         "the fallback must announce itself - a silently biased universe is the "
@@ -56,17 +43,14 @@ def test_approximation_is_labelled_and_warns(schedule, team_logs, raw_logs, capl
 
 
 def test_parquet_source_without_status_warns(tmp_path, fixture_dir, caplog):
-    # arrange - a data dir carrying logs but no roster table
     for path in fixture_dir.glob("*.parquet"):
         if path.name.startswith("player_game_status"):
             continue
         (tmp_path / path.name).write_bytes(path.read_bytes())
 
-    # act
     with caplog.at_level(logging.WARNING, logger="fnba_ml.data.parquet_source"):
         status = ParquetSource(tmp_path).load_player_game_status()
 
-    # assert
     assert status is None
     assert any("BIASED" in record.message for record in caplog.records)
 
@@ -74,19 +58,15 @@ def test_parquet_source_without_status_warns(tmp_path, fixture_dir, caplog):
 def test_status_universe_has_more_rows_than_the_approximation(
     universe_status, universe_approx
 ):
-    # act + assert
     assert len(universe_status) > len(universe_approx), (
         "the approximation should drop the long-absence rows the status table keeps"
     )
 
 
 def test_approximation_over_states_availability(universe_status, universe_approx):
-    """the direction of the bias, not just its existence (REPORT.md section 5)."""
-    # act
     status_rate = float(universe_status["PLAYED"].mean())
     approx_rate = float(universe_approx["PLAYED"].mean())
 
-    # assert
     assert approx_rate > status_rate, (
         f"approximation played rate {approx_rate:.4f} should exceed the true "
         f"{status_rate:.4f} - dropping long absences can only inflate it"
@@ -94,11 +74,9 @@ def test_approximation_over_states_availability(universe_status, universe_approx
 
 
 def test_approximation_truncates_long_absences(universe_status, universe_approx):
-    # act
     status_max = longest_absence_streak(universe_status)
     approx_max = longest_absence_streak(universe_approx)
 
-    # assert
     assert status_max > approx_max, (
         f"longest absence streak: status {status_max}, approximation {approx_max}. "
         f"the approximation is supposed to be unable to represent the long one"
@@ -106,7 +84,6 @@ def test_approximation_truncates_long_absences(universe_status, universe_approx)
 
 
 def test_both_universes_cover_every_appearance(universe_status, universe_approx, raw_logs):
-    # act + assert
     for universe in (universe_status, universe_approx):
         report = coverage_report(universe, raw_logs)
         assert report["appearance_coverage"] == pytest.approx(1.0), (
@@ -115,15 +92,12 @@ def test_both_universes_cover_every_appearance(universe_status, universe_approx,
 
 
 def test_team_game_frame_is_symmetric(schedule, team_logs):
-    # act
     tg = team_game_frame(schedule, team_logs)
 
-    # assert
     assert len(tg) == 2 * schedule["GAME_ID"].nunique()
     assert (tg["TEAM_ID"] != tg["OPP_TEAM_ID"]).all()
     assert tg.groupby("GAME_ID")["IS_HOME"].sum().eq(1).all()
 
-    # points allowed on one side must equal points scored on the other
     merged = tg.merge(
         tg[["GAME_ID", "TEAM_ID", "TEAM_PTS"]].rename(
             columns={"TEAM_ID": "OPP_TEAM_ID", "TEAM_PTS": "OPP_SCORED"}
@@ -134,15 +108,12 @@ def test_team_game_frame_is_symmetric(schedule, team_logs):
 
 
 def test_status_universe_keeps_inactive_players_as_scheduled_rows(universe_status, status):
-    # arrange
     inactive = status[status["LISTED_INACTIVE"].astype("boolean").fillna(False)]
     assert len(inactive) > 0
 
-    # act
     keys = set(zip(universe_status["PLAYER_ID"], universe_status["GAME_ID"]))
     missing = {(p, g) for p, g in zip(inactive["PLAYER_ID"], inactive["GAME_ID"])} - keys
 
-    # assert
     assert not missing, (
         "a player listed inactive is still a scheduled player-game with PLAYED=0 - "
         "dropping those rows is exactly the selection bias the universe removes"
@@ -152,15 +123,12 @@ def test_status_universe_keeps_inactive_players_as_scheduled_rows(universe_statu
 def test_status_universe_rejects_games_absent_from_the_schedule(
     schedule, team_logs, raw_logs, status, caplog
 ):
-    # arrange
     ghost = status.iloc[[0]].copy()
     ghost["GAME_ID"] = "9999999999"
     polluted = pd.concat([status, ghost], ignore_index=True)
 
-    # act
     with caplog.at_level(logging.WARNING, logger="fnba_ml.universe"):
         universe = universe_from_status(schedule, team_logs, raw_logs, polluted)
 
-    # assert
     assert "9999999999" not in set(universe["GAME_ID"])
     assert any("absent from the schedule" in record.message for record in caplog.records)

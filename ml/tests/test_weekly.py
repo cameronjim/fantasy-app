@@ -1,10 +1,3 @@
-"""weekly aggregation tests.
-
-the load-bearing one is test_ratio_totals_are_not_averaged_percentages: it is
-the whole reason ratio_total exists, and it fails loudly if anyone "simplifies"
-the aggregation into a mean of per-game percentages.
-"""
-
 from __future__ import annotations
 
 from datetime import date
@@ -40,7 +33,6 @@ class TestClampProbability:
         assert clamp_probability(value) == expected
 
     def test_missing_availability_reads_as_certain_not_as_ruled_out(self):
-        # a run that did not model availability must not zero out the week
         assert clamp_probability(None) == 1.0
 
 
@@ -49,7 +41,6 @@ class TestStatValue:
         assert stat_value(game(MONDAY, pts=22.5), "pts") == 22.5
 
     def test_a_missing_stat_contributes_nothing(self):
-        # a run that models points but not blocks still produces a points total
         assert stat_value(game(MONDAY, pts=22.5), "blk") == 0.0
 
 
@@ -74,7 +65,6 @@ class TestExpectedGames:
     def test_sums_availability_rather_than_counting_rows(self):
         rows = [game(MONDAY, 0.75), game(date(2026, 2, 4), 0.75), game(SUNDAY, 0.5)]
 
-        # 4 scheduled games at less than certainty is not 4 played games
         assert expected_games(rows) == pytest.approx(2.0)
 
     def test_is_zero_for_an_empty_week(self):
@@ -104,8 +94,7 @@ class TestCountingTotals:
 
 class TestRatioTotals:
     def test_ratio_totals_are_not_averaged_percentages(self):
-        # 2-for-2 (100%) and 9-for-22 (40.9%). the mean of those percentages is
-        # 70.5%; the truth is 11/24 = 45.8%. averaging would invent a shooter.
+        # averaging would invent a shooter.
         rows = [game(MONDAY, fgm=2, fga=2), game(SUNDAY, fgm=9, fga=22)]
 
         result = ratio_total(rows, "fgm", "fga")
@@ -161,7 +150,6 @@ class TestWeeklyProjection:
 
         projection = weekly_projection(rows, MONDAY, SUNDAY)
 
-        # the two games outside the week are excluded entirely
         assert projection.games_scheduled == 2
         assert projection.expected_games == pytest.approx(1.4)
         assert projection.totals["pts"] == pytest.approx(34.0)

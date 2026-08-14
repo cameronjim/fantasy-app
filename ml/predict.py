@@ -1,90 +1,4 @@
-"""next-games predictions from a trained model version.
-
-    python predict.py --dataset data/dataset.parquet --version 2026-08-16 \
-        --out data/predictions.parquet
-
-emits, per scheduled player-game at or after the model's training cutoff:
-P(play), E[minutes | plays] from the champion minutes model, the conditional
-production estimate E[minutes | plays] x EWMA(stat per minute), the P10/P50/P90
-quantiles around the conditional minutes and points estimates, and the
-unconditional estimate P(play) x that conditional.
-
-MINUTES PROPAGATE. the conditional production estimate is a FUNCTION of the
-predicted minutes on the same row, so a player whose minutes forecast rises gets a
-proportionally higher points projection - both conditional and unconditional. the
-previous formulation, P(play) x EWMA(stat), could not do that: EWMA(stat) is an
-average of past whole-game totals and already contains the minutes he used to get.
-
-BOTH multiplied model outputs travel with the training cutoff that produced them
-and are run through ``validate_out_of_fold`` before anything is multiplied, plus
-``assert_same_cutoff`` to prove the two halves share one information boundary. a
-model loaded against a dataset it was partly trained on, or a minutes artifact
-paired with an availability artifact from a different day, fails loudly instead of
-silently emitting contaminated numbers.
-
-INJURY-REPORT OVERRIDES, APPLIED TWICE, and the first application is new in
-feature_version v3. ``--statuses`` supplies the latest official designation per
-player and :mod:`fnba_ml.overrides` applies it:
-
-  1. to the BASE availability probabilities p_j, BEFORE the served teammate-context
-     features are rebuilt from them (:func:`rebuild_context`). This is the one the
-     round-2 review made necessary. The context features are expectations over p_j,
-     so a star ruled OUT has to lower his own p_j or his TEAMMATES' expected vacated
-     minutes never move - the serving path would know he is out, correct his own
-     projection to ~0, and still project his backup for the minutes of a night the
-     star plays. Every number on the page would look individually defensible.
-  2. to the FINAL P(play), AFTER scoring and BEFORE rows are built, with the
-     unconditional stats recomputed from the overridden probability. This is what the
-     layer has always done. Without it a player who is officially OUT is still
-     projected for 28 points, because the injury report is not in the feature set
-     (and cannot be yet - the history only starts in 2026-08).
-
-the model's own probability is preserved alongside the overridden one at both
-stages, so the layer stays measurable against the model it corrects.
-
-``--horizon`` records WHEN the run was made relative to tipoff (early / gameday /
-lock, see config.HORIZONS). The same model scoring the same game at T-24h and T-60m
-makes two different claims and the store has to be able to tell them apart - but a
-LABEL cannot, because two runs both tagged ``early`` can differ by twenty hours of
-report freshness. :func:`horizon_metadata` therefore records the measured offset,
-the newest admissible report and its age, how many reports existed, and whether the
-league's initial-report deadline had passed, next to the label the operator asked
-for. config.HORIZON_RUN_METADATA is the list and section 7.2 of MODEL.md is the
-argument.
-
-``--write-db`` writes the run to the migration-014 tables in a single
-transaction: one ``prediction_runs`` row for the provenance, one
-``player_game_predictions`` row per (player, game, stat, quantile). append-only
-- a re-run writes a new run, it never edits an old one, because a prediction
-that can be revised after the fact cannot be backtested.
-
-it refuses to write from the BIASED fallback universe. the approximation
-over-predicts availability in every calibration bin and cannot represent an
-absence longer than ~16 team-games (README, "the universe"), and a stored
-prediction outlives the caveat that came with it. ``--allow-biased-universe``
-forces it and stamps the reason into the run's notes.
-
-COLD START (MODEL.md 13.7, added by P5). every emitted row carries a
-``cold_start`` boolean - true when its GAME_DATE is on or before
-``config.PROSPECTIVE_COLD_START_THROUGH`` (2026-11-30) - and every run's notes
-carry the flagged-row count. It is a MANDATORY REPORTING SPLIT and never a
-filter: cold-start rows stay in every headline number, because excluding them
-would be a post-hoc filter on precisely the hardest games. It is not a feature
-either; nothing reads it back.
-
-THERE IS NO ``--early-season`` FLAG, and that is a finding rather than an
-omission. A preseason or October run needs exactly two things this script already
-has: a dataset containing the future scheduled rows
-(:mod:`fnba_ml.prospective` builds one) and ``--run-at`` set to the first game
-date. Everything else falls out of machinery that was already here - a player
-with no games in the new season keeps his prior-season form through the
-CAREER-scoped as-of joins, a player with no NBA history at all is caught by
-``features.insufficient_history`` and served the artifact's league-rate
-fallbacks, and the leakage guards pass trivially because every future game date
-is after the training cutoff. ``project_preseason.py`` is the thin wrapper that
-builds the dataset; adding a mode flag here would have been a second name for
-"pass a different --dataset".
-"""
+"""next-games predictions from a trained model version."""
 
 from __future__ import annotations
 
@@ -163,8 +77,6 @@ log = logging.getLogger("predict")
 
 TARGETS = (MINUTES_TARGET, *PRODUCTION_TARGETS)
 
-# the label universe.py stamps on every row when the roster had to be
-# reconstructed from game-log presence. predictions from it are not shippable.
 BIASED_UNIVERSE = "approximation"
 
 KEY_COLS = ["PLAYER_ID", "PLAYER_NAME", "GAME_ID", "TEAM_ID", "OPP_TEAM_ID",
@@ -179,46 +91,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--models-dir", type=Path, default=MODELS_DIR)
     parser.add_argument("--out", type=Path, default=DATA_DIR / "predictions.parquet")
     parser.add_argument("--run-at", default=None,
-                        help="only score games on or after this date; defaults to the "
-                             "model's training cutoff")
+                        help="only score games on or after this date")
     parser.add_argument("--write-db", action="store_true",
                         help="also insert the run into prediction_runs / "
-                             "player_game_predictions (migration 014). needs DATABASE_URL")
+                             "player_game_predictions")
     parser.add_argument("--allow-biased-universe", action="store_true",
-                        help="permit --write-db from the approximation universe. "
-                             "it over-states availability; do not use for anything served")
+                        help="permit --write-db from the approximation universe")
     parser.add_argument("--notes", default=None, help="free text stored on the run row")
     parser.add_argument("--statuses", type=Path, default=None,
-                        help="parquet or csv of latest injury designations with columns "
-                             "nba_player_id, status_normalized, captured_at. omit to "
-                             "score with the model's raw P(play)")
+                        help="parquet or csv of latest injury designations")
     parser.add_argument("--statuses-as-of", default=None,
-                        help="information boundary for the injury reports; reports "
-                             "captured at or after it are ignored. defaults to now, "
-                             "which is correct for a live run and WRONG for a backtest")
+                        help="information boundary for the injury reports")
     parser.add_argument("--horizon", choices=tuple(HORIZONS), default=DEFAULT_HORIZON,
-                        help="when this run is being made relative to tipoff; recorded "
-                             f"on the run row. {', '.join(f'{k}={v}' for k, v in HORIZONS.items())}")
+                        help="when this run is being made relative to tipoff")
     return parser.parse_args(argv)
 
 
 def load_version(version: str, models_dir: Path):
-    """the three models and their shared metadata.
-
-    the minutes artifact is REQUIRED, not optional. the composition multiplies it
-    into every production stat, so a version directory without it cannot be scored
-    with the promoted composition at all - and falling back to the EWMA minutes
-    baseline would silently serve the pre-2026-08-17 behaviour under a version
-    string that claims otherwise.
-
-    the BASE availability artifact is required for the same class of reason, as of
-    feature_version v3. The served teammate-context features are expectations over
-    play probabilities, and a slate that has not been played has no stored
-    probabilities - only a model can supply them. A version directory without it
-    predates the two-stage pipeline, and scoring it against a v3 dataset would mean
-    serving whatever ``P_CONTEXT`` the dataset happened to carry for historical rows,
-    which for future rows is nothing at all.
-    """
+    """the three models and their shared metadata."""
     dir_ = version_dir(version, models_dir)
     model_path = dir_ / "availability_model.joblib"
     minutes_path = dir_ / "minutes_model.joblib"
@@ -249,13 +139,7 @@ def load_version(version: str, models_dir: Path):
 
 
 def load_statuses(path: Path | None) -> pd.DataFrame | None:
-    """the injury-report frame from parquet or csv.
-
-    a file input rather than a live query, for now. the postgres form of the same
-    read is ``PostgresSource.load_latest_injury_statuses`` in
-    fnba_ml/data/postgres_source.py - written, documented, and not executed
-    anywhere in this repo.
-    """
+    """the injury-report frame from parquet or csv."""
     if path is None:
         return None
     if not path.exists():
@@ -266,12 +150,7 @@ def load_statuses(path: Path | None) -> pd.DataFrame | None:
 
 
 def load_quantile_offsets(metadata: dict) -> dict[str, QuantileOffsets]:
-    """the P10/P50/P90 offsets train.py measured on its holdout window.
-
-    absent for a model trained before intervals existed. that is a missing
-    feature, not a failure: the run still emits expected values, and the serving
-    path shows a point estimate instead of a range.
-    """
+    """the P10/P50/P90 offsets train.py measured on its holdout window."""
     stored = metadata.get("production", {}).get("quantiles", {}) or {}
     offsets: dict[str, QuantileOffsets] = {}
     for target, payload in stored.items():
@@ -294,31 +173,9 @@ def rebuild_context(
     as_of: pd.Timestamp,
     policy=DEFAULT_POLICY,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """stages 1-3 at serving time: base p, report override, expected context.
-
-    THE CODE PATH THE P1b REVIEW MADE NECESSARY, and the order of the three steps is
-    the whole content of it.
-
-    1. the BASE availability model scores every upcoming row. It reads
-       ``config.BASE_FEATURE_COLS`` only - no teammate context - which is what makes
-       its output usable as an input to teammate context.
-    2. the injury report overrides those probabilities, with the same policy and the
-       same as-of discipline the final layer uses. THIS IS THE STEP THAT WAS MISSING
-       IN CONCEPT BEFORE v3: a star ruled OUT has to lower his own p_j so that his
-       TEAMMATES' expected vacated minutes RISE. Without it the serving path would
-       know he is out (his own P(play) would be corrected downstream) and decline to
-       act on it for anyone else - the original defect, displaced one column to the
-       left and considerably harder to notice, because every number on the page would
-       look individually reasonable.
-    3. the expected-context features are rebuilt from the overridden probabilities,
-       and only then are the final availability and minutes models allowed to score.
-
-    the probability carries the base model's cutoff, so ``validate_out_of_fold`` can
-    still prove that the features the served models saw were built from information
-    available before the game.
-
-    returns (features with the context rebuilt, a per-row audit frame).
-    """
+    """returns (features with the expected context rebuilt, a per-row audit frame)."""
+    # the override must land on base p BEFORE the teammate sums are taken, or a
+    # ruled-out star's minutes never move to his teammates.
     base_p = base_model.predict_proba(features)
     resolved = resolve_overrides(
         features["PLAYER_ID"], base_p, statuses, policy, as_of=as_of
@@ -346,13 +203,8 @@ def rebuild_context(
 def build_predictions(
     features: pd.DataFrame, model, minutes_model, metadata: dict
 ) -> pd.DataFrame:
-    """score every row: P(play), E[minutes|plays], and the composed production.
-
-    the order of the three guards matters. both stamped quantities are checked
-    individually, then checked against each other, and only then is anything
-    multiplied - the whole point of stamping them is that the check happens before
-    the contamination becomes an unrecoverable product.
-    """
+    """score every row: P(play), E[minutes|plays], and the composed production."""
+    # all three guards run before anything is multiplied.
     scored = minutes_model.attach(model.attach(features))
     validate_out_of_fold(scored)
     validate_minutes_out_of_fold(scored)
@@ -365,10 +217,6 @@ def build_predictions(
         + [P_PLAY, P_PLAY_CUTOFF, MIN_PRED, MIN_PRED_CUTOFF]
     ].copy()
 
-    # minutes first, and served straight from the champion minutes model rather
-    # than re-derived: this is the E[minutes | plays] that every production stat
-    # below is a multiple of, so the card's minutes row and its points row are two
-    # views of one number.
     minutes = scored[MIN_PRED].to_numpy(dtype=float)
     out[f"E_{MINUTES_TARGET}_COND"] = minutes
     out[f"E_{MINUTES_TARGET}"] = (
@@ -377,11 +225,8 @@ def build_predictions(
     if MINUTES_TARGET in quantiles:
         out = attach_quantiles(out, minutes, quantiles[MINUTES_TARGET])
 
-    # the per-stat estimator record the artifact carries. reading it from metadata
-    # rather than from config is what makes an old artifact still scoreable: a
-    # version trained when BLK used halflife 12 must keep scoring with halflife 12
-    # even after config moves on, or the stored prediction and the model that made
-    # it stop being the same object.
+    # read from metadata, not config: an old artifact must keep scoring with the
+    # halflives it was trained under.
     halflives = metadata.get("production", {}).get("rate_halflives", {}) or {}
     estimators = metadata.get("production", {}).get("rate_estimators", {}) or {}
 
@@ -408,30 +253,15 @@ def build_predictions(
         conditional, unconditional = minutes_propagated_estimate(scored, rate_values)
         out[f"E_{target}_COND"] = conditional
         out[f"E_{target}"] = unconditional
-        # the rate itself is emitted so the identity conditional = minutes x rate is
-        # checkable on the saved parquet without refitting anything
         out[f"RATE_{target}"] = rate_values
         # quantiles wrap the CONDITIONAL estimate: the offsets were measured on
-        # appearances, so they describe the spread of a night he actually plays.
-        # the unconditional number is a schedule-level mean and has no such
-        # interval - "he might score 6 or 31, or not play" is two questions.
+        # appearances.
         if target in quantiles:
             out = attach_quantiles(out, conditional, quantiles[target])
         emitted.append(target)
 
-    # ---- COHERENCE, applied to every emitted number before anything leaves ----
-    # a made shot is an attempted shot and a made three is a made shot. That holds
-    # in every game ever played and does NOT hold automatically for the
-    # expectations, because each stat's rate is smoothed independently and two
-    # EWMAs at different halflives are different weighted averages of the same
-    # history. See models.coherence_clip for the full argument and
-    # config.COHERENCE_CONSTRAINTS for the chain.
-    #
-    # EVERY TEMPLATE, not just the headline one. A card that shows a coherent
-    # expected FGM next to a P90 FGM above its own P90 FGA has moved the
-    # incoherence rather than removed it, so the conditional estimate, the
-    # unconditional estimate and each quantile level are each clipped against
-    # their own kind.
+    # every template is clipped against its own kind, because independently
+    # smoothed rates do not preserve FGM <= FGA on their own.
     templates = ["E_{target}_COND", "E_{target}"]
     templates += [
         f"Q{int(round(level * 100)):02d}_{{target}}" for level in QUANTILE_LEVELS
@@ -445,40 +275,18 @@ def build_predictions(
     out["MODEL_VERSION"] = metadata.get("model_version")
     out["FEATURE_VERSION"] = metadata.get("feature_version", "unknown")
 
-    # ---- THE COLD-START FLAG (MODEL.md 13.7, implemented by P5) ----
-    # a MANDATORY REPORTING SPLIT, not a filter and not a feature. Every row whose
-    # GAME_DATE is on or before config.PROSPECTIVE_COLD_START_THROUGH carries it,
-    # cold-start rows stay in every headline number, and nothing downstream reads
-    # this column as an input to anything.
-    #
-    # IT IS A COLUMN ON THE PARQUET AND A COUNT IN THE RUN NOTE, and that split is
-    # deliberate. The per-row store schema (migration 014) is long-format
-    # (run, player, game, stat, quantile, value) with no flag column, and 13.7
-    # requires the flag "must not collide with a served stat name in the
-    # long-format store" - so it is NOT emitted as a pseudo-stat. It does not need
-    # to be: the flag is a pure function of GAME_DATE, which every stored row
-    # already carries, so any consumer can recompute it exactly with
-    # config.is_cold_start and no migration is required. The run-level note records
-    # what the run itself observed, which is the fact that cannot be recomputed
-    # from the rows alone.
+    # a reporting split, never a filter and never a feature: nothing reads it back.
     out[PROSPECTIVE_COLD_START_FLAG] = is_cold_start(out["GAME_DATE"]).to_numpy()
 
     log.info("emitted %d production stats: %s", len(emitted), ", ".join(emitted))
     out = out.reset_index(drop=True)
-    # attached AFTER the reset: ``DataFrame.attrs`` propagation through pandas
-    # operations is version-dependent, and a clip count that silently disappears
-    # would turn "the clip never bound" and "nobody recorded whether it bound" into
-    # the same output, which is the one confusion this number exists to prevent.
+    # attached AFTER the reset: attrs propagation through pandas is version-dependent.
     out.attrs["coherence_clips"] = clip_counts
     return out
 
 
-# the nominal tipoff hour, UTC, used only when the frame carries no real tipoff
-# timestamp. HAND-SET at 00:00 UTC, i.e. ~7-8pm US Eastern, which is where the bulk
-# of the schedule sits. It is an APPROXIMATION and every number derived from it is
-# labelled as one - see ``horizon_metadata``'s ``tip_source``. It is not a substitute
-# for ingesting nba_schedule.scheduled_at, which is NULL for a meaningful share of
-# rows today and is the real fix.
+# an APPROXIMATION used only when the frame carries no real tipoff timestamp;
+# horizon_metadata's tip_source labels every number derived from it.
 NOMINAL_TIP_HOUR_UTC: int = 0
 
 
@@ -488,25 +296,7 @@ def horizon_metadata(
     as_of: pd.Timestamp,
     requested: str,
 ) -> dict[str, object]:
-    """the per-run horizon facts config.HORIZON_RUN_METADATA names.
-
-    WHY A LABEL IS NOT ENOUGH, which is the P1b correction to section 7.2. Two runs
-    both tagged ``early`` can differ by twenty hours of report freshness, and the one
-    that beats the other may simply have been made later. A horizon is a MEASURED
-    offset between the run's information boundary and tipoff, plus the state of the
-    report at that boundary; the label is the bucket that offset falls into.
-
-    ``first_deadline_passed`` is the flag that makes ``early`` interpretable at all.
-    The league requires an initial participation report by 5pm local the day before a
-    game, so a T-24h run against a 7pm tipoff has usually had a report available for
-    two hours - the old docstring's "no injury report yet" was simply wrong. An
-    ``early`` run before that deadline and an ``early`` run after it are different
-    experiments and must not be pooled.
-
-    every offset here is approximate when the frame carries no tipoff timestamp, and
-    ``tip_source`` says which case a given run was. Guessing a tip time and reporting
-    the result as measured would be worse than reporting nothing.
-    """
+    """the per-run horizon facts config.HORIZON_RUN_METADATA names."""
     boundary = pd.Timestamp(as_of)
     if boundary.tzinfo is not None:
         boundary = boundary.tz_convert("UTC").tz_localize(None)
