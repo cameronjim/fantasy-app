@@ -21,12 +21,6 @@ interface UseBettingPicks {
   reloadPicks: (refresh?: boolean) => Promise<void>;
 }
 
-/**
- * Loads the public odds board for everyone and the AI picks for signed-in
- * users. Both render instantly from cache on tab switches; when the server
- * reports the picks are stale (lines moved), the previous picks stay on
- * screen while a regeneration runs in the background.
- */
 export function useBettingPicks(isLoggedIn: boolean): UseBettingPicks {
   const [initialPicks] = useState(() => (isLoggedIn ? getCachedBettingPicks() : null));
 
@@ -66,15 +60,11 @@ export function useBettingPicks(isLoggedIn: boolean): UseBettingPicks {
       return;
     }
     setPicks(data);
-    // an empty slate isn't worth pinning, and a stale response is about to
-    // be replaced by the background regeneration below — cache neither.
     if (!data.no_games && data.picks.length > 0 && !data.stale) {
       setCachedBettingPicks(data);
     }
     setPicksLoading(false);
     if (!refresh && data.stale) {
-      // lines moved since these picks were generated — they're already on
-      // screen, so regenerate behind the scenes and swap when ready.
       setRefreshing(true);
       try {
         const fresh = await getBettingPicks(true);
@@ -83,7 +73,7 @@ export function useBettingPicks(isLoggedIn: boolean): UseBettingPicks {
           setCachedBettingPicks(fresh);
         }
       } catch {
-        // regeneration failed — the previous picks stay visible.
+        // swallowed on purpose: the previous picks stay on screen.
       }
     }
     setRefreshing(false);
@@ -91,7 +81,7 @@ export function useBettingPicks(isLoggedIn: boolean): UseBettingPicks {
 
   useEffect(() => {
     if (!isLoggedIn) return;
-    if (initialPicks) return; // hydrated from cache — skip the round trip
+    if (initialPicks) return;
     void reloadPicks();
   }, [isLoggedIn, initialPicks, reloadPicks]);
 

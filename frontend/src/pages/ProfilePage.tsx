@@ -20,14 +20,12 @@ export const ProfilePage = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // remember the active tab in the url hash so refreshes stay put.
   const initialTab: TabKey =
     location.hash === '#password' ? 'password' : 'profile';
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
 
-  // the auth guard must come AFTER every hook: an early return above a hook
-  // crashes with react error #300 when the token disappears while the page
-  // is mounted (e.g. signing out from this page).
+  // the auth guard must come after every hook: an early return above one crashes
+  // with react error #300 when the token disappears while the page is mounted.
   if (!getAuthToken()) {
     return <Navigate to="/login" replace state={{ from: '/profile' }} />;
   }
@@ -99,9 +97,7 @@ const MyProfilePanel = () => {
       email !== (user.email ?? '') ||
       phone !== (user.phone ?? ''));
 
-  // hide the "saved" indicator once the user starts editing again, and
-  // auto-clear it after a few seconds even if they don't. without this the
-  // green message stuck around forever after the first save.
+  // without the auto-clear the green message stuck around forever after a save.
   useEffect(() => {
     if (!savedAt) return;
     if (dirty) {
@@ -124,8 +120,7 @@ const MyProfilePanel = () => {
         email: email === (user.email ?? '') ? undefined : email,
         phone: phone === (user.phone ?? '') ? undefined : phone,
       });
-      // api response only includes the changed fields, so merge to preserve
-      // has_password (and any other fields the patch doesn't return).
+      // the response only includes changed fields, so merge to preserve has_password.
       setUser({ ...user, ...updated });
       setSavedAt(Date.now());
     } catch (err: unknown) {
@@ -221,9 +216,8 @@ const MyProfilePanel = () => {
 };
 
 const ChangePasswordPanel = () => {
-  // has_password decides whether this is "change password" (requires current
-  // password) or "set password" (first-time setup for google-only users).
-  // null while still loading the user profile.
+  // has_password picks between change-password and first-time set-password, and is
+  // null while the profile is still loading.
   const [hasPassword, setHasPassword] = useState<boolean | null>(null);
   const [profileLoadError, setProfileLoadError] = useState('');
   const [currentPw, setCurrentPw] = useState('');
@@ -255,15 +249,13 @@ const ChangePasswordPanel = () => {
     }
     setLoading(true);
     try {
-      // google-only users (no existing password) skip the current-password
-      // step; the backend allows it for that case.
+      // google-only users have no current password, and the backend allows that.
       await changePassword(hasPassword ? currentPw : null, newPw);
       setSuccess(true);
       setCurrentPw('');
       setNewPw('');
       setConfirmNewPw('');
-      // after setting an initial password, the user now HAS a password —
-      // flip the flag so a second "change" requires the current one.
+      // a second change now requires the current password.
       setHasPassword(true);
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
@@ -309,9 +301,7 @@ const ChangePasswordPanel = () => {
     : 'You signed in with Google and don\'t have a local password yet. Set one here so you can also sign in with your username.';
   const submitLabel = hasPassword ? 'Update password' : 'Set password';
 
-  // empty current-password check only applies when the user has a password.
-  // for google-only users with no password, currentPw is unused and we don't
-  // gate the submit button on it.
+  // currentPw is unused for google-only users, so do not gate the submit on it.
   const submitDisabled =
     loading ||
     !newPw ||

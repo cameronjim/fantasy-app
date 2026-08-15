@@ -1,11 +1,4 @@
-/**
- * Column definitions shared by the historical season table and the career
- * table inside the player modal, so both render the same stats in the same
- * order with the same widths.
- *
- * Widths are explicit pixel values because both tables use `table-fixed` —
- * that's what keeps re-sorting from resizing columns.
- */
+// widths are explicit because both tables are `table-fixed`, which stops re-sorting from resizing columns.
 
 import type { PlayerSeasonRow } from '../types';
 
@@ -20,10 +13,8 @@ export type SeasonStatKey = Extract<
 export interface SeasonStatColumn {
   key: SeasonStatKey;
   label: string;
-  /** shown as the header `title` tooltip, matching PlayerTable */
   full: string;
   w: string;
-  /** 0 for counting stats, 1 for averages and percentages */
   decimals: number;
 }
 

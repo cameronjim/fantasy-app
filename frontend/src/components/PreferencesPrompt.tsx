@@ -5,22 +5,15 @@ import { getPreferences, getAuthToken } from '../api/client';
 
 const DISMISS_KEY = 'preferences_prompt_dismissed';
 
-/**
- * Subtle banner on /fantasy and /improve that points users to the Team
- * Preferences page when they haven't filled in any answers yet. Auto-hides
- * once any preferences are set, and a small X dismisses it manually.
- */
 export const PreferencesPrompt = () => {
   const [shouldShow, setShouldShow] = useState(false);
 
   useEffect(() => {
-    // Skip if not logged in or already dismissed.
     if (!getAuthToken()) return;
     if (localStorage.getItem(DISMISS_KEY) === '1') return;
 
     getPreferences()
       .then((prefs) => {
-        // Show only if there are no meaningful answers yet.
         const hasAny = !!(
           prefs.risk_tolerance ||
           prefs.player_age_pref ||
@@ -40,7 +33,7 @@ export const PreferencesPrompt = () => {
         );
         setShouldShow(!hasAny);
       })
-      .catch(() => { /* silent — non-critical */ });
+      .catch(() => { /* silent: non-critical */ });
   }, []);
 
   if (!shouldShow) return null;

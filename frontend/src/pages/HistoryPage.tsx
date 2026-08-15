@@ -1,28 +1,21 @@
 import { useState } from 'react';
 import { History, Search } from 'lucide-react';
-import { SeasonPlayerTable } from '../components/SeasonPlayerTable';
-import { PlayerCareerModal } from '../components/PlayerCareerModal';
+import { SeasonPlayerTable } from '../components/player/SeasonPlayerTable';
+import { PlayerCareerModal } from '../components/player/PlayerCareerModal';
 import { getHistoryPlayers, getHistorySeasons, type HistoryPlayersResponse } from '../api/client';
 import { useCachedResource } from '../hooks/useCachedResource';
 import { CACHE_KEYS, historyPlayersKey } from '../api/resourceCache';
 import type { PlayerSeasonRow } from '../types';
 
-// the api caps a page at 500 rows, which covers every player in a season, so
-// one request per season is enough and the search box can filter in memory.
-// a season loads in one request and the search box filters in memory, so this
-// has to clear the largest season outright or the tail is unreachable. modern
-// seasons run past 500 (2021-22 had 605 players once two-ways are counted);
-// the api ceiling for this route is 1000.
+// must clear the largest season outright or the tail is unreachable: modern seasons
+// run past 500 rows, and the api ceiling for this route is 1000.
 const SEASON_ROW_LIMIT = 1000;
 
 export const HistoryPage = (): JSX.Element => {
   const [selectedSeason, setSelectedSeason] = useState('');
   const [search, setSearch] = useState('');
-  // the clicked row, which already carries the id the career endpoint wants.
   const [selectedPlayer, setSelectedPlayer] = useState<PlayerSeasonRow | null>(null);
 
-  // cached copies render instantly on tab return; a silent background refetch
-  // keeps them current, same as the Stats page.
   const {
     data: seasons,
     loading: loadingSeasons,
@@ -33,8 +26,7 @@ export const HistoryPage = (): JSX.Element => {
   });
 
   const seasonList = seasons ?? [];
-  // the api returns seasons newest first, so entry 0 is the sensible default
-  // until the user picks one.
+  // the api returns seasons newest first, so entry 0 is the default.
   const activeSeason = selectedSeason || seasonList[0] || '';
 
   const {
@@ -107,8 +99,6 @@ export const HistoryPage = (): JSX.Element => {
             </div>
           </div>
         ) : seasonList.length === 0 ? (
-          // the historical backfill is a manual one-time job, so an empty
-          // season list is the expected state until it has been run.
           <div className="card bg-base-200">
             <div className="card-body items-center text-center py-12 gap-2">
               <History size={32} className="opacity-30" />

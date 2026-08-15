@@ -1,6 +1,5 @@
 import type { Locator, Page } from '@playwright/test';
 
-// page object for the /betting route.
 export class BettingPage {
   readonly page: Page;
 
@@ -28,8 +27,7 @@ export class BettingPage {
     return this.page.getByRole('heading', { name: /New to betting\? Start here/i });
   }
 
-  // daisyui collapse puts an invisible checkbox over the title, so clicks
-  // must target the checkbox (by its aria-label), not the title text.
+  // the daisyui collapse hides a checkbox over the title, so clicks must target the checkbox.
   glossaryToggle(term: string): Locator {
     return this.page.getByLabel(`Toggle explanation of ${term}`);
   }

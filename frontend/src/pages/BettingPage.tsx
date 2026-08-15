@@ -1,10 +1,10 @@
 import { useBettingPicks } from '../hooks/useBettingPicks';
 import { useBetLedger } from '../hooks/useBetLedger';
-import { BettingOddsBoard } from '../components/BettingOddsBoard';
-import { BettingPicksPanel } from '../components/BettingPicksPanel';
-import { BettingPrefsPanel } from '../components/BettingPrefsPanel';
-import { BetLedger } from '../components/BetLedger';
-import { BettingGlossary } from '../components/BettingGlossary';
+import { BettingOddsBoard } from '../components/betting/BettingOddsBoard';
+import { BettingPicksPanel } from '../components/betting/BettingPicksPanel';
+import { BettingPrefsPanel } from '../components/betting/BettingPrefsPanel';
+import { BetLedger } from '../components/betting/BetLedger';
+import { BettingGlossary } from '../components/betting/BettingGlossary';
 import { ChatBox } from '../components/ChatBox';
 
 interface BettingPageProps {

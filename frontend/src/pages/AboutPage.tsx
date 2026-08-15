@@ -1,12 +1,6 @@
 import { Github, ShieldCheck, GitBranch, Database, Cloud, Code2, TestTube2 } from 'lucide-react';
 
-// public landing page describing what this project is and how it's built.
-// targeted at hiring managers and reviewers, so it keeps the high-level
-// story and contact info rather than restating implementation detail.
-//
-// content rule: any tech mentioned here must actually be in use in the
-// repo. nothing aspirational. if a section becomes inaccurate, fix the
-// section instead of leaving it stale.
+// every tech mentioned here must actually be in use in the repo, nothing aspirational.
 
 export const AboutPage = () => {
   return (

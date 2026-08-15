@@ -17,7 +17,7 @@ export const ForgotPasswordPage = () => {
       await forgotPassword(email);
       setSubmitted(true);
     } catch {
-      // Endpoint is designed never to leak — only catch unexpected client errors.
+      // the endpoint never leaks, so only unexpected client errors are caught.
       setError('Something went wrong. Please try again.');
     } finally {
       setLoading(false);

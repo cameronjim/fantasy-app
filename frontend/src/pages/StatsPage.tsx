@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { Search, GitCompare, X } from 'lucide-react';
 import { ScoreboardStrip } from '../components/ScoreboardStrip';
-import { PlayerTable } from '../components/PlayerTable';
+import { PlayerTable } from '../components/player/PlayerTable';
 import { TeamTable } from '../components/TeamTable';
-import { PlayerModal } from '../components/PlayerModal';
-import { CompareModal } from '../components/CompareModal';
+import { PlayerModal } from '../components/player/PlayerModal';
+import { CompareModal } from '../components/player/CompareModal';
 import { SegmentedFilter } from '../components/SegmentedFilter';
 import { getPlayers, getTeams } from '../api/client';
 import { useCachedResource } from '../hooks/useCachedResource';
@@ -23,8 +23,6 @@ export const StatsPage = () => {
   const [showCompare, setShowCompare] = useState(false);
   const [confFilter, setConfFilter] = useState<'All' | 'East' | 'West'>('All');
 
-  // cached copies render instantly on tab return; a silent background
-  // refetch keeps them current. spinners only appear on the very first load.
   const { data: playersData, loading: loadingPlayers } = useCachedResource<Player[]>(
     CACHE_KEYS.players,
     () => getPlayers()

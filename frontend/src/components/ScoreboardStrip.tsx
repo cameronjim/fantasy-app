@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { getGames, getLiveGames } from '../api/client';
 import type { Game } from '../types';
 
-// persists across remounts so navigating back is instant
+// module-level so it persists across remounts.
 let gamesCache: Game[] = [];
 let cacheFetchedAt = 0;
 
@@ -17,30 +17,22 @@ function periodLabel(period: number): string {
 
 export const ScoreboardStrip = () => {
   const [games, setGames] = useState<Game[]>(gamesCache);
-  // tracks the day we've already auto-scrolled to "today" for, so the
-  // background poll and live-score overlay (both of which update `games`)
-  // don't keep yanking the strip back to today while the user is manually
-  // scrolling through past or upcoming games.
+  // without this the 2-minute poll and the live overlay would keep yanking the
+  // strip back to today while the user is scrolling through other days.
   const autoScrolledForDay = useRef<string | null>(null);
-  // trailing spacer whose width is set imperatively (see layoutScoreboard).
   const spacerRef = useRef<HTMLDivElement>(null);
 
   const fetchGames = useCallback(async (): Promise<void> => {
     try {
-      // Step 1: Show DB data immediately — always fast (~100ms)
       const dbGames = await getGames();
       setGames(dbGames);
       gamesCache = dbGames;
       cacheFetchedAt = Date.now();
 
-      // Step 2: Overlay live scores silently in the background.
-      // Server caches ESPN response for 3 min so this is usually fast.
-      // Merge by date+team so old NBA game IDs and new ESPN IDs don't create duplicates.
       getLiveGames().then((liveGames) => {
         if (!liveGames.length) return;
-        // Deduplicate by ID and by (date + matchup). The date matters: in a playoff
-        // series the same two teams play multiple games, so a live OKC@SAS today must
-        // not filter out a scheduled OKC@SAS two days from now.
+        // dedupe on date as well as matchup: in a playoff series the same two teams
+        // play repeatedly, so a live OKC@SAS must not filter out a scheduled one.
         const liveIds = new Set(liveGames.map((g) => g.nba_game_id ?? g.id));
         const liveMatchup = (g: Game) =>
           `${g.game_date}||${(g.home_team ?? '').toLowerCase()}||${(g.away_team ?? '').toLowerCase()}`;
@@ -55,14 +47,14 @@ export const ScoreboardStrip = () => {
           gamesCache = merged;
           return merged;
         });
-      }).catch(() => { /* live overlay failed — DB data already showing */ });
+      }).catch(() => { /* db data is already showing */ });
     } catch {
       setGames([]);
     }
   }, []);
 
   useEffect(() => {
-    // skip fetch if cache is fresh (< 2 min old, matching server-side cache TTL)
+    // 2 min matches the server-side cache ttl.
     if (Date.now() - cacheFetchedAt > 2 * 60_000) {
       fetchGames();
     }
@@ -76,8 +68,7 @@ export const ScoreboardStrip = () => {
     container.scrollBy({ left: direction === 'left' ? -280 : 280, behavior: 'smooth' });
   };
 
-  // Today's date as YYYY-MM-DD in the user's local TZ. Computed at render time
-  // (and inside an effect below) so it stays correct across midnight.
+  // computed at render time so it stays correct across midnight.
   const todayIso = (() => {
     const d = new Date();
     const yyyy = d.getFullYear();
@@ -97,9 +88,8 @@ export const ScoreboardStrip = () => {
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
-  // place "today" in the SECOND slot — one recent past day to its left, today
-  // next to it — and size the trailing spacer so the strip can't be scrolled
-  // past that anchor into empty space.
+  // puts today in the second slot and sizes the trailing spacer so the strip
+  // cannot be scrolled past that anchor into empty space.
   const layoutScoreboard = useCallback((): void => {
     const container = document.getElementById('scoreboard-scroll');
     if (!container) return;
@@ -107,15 +97,9 @@ export const ScoreboardStrip = () => {
     const todayIdx = groups.findIndex((el) => el.dataset.date === todayIso);
     if (todayIdx === -1) return;
     const todayGroup = groups[todayIdx];
-    // anchor on the group before today so today is second; if today is the
-    // first group (no past games), it leads.
     const anchor = groups[Math.max(0, todayIdx - 1)];
     const hasFuture = todayIdx < groups.length - 1;
 
-    // trailing spacer: when today is the last group, fill the rest of the
-    // viewport to its right so today can reach the second slot AND the max
-    // scroll stops exactly there (no scrolling further into blank space).
-    // when future games exist there's real content to the right, so no spacer.
     if (spacerRef.current) {
       if (hasFuture) {
         spacerRef.current.style.width = '0px';
@@ -127,19 +111,13 @@ export const ScoreboardStrip = () => {
       }
     }
 
-    // bring the anchor group flush-left (today lands second). reading the live
-    // rects also flushes the spacer width change above. clamping at the new
-    // max scroll keeps today pinned to its anchor when it's the last group.
+    // reading the live rects also flushes the spacer width change above.
     const delta =
       anchor.getBoundingClientRect().left - container.getBoundingClientRect().left;
     container.scrollLeft += delta - LEFT_GAP;
   }, [todayIso]);
 
-  // run the layout once per day. re-running on every `games` update would
-  // fight the user — snapping them back each time the 2-min poll or the live
-  // overlay refreshes the data while they scroll. the ref re-arms across
-  // midnight. double rAF waits until the strip has actually painted (card
-  // widths settled) before measuring, which is what was off in prod.
+  // the double rAF waits until card widths have actually painted before measuring.
   useEffect(() => {
     if (games.length === 0) return;
     if (autoScrolledForDay.current === todayIso) return;
@@ -156,8 +134,6 @@ export const ScoreboardStrip = () => {
     };
   }, [games, todayIso, layoutScoreboard]);
 
-  // the spacer width and anchor position both depend on the viewport width,
-  // so re-fit when it changes.
   useEffect(() => {
     let raf = 0;
     const onResize = (): void => {
@@ -178,10 +154,7 @@ export const ScoreboardStrip = () => {
     return acc;
   }, {});
 
-  // always include today in the scoreboard so the auto-scroll has a stable
-  // anchor. without this, an off-season day (or any day where the scraper
-  // hasn't picked up new games) leaves the user looking at the oldest date
-  // with no signal that "today" is real and just has no games.
+  // today is always present so the auto-scroll has a stable anchor even off-season.
   if (!grouped[todayIso]) grouped[todayIso] = [];
 
   const sortedDates = Object.keys(grouped).sort((a, b) => a.localeCompare(b));
@@ -259,9 +232,7 @@ export const ScoreboardStrip = () => {
           </div>
         ))}
 
-        {/* trailing scroll room, width set in layoutScoreboard: fills the
-            viewport to today's right only when today is the last group, so
-            today reaches the second slot but the scroll can't go past it. */}
+        {/* trailing scroll room, width set in layoutScoreboard. */}
         <div ref={spacerRef} aria-hidden className="flex-shrink-0" style={{ width: 0 }} />
       </div>
 

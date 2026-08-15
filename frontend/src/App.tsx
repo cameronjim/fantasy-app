@@ -28,8 +28,7 @@ import { invalidateAIClientCaches, invalidateBettingClientCache } from './api/cl
 export const App = (): JSX.Element => {
   const [isLoggedIn, setIsLoggedIn] = useState(() => !!getAuthToken());
 
-  // warm the other tabs' data right after first paint so the first visit to
-  // each is instant (the AI endpoints are excluded — they cost per call).
+  // the ai endpoints are excluded because they cost per call.
   useWarmupPrefetch(isLoggedIn);
 
   const handleLogout = (): void => {
@@ -46,8 +45,7 @@ export const App = (): JSX.Element => {
     setIsLoggedIn(true);
   };
 
-  // Google client ID is a public-by-design identifier — safe in the bundle.
-  // If unset we fall back to an empty string, which makes GoogleLogin a no-op.
+  // public-by-design identifier, so it is safe in the bundle. unset makes GoogleLogin a no-op.
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? '';
 
   return (
@@ -72,7 +70,6 @@ export const App = (): JSX.Element => {
               <Route path="/forgot-password" element={<ForgotPasswordPage />} />
               <Route path="/reset-password" element={<ResetPasswordPage />} />
               <Route path="/profile" element={<ProfilePage />} />
-              {/* legacy route — redirect to the Change Password tab inside /profile. */}
               <Route path="/change-password" element={<Navigate to="/profile#password" replace />} />
               <Route path="/preferences" element={<PreferencesPage />} />
               <Route path="/about" element={<AboutPage />} />

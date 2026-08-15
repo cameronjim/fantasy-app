@@ -7,22 +7,17 @@ interface ToastProps {
   message: string;
   variant?: ToastVariant;
   onDismiss: () => void;
-  /** Auto-dismiss after this many milliseconds. Defaults to 2500. */
   duration?: number;
 }
 
-/**
- * Bottom-right toast notification. Self-dismisses after `duration` ms,
- * or immediately on click. Pure inline component — no library needed.
- */
 export const Toast = ({ message, variant = 'success', onDismiss, duration = 2500 }: ToastProps) => {
   useEffect(() => {
     const id = setTimeout(onDismiss, duration);
     return () => clearTimeout(id);
   }, [duration, onDismiss]);
 
-  // `bg-success` and `bg-error` resolve to the brand green / red defined
-  // in index.css. don't hardcode tailwind palette colors here.
+  // bg-success and bg-error resolve to the brand colors in index.css; do not
+  // hardcode tailwind palette colors here.
   const bg = variant === 'success' ? 'bg-success' : 'bg-error';
   const Icon = variant === 'success' ? CheckCircle2 : AlertTriangle;
 

@@ -2,16 +2,9 @@ import { useEffect } from 'react';
 import { prefetchCached, CACHE_KEYS } from '../api/resourceCache';
 import { getPlayers, getTeams, getMyRoster, getBettingOdds, getBets } from '../api/client';
 
-// short enough that the warm copies are ready before a human reaches for
-// another tab, long enough that the landing page's own requests go first.
 const WARMUP_DELAY_MS = 1500;
 
-/**
- * After first paint, quietly warms the data every tab needs so the first
- * visit to each is instant. The Claude-backed endpoints are deliberately
- * excluded — they cost real money per generation and have their own
- * server + client caches.
- */
+// the ai endpoints are excluded on purpose: each generation costs money.
 export function useWarmupPrefetch(isLoggedIn: boolean): void {
   useEffect(() => {
     const timer = setTimeout(() => {

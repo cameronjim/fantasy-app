@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { BettingPage } from '../../src/pages/BettingPage';
 
-// mock the api boundary — these tests exercise the page's branches, not http.
 vi.mock('../../src/api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/api/client')>();
   return {
@@ -36,7 +35,6 @@ describe('BettingPage', () => {
     render(<BettingPage isLoggedIn={false} />);
 
     expect(await screen.findByText(/1-800-GAMBLER/)).toBeInTheDocument();
-    // the alert banner was removed — only the single footer line remains
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
@@ -47,7 +45,6 @@ describe('BettingPage', () => {
     expect(screen.getByRole('heading', { name: /Upcoming Games & Odds/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /New to betting\? Start here/i })).toBeInTheDocument();
     expect(screen.getByText('AI Assistant')).toBeInTheDocument();
-    // ai endpoints are never called for signed-out visitors
     expect(picksMock).not.toHaveBeenCalled();
     expect(betsMock).not.toHaveBeenCalled();
   });

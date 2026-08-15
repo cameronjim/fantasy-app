@@ -8,8 +8,6 @@ import {
 
 describe('availabilityBadge', () => {
   it('maps each probability band to its tier, including the boundaries', () => {
-    // arrange + act + assert — the boundaries are where a mis-specified
-    // threshold hides, so every one of them is pinned.
     expect(availabilityBadge(0).tier).toBe('out');
     expect(availabilityBadge(0.149).tier).toBe('out');
     expect(availabilityBadge(0.15).tier).toBe('doubtful');
@@ -28,20 +26,16 @@ describe('availabilityBadge', () => {
   });
 
   it('always says the number is a model estimate rather than a designation', () => {
-    // arrange + act
     const badge = availabilityBadge(0.82);
 
-    // assert
     expect(badge.percentText).toBe('82%');
     expect(badge.hint).toMatch(/model estimate/i);
     expect(badge.hint).toMatch(/not an official injury designation/i);
   });
 
   it('degrades to an explicit "no estimate" rather than to a number', () => {
-    // arrange + act
     const badge = availabilityBadge(null);
 
-    // assert — a missing probability must never read as 0% to play
     expect(badge.tier).toBe('unknown');
     expect(badge.label).toBe('No estimate');
     expect(badge.percentText).toBeNull();
@@ -56,7 +50,6 @@ describe('availabilityBadge', () => {
 
 describe('statCellDisplay', () => {
   it('leads with the median and carries the band and schedule-level twin', () => {
-    // arrange + act
     const cell = statCellDisplay('MIN', {
       expected: 36.33,
       p10: 28.48,
@@ -65,7 +58,6 @@ describe('statCellDisplay', () => {
       unconditional: 33.23,
     });
 
-    // assert
     expect(cell.primary).toBe('36.2');
     expect(cell.primarySource).toBe('p50');
     expect(cell.band).toBe('28.5-43.5');
@@ -75,7 +67,6 @@ describe('statCellDisplay', () => {
   });
 
   it('falls back to the expected value when the run stores no quantiles', () => {
-    // arrange + act
     const cell = statCellDisplay('AST', {
       expected: 9.1,
       p10: null,
@@ -84,7 +75,6 @@ describe('statCellDisplay', () => {
       unconditional: 8.33,
     });
 
-    // assert
     expect(cell.primary).toBe('9.1');
     expect(cell.primarySource).toBe('expected');
     expect(cell.band).toBeNull();
@@ -92,7 +82,6 @@ describe('statCellDisplay', () => {
   });
 
   it('drops a half-populated band rather than rendering a one-sided interval', () => {
-    // arrange + act
     const cell = statCellDisplay('PTS', {
       expected: null,
       p10: 14,
@@ -101,16 +90,13 @@ describe('statCellDisplay', () => {
       unconditional: null,
     });
 
-    // assert
     expect(cell.primary).toBe('24.5');
     expect(cell.band).toBeNull();
   });
 
   it('renders a placeholder for a stat the run has nothing for', () => {
-    // arrange + act
     const missing = statCellDisplay('BLK', undefined);
 
-    // assert
     expect(missing.primary).toBe('-');
     expect(missing.primarySource).toBe('none');
     expect(missing.hint).toMatch(/No BLK in this run/);
@@ -119,11 +105,9 @@ describe('statCellDisplay', () => {
 
 describe('formatPredictionDate', () => {
   it('reads a calendar day on the local calendar, not as UTC midnight', () => {
-    // arrange + act — parsing "2026-01-15" with `new Date()` yields Jan 14 for
-    // every reader west of Greenwich, which is exactly wrong in a Date column.
+    // parsing an iso date string with new Date() lands a day early west of greenwich.
     const parts = formatPredictionDate('2026-01-15');
 
-    // assert
     expect(parts.label).toBe('Jan 15');
     expect(parts.weekday).toBe('Thu');
   });

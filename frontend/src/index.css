@@ -3,34 +3,25 @@
   themes: lofi --default, business --prefersdark;
 }
 
-/* brand colors — single source of truth. components should use daisyui's
-   `success` / `error` utility classes (text-success, bg-success, etc.) so
-   any palette change propagates through these variables. do not hardcode
-   tailwind palette colors like `bg-emerald-500` or `bg-red-500` inside
-   components. the custom themes below set success/error to these same
-   values so the green/red reads identically on every theme. */
+/* components read these through daisyui's success/error classes, so never hardcode
+   a tailwind palette color like bg-emerald-500 in a component. */
 :root {
-  --brand-green: #10b981; /* tailwind emerald-500 — darker / more visible than daisyui's default success */
-  --brand-red: #ef4444;   /* tailwind red-500 — matches the original error-toast look */
+  --brand-green: #10b981;
+  --brand-red: #ef4444;
 }
 
-/* tailwind 4's preflight leaves <button> at the native `cursor: default`, so
-   any clickable button styled without daisyui's `btn` class (badges, chips,
-   icon buttons) silently loses its pointer affordance. restore the old
-   behavior app-wide; disabled buttons keep the default cursor. */
+/* tailwind 4's preflight leaves <button> at cursor: default, so any clickable
+   button without daisyui's `btn` class loses its pointer affordance. */
 @layer base {
   button:not(:disabled) {
     cursor: pointer;
   }
 }
 
-/* tooltips: the bubble inherits typography (uppercase, tracking, weight)
-   from whatever element it sits inside, which makes long hints shouty and
-   oversized. give every bubble its own plain, compact typography. lives in
-   the utilities layer AFTER daisyui's plugin css so these declarations win
-   the cascade against .tooltip's own font-size/padding/text-align.
-   (never place a .tooltip inside an ancestor with opacity < 1 — the bubble
-   inherits the transparency and gets trapped under later content.) */
+/* a tooltip bubble otherwise inherits uppercase/tracking/weight from whatever it
+   sits inside. utilities layer so it wins against .tooltip's own rules. never put
+   a .tooltip inside an ancestor with opacity < 1, or the bubble inherits the
+   transparency and gets trapped under later content. */
 @layer utilities {
   .tooltip:before,
   .tooltip > .tooltip-content {
@@ -46,20 +37,14 @@
   }
 }
 
-/* the two built-in themes don't carry the brand green/red, so override them
-   here. the custom themes below bake the brand values in directly. */
+/* the two built-in themes don't carry the brand green/red; the custom themes below
+   bake the values in directly. */
 [data-theme="lofi"],
 [data-theme="business"] {
   --color-success: var(--brand-green);
   --color-error: var(--brand-red);
 }
 
-/* ---- custom neutral themes -------------------------------------------- */
-/* all are deliberately low-chroma and easy on the eyes: warm-cream and
-   cool-gray bases with a single muted accent each, plus one slightly more
-   saturated teal ("ocean") and one soft dark gray ("graphite"). */
-
-/* Cream — warm off-white base, muted slate-blue accent. */
 @plugin "daisyui/theme" {
   name: "cream";
   color-scheme: light;
@@ -89,7 +74,6 @@
   --border: 1px;
 }
 
-/* Sage — soft off-white base, muted green accent. */
 @plugin "daisyui/theme" {
   name: "sage";
   color-scheme: light;
@@ -119,7 +103,6 @@
   --border: 1px;
 }
 
-/* Slate — soft cool-gray neutral throughout. */
 @plugin "daisyui/theme" {
   name: "slate";
   color-scheme: light;
@@ -149,7 +132,6 @@
   --border: 1px;
 }
 
-/* Ocean — cool near-white base with one saturated teal accent. */
 @plugin "daisyui/theme" {
   name: "ocean";
   color-scheme: light;
@@ -179,7 +161,6 @@
   --border: 1px;
 }
 
-/* Graphite — soft dark gray, low-glare night option. */
 @plugin "daisyui/theme" {
   name: "graphite";
   color-scheme: dark;
@@ -209,11 +190,8 @@
   --border: 1px;
 }
 
-/* daisyui's default field focus is a 2px outline offset 2px outside the 1px
-   border, which reads as a thick double ring on every input, select and date
-   picker. keep the focus affordance (accessibility) but make it a hairline
-   snug against the field. utilities layer so it wins the cascade against the
-   plugin css. */
+/* daisyui's default field focus is a 2px outline offset 2px outside the 1px border,
+   which reads as a thick double ring. keep the affordance, make it a hairline. */
 @layer utilities {
   .input:focus,
   .input:focus-within,

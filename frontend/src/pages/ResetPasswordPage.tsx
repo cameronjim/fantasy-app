@@ -64,7 +64,6 @@ export const ResetPasswordPage = () => {
     try {
       await resetPassword(token, newPassword);
       setSuccess(true);
-      // Auto-redirect to login after a beat.
       setTimeout(() => navigate('/login', { replace: true }), 2500);
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;

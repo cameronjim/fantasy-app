@@ -25,8 +25,7 @@ export const AdminPage = (): JSX.Element => {
 
   useEffect(() => {
     let cancelled = false;
-    // check the flag before hitting the admin endpoints so non-admins get a
-    // clean message instead of three 403s. the server re-checks regardless.
+    // check the flag first so non-admins get a clean message instead of three 403s.
     getCurrentUser()
       .then((user) => {
         if (!user.is_admin) {
@@ -47,9 +46,8 @@ export const AdminPage = (): JSX.Element => {
     };
   }, []);
 
-  // the auth guard must come AFTER every hook: an early return above a hook
-  // crashes with react error #300 when the token disappears while the page
-  // is mounted (e.g. signing out from this page).
+  // the auth guard must come after every hook: an early return above one crashes
+  // with react error #300 when the token disappears while the page is mounted.
   if (!getAuthToken()) {
     return <Navigate to="/login" replace state={{ from: '/admin' }} />;
   }
