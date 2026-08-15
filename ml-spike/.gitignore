@@ -1,9 +1,0 @@
-# Phase 0 spike - local artifacts only
-.venv/
-__pycache__/
-.pytest_cache/
-
-# Raw + derived data is reproducible from pull_data.py; don't commit it.
-# results_long.csv is the one exception worth keeping (see !rule below).
-data/*.parquet
-!data/results_long.csv

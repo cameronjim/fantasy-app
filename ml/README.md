@@ -1,8 +1,8 @@
 # `ml/` — availability-first NBA production forecasting
 
-Production port of the phase-0 feasibility spike (`ml-spike/`, findings in
-`ml-spike/REPORT.md`). The spike's conclusions are binding on this package;
-where the code looks conservative, that is deliberate.
+Production port of the phase-0 feasibility spike. Its findings are recorded
+in `MODEL.md` (Phase 0) and bind this package; where the code looks
+conservative, that is deliberate.
 
 ## The one-sentence design
 
