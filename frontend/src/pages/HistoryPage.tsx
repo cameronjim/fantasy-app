@@ -7,7 +7,11 @@ import { CACHE_KEYS, historyPlayersKey } from '../api/resourceCache';
 
 // the api caps a page at 500 rows, which covers every player in a season, so
 // one request per season is enough and the search box can filter in memory.
-const SEASON_ROW_LIMIT = 500;
+// a season loads in one request and the search box filters in memory, so this
+// has to clear the largest season outright or the tail is unreachable. modern
+// seasons run past 500 (2021-22 had 605 players once two-ways are counted);
+// the api ceiling for this route is 1000.
+const SEASON_ROW_LIMIT = 1000;
 
 export const HistoryPage = (): JSX.Element => {
   const [selectedSeason, setSelectedSeason] = useState('');

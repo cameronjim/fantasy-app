@@ -15,6 +15,15 @@ export {
   searchPattern,
 } from './queryParams.js';
 
+/**
+ * Page-size ceiling for a single season's player list, above the shared 500
+ * default. A season is one bounded set that the UI loads in one request and
+ * filters in memory, and modern seasons exceed 500: two-way contracts and
+ * 10-days pushed 2021-22 to 605. Capping at 500 silently dropped the tail, so
+ * the lowest-scoring players in a season could not be seen or searched at all.
+ */
+export const MAX_SEASON_PLAYERS_LIMIT = 1000;
+
 export function isValidSeason(season: unknown): season is string {
   return typeof season === 'string' && SEASON_PATTERN.test(season);
 }
