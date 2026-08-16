@@ -43,6 +43,17 @@ fantasy roster, the Claude-powered analysis surfaces, and the bet tracker.
 - Player detail modal with headshot and injury status
 - Live scoreboard strip along the top showing today's games and scores
 
+### 2K Ratings (`/ratings`), public
+
+- Searchable, sortable list of NBA 2K player ratings with a **Current / Classic /
+  All-Time** roster toggle
+- Click any player for the full breakdown: all 35 attributes as labelled bars
+  grouped into Outside Scoring, Inside Scoring, Athleticism, Playmaking, and
+  Defense & Rebounding, plus badges and the overall rating across past game
+  versions
+- The same attribute modal opens from a 2K badge inside the player detail modal
+  on the Stats tab, when the player's name resolves to a 2K row
+
 ### My Team (`/fantasy`), sign-in required
 
 - Add and drop players to build a personal fantasy roster
@@ -105,6 +116,7 @@ fantasy roster, the Claude-powered analysis surfaces, and the bet tracker.
 | [`stats.nba.com`](https://stats.nba.com) (via `nba_api`) | Player and team per-game stats | Sits behind Akamai, which **blocks AWS and GitHub Actions IP ranges**. Requests from CI can fail; the scraper tolerates it and the app keeps serving the last good data from Postgres. |
 | ESPN public API (`site.api.espn.com`) | Games, scores, live scoreboard, betting odds | Not IP-blocked from AWS, which is why it backs the scoreboard and odds board instead of `cdn.nba.com`. |
 | [CBS Sports](https://www.cbssports.com/nba/injuries/) | Injury reports and specific positions | Parsed with Beautiful Soup. |
+| [`nba2kapi.com`](https://nba2kapi.com) | NBA 2K overall ratings, 35 attributes, badges, and rating history | Data originates from [2kratings.com](https://www.2kratings.com). Not affiliated with or endorsed by 2K Sports, Take-Two, or the NBA. Matching to our players is name-based, since 2K publishes no NBA ids. |
 
 ## Configuration
 
@@ -151,6 +163,9 @@ Base path `/api`. All responses are JSON.
 | `/teams/:id` | GET | none | Team detail |
 | `/games` | GET | none | Today's and recent games |
 | `/games/live` | GET | none | Live scoreboard, ESPN-backed |
+| `/ratings2k/players` | GET | none | NBA 2K cards (roster type, search, sort, paging) |
+| `/ratings2k/players/:slug` | GET | none | One 2K card with attributes, badges, and rating history |
+| `/ratings2k/by-player-name` | GET | none | Resolve an app player to their 2K card by name |
 | `/auth/register` | POST | none | Create an account (rate limited) |
 | `/auth/login` | POST | none | Email/password sign-in (rate limited) |
 | `/auth/google` | POST | none | Google Sign-In, ID token verified server-side |
@@ -210,15 +225,22 @@ component fetches directly.
 
 ## Database Schema and Migrations
 
-- **`db/schema.sql`** declares 13 tables: `players`, `teams`, `games`, `users`,
+- **`db/schema.sql`** declares 19 tables: `players`, `teams`, `games`, `users`,
   `password_reset_tokens`, `my_roster`, `analysis_cache`, `waiver_cache`,
-  `bets`, `betting_cache`, `chat_history`, `page_views`, and `rate_limits`. It
+  `bets`, `betting_cache`, `chat_history`, `page_views`, `rate_limits`,
+  `player_season_stats`, `team_season_stats`, `nba_2k_players`,
+  `nba_2k_attributes`, `nba_2k_badges`, and `nba_2k_rating_history`. It
   uses `CREATE TABLE / INDEX IF NOT EXISTS` throughout, so re-running it is safe.
 - **`db/migrations/`** holds sequential, hand-written SQL migrations, `001`
-  through `010`, covering email and password reset, team conference backfill,
+  through `012`, covering email and password reset, team conference backfill,
   user preferences, Google Sign-In, profile fields, betting, bet money fields,
-  rate limits, admin and pageviews, and the team abbreviation backfill. Each is
+  rate limits, admin and pageviews, the team abbreviation backfill, the
+  historical season-stats tables, and the NBA 2K ratings tables. Each is
   idempotent, so re-applying one is harmless.
+- The four `nba_2k_*` tables are key-value rather than wide (one row per
+  attribute, per badge, per game version) because 2K reshuffles its attribute and
+  badge sets every September, and with no migration runner a wide table would
+  need a hand-applied migration every game year.
 - There is no migration runner. A fresh database needs `schema.sql` **and then
   every migration in numeric order**. `schema.sql` has drifted slightly behind
   and does not declare `users.ai_preferences`, which migration `003` adds and the
@@ -255,6 +277,26 @@ successfully. It then:
 **On a 6-hour cron** (`.github/workflows/scraper.yml`): `python
 scraper/run_scraper.py` refreshes stats in Postgres. It can also be triggered
 manually with `workflow_dispatch`.
+
+The historical season backfill is **not** part of that cron. `stats.nba.com`
+blocks CI IP ranges and throttles hard, so it is a one-time job run locally from
+a residential connection: `python run_scraper.py --backfill-history`. It is
+resumable — seasons already in the database are skipped — so an interrupted run
+can simply be started again.
+
+The **NBA 2K sync** is also opt-in and not on the cron, because 2K ratings change
+a handful of times a season rather than every six hours:
+
+```bash
+cd scraper
+python run_scraper.py --sync-2k                              # current rosters (~672 cards)
+python run_scraper.py --sync-2k --team-types curr,class,allt # everything (~1,889 cards)
+```
+
+It defaults to current players only. Each card is written in its own
+transaction, with its attributes and badges replaced wholesale, so re-running is
+idempotent and a card is never left half-updated. Cards 2K no longer lists for a
+synced roster type are pruned.
 
 AWS access uses **OIDC role assumption**, so no long-lived AWS keys live in the
 repo or in CI.

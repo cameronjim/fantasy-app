@@ -110,6 +110,16 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<void>
     route.fulfill({ json: opts.waiverSuggestions ?? fallback });
   });
 
+  // 2K ratings surfaces default to "not imported yet": the ratings page shows
+  // its empty state and the player modal's 2K badge stays hidden.
+  await page.route('**/api/ratings2k/by-player-name*', (route) =>
+    route.fulfill({ json: { player: null } }),
+  );
+
+  await page.route('**/api/ratings2k/players*', (route) =>
+    route.fulfill({ json: { total: 0, players: [] } }),
+  );
+
   await page.route('**/api/auth/me', (route) =>
     route.fulfill({ status: 401, json: { error: 'Unauthorized' } }),
   );
