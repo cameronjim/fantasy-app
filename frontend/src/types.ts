@@ -1,5 +1,14 @@
+/**
+ * Postgres NUMERIC columns are serialized as strings by `pg`, so every stat
+ * that comes from one can arrive as either. Coerce with `toStatNumber` before
+ * doing math or formatting — never render one of these raw.
+ */
+export type NumericLike = number | string;
+
 export interface Player {
   id: number;
+  // permanent stats.nba.com id; absent on rows that predate the scraper.
+  nba_id?: string | null;
   name: string;
   team: string;
   position: string;
@@ -43,6 +52,54 @@ export interface Team {
   offensive_rating: number;
   net_rating: number;
   logo_url?: string | null;
+}
+
+/**
+ * One player's per-game averages for a single historical season, from
+ * `/api/history/players`. Every stat is nullable: seasons before 1996-97
+ * are missing several columns entirely in the source data.
+ */
+export interface PlayerSeasonRow {
+  nba_player_id: string;
+  player_name: string;
+  season: string;
+  team: string | null;
+  games_played: NumericLike | null;
+  minutes_per_game: NumericLike | null;
+  points_per_game: NumericLike | null;
+  rebounds_per_game: NumericLike | null;
+  assists_per_game: NumericLike | null;
+  steals_per_game: NumericLike | null;
+  blocks_per_game: NumericLike | null;
+  turnovers_per_game: NumericLike | null;
+  field_goal_percentage: NumericLike | null;
+  three_point_percentage: NumericLike | null;
+  free_throw_percentage: NumericLike | null;
+  three_pointers_made: NumericLike | null;
+}
+
+/** One team's season totals from `/api/history/teams`. */
+export interface TeamSeasonRow {
+  nba_team_id: string;
+  team_name: string;
+  abbreviation: string | null;
+  season: string;
+  games_played: NumericLike | null;
+  wins: NumericLike | null;
+  losses: NumericLike | null;
+  minutes_per_game: NumericLike | null;
+  points_per_game: NumericLike | null;
+  rebounds_per_game: NumericLike | null;
+  assists_per_game: NumericLike | null;
+  steals_per_game: NumericLike | null;
+  blocks_per_game: NumericLike | null;
+  turnovers_per_game: NumericLike | null;
+  field_goal_percentage: NumericLike | null;
+  three_point_percentage: NumericLike | null;
+  free_throw_percentage: NumericLike | null;
+  offensive_rating: NumericLike | null;
+  defensive_rating: NumericLike | null;
+  net_rating: NumericLike | null;
 }
 
 export interface Game {
@@ -217,4 +274,60 @@ export interface LedgerSummary {
   pushes: number;
   pending: number;
   net: number;
+}
+
+/**
+ * Which 2K roster a rated player belongs to: `curr` current NBA players,
+ * `class` classic teams, `allt` all-time teams. The same person can appear
+ * under more than one, which is why `slug` — not name — identifies a row.
+ */
+export type Rating2kTeamType = 'curr' | 'class' | 'allt';
+
+/** A rated player as returned by the 2K list endpoints. */
+export interface Rating2kSummary {
+  slug: string;
+  name: string;
+  team: string | null;
+  team_type: Rating2kTeamType;
+  // 2K scale, roughly 25-99. NumericLike because the column can arrive as a
+  // string depending on how it is stored.
+  overall: NumericLike | null;
+  // the source sends either a list or a single joined string ("PG / SG").
+  positions: string[] | string | null;
+  game_version: string | null;
+  player_image: string | null;
+}
+
+/** Extra bio fields the detail endpoint adds on top of the summary. */
+export interface Rating2kPlayer extends Rating2kSummary {
+  archetype: string | null;
+  build: string | null;
+  height: string | null;
+  weight: string | null;
+  wingspan: string | null;
+}
+
+/** One of the ~35 flat attribute name/value pairs, e.g. `threePointShot`. */
+export interface Rating2kAttribute {
+  attribute_name: string;
+  value: NumericLike | null;
+}
+
+export interface Rating2kBadge {
+  badge_name: string;
+  tier?: string | null;
+}
+
+/** One past game year's overall, with the change from the previous entry. */
+export interface Rating2kRatingHistoryEntry {
+  game_version: string;
+  overall: NumericLike | null;
+  delta: NumericLike | null;
+}
+
+export interface Rating2kDetail {
+  player: Rating2kPlayer;
+  attributes: Rating2kAttribute[];
+  badges: Rating2kBadge[];
+  rating_history: Rating2kRatingHistoryEntry[];
 }

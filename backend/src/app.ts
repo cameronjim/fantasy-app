@@ -12,6 +12,8 @@ import helmet from 'helmet';
 import { playersRouter } from './routes/players.js';
 import { teamsRouter } from './routes/teams.js';
 import { gamesRouter } from './routes/games.js';
+import { historyRouter } from './routes/history.js';
+import { ratings2kRouter } from './routes/ratings2k.js';
 import { fantasyRouter } from './routes/fantasy.js';
 import { aiRouter } from './routes/ai.js';
 import { authRouter } from './routes/auth.js';
@@ -58,6 +60,10 @@ app.use('/api/auth', authRouter);
 app.use('/api/players', playersRouter);
 app.use('/api/teams', teamsRouter);
 app.use('/api/games', gamesRouter);
+// season-by-season history — public, same as /api/players.
+app.use('/api/history', historyRouter);
+// NBA 2K ratings — public, third-party data, no user data involved.
+app.use('/api/ratings2k', ratings2kRouter);
 app.use('/api/fantasy', requireAuth, fantasyRouter);
 app.use('/api/ai', requireAuth, aiDailyLimit, aiRouter);
 app.use('/api/preferences', preferencesRouter);
