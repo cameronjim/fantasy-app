@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { query } from '../db.js';
 import {
+  MAX_SEASON_PLAYERS_LIMIT,
   clampLimit,
   clampOffset,
   isValidSeason,
@@ -86,7 +87,7 @@ router.get('/players', async (req: Request, res: Response): Promise<void> => {
   }
 
   const search = searchPattern(req.query.search);
-  const limit = clampLimit(req.query.limit);
+  const limit = clampLimit(req.query.limit, MAX_SEASON_PLAYERS_LIMIT);
   const offset = clampOffset(req.query.offset);
 
   const params: unknown[] = [season];
