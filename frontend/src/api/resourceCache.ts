@@ -24,7 +24,25 @@ export const CACHE_KEYS = {
   roster: 'roster',
   odds: 'betting-odds',
   bets: 'bets',
+  historySeasons: 'history-seasons',
 } as const;
+
+/** Each historical season caches under its own key so flipping the season
+ *  dropdown back and forth never refetches a table we already have. */
+export function historyPlayersKey(season: string): string {
+  return `history-players:${season}`;
+}
+
+/** Same per-season keying for the historical team tables. */
+export function historyTeamsKey(season: string): string {
+  return `history-teams:${season}`;
+}
+
+/** One key per 2K roster (current / classic / all-time) so toggling between
+ *  them never refetches a list we already have. */
+export function ratings2kPlayersKey(teamType: string): string {
+  return `ratings2k-players:${teamType}`;
+}
 
 export function getCached<T>(key: string): T | null {
   const entry = store.get(key);

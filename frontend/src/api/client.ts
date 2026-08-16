@@ -2,6 +2,8 @@ import axios from 'axios';
 import type {
   Player, Team, Game, RosterPlayer, ChatMessage, TeamAnalysis,
   BettingGame, BettingPicksResponse, Bet, NewBet, LedgerSummary, BetStatus,
+  PlayerSeasonRow, TeamSeasonRow,
+  Rating2kSummary, Rating2kDetail, Rating2kTeamType,
 } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL
@@ -177,6 +179,106 @@ export async function getGames(): Promise<Game[]> {
 export async function getLiveGames(): Promise<Game[]> {
   const { data } = await api.get('/games/live');
   return data;
+}
+
+export interface HistoryPlayersParams {
+  season: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface HistoryPlayersResponse {
+  season: string;
+  // total matching rows on the server, which can exceed the returned page.
+  total: number;
+  players: PlayerSeasonRow[];
+}
+
+export interface PlayerCareerResponse {
+  nba_player_id: string;
+  player_name: string;
+  // oldest season first, so the table reads like a career timeline.
+  seasons: PlayerSeasonRow[];
+}
+
+/** Seasons with ingested historical data, newest first. Empty until the
+ *  one-time backfill has been run. */
+export async function getHistorySeasons(): Promise<string[]> {
+  const { data } = await api.get<{ seasons: string[] }>('/history/seasons');
+  return data.seasons ?? [];
+}
+
+export async function getHistoryPlayers(params: HistoryPlayersParams): Promise<HistoryPlayersResponse> {
+  const { data } = await api.get<HistoryPlayersResponse>('/history/players', { params });
+  return { season: data.season, total: data.total ?? 0, players: data.players ?? [] };
+}
+
+export async function getPlayerCareer(nbaPlayerId: string): Promise<PlayerCareerResponse> {
+  const { data } = await api.get<PlayerCareerResponse>(`/history/players/${nbaPlayerId}/seasons`);
+  return { ...data, seasons: data.seasons ?? [] };
+}
+
+export async function getHistoryTeams(season: string): Promise<TeamSeasonRow[]> {
+  const { data } = await api.get<{ season: string; teams: TeamSeasonRow[] }>('/history/teams', {
+    params: { season },
+  });
+  return data.teams ?? [];
+}
+
+export type Ratings2kSort = 'overall' | 'name';
+
+export interface Ratings2kPlayersParams {
+  teamType: Rating2kTeamType;
+  search?: string;
+  limit?: number;
+  offset?: number;
+  sort?: Ratings2kSort;
+}
+
+export interface Ratings2kPlayersResponse {
+  // total matching rows on the server, which can exceed the returned page.
+  total: number;
+  players: Rating2kSummary[];
+}
+
+export async function getRatings2kPlayers(
+  params: Ratings2kPlayersParams
+): Promise<Ratings2kPlayersResponse> {
+  const { data } = await api.get<Ratings2kPlayersResponse>('/ratings2k/players', { params });
+  return { total: data.total ?? 0, players: data.players ?? [] };
+}
+
+/** Full attribute breakdown for one rated player, or null when the slug is unknown. */
+export async function getRatings2kPlayer(slug: string): Promise<Rating2kDetail | null> {
+  try {
+    const { data } = await api.get<Rating2kDetail>(
+      `/ratings2k/players/${encodeURIComponent(slug)}`
+    );
+    return {
+      player: data.player,
+      attributes: data.attributes ?? [],
+      badges: data.badges ?? [],
+      rating_history: data.rating_history ?? [],
+    };
+  } catch (err) {
+    // 404 is a normal answer here, not a failure — the caller distinguishes
+    // "no such rated player" from "the lookup broke".
+    if (axios.isAxiosError(err) && err.response?.status === 404) return null;
+    throw err;
+  }
+}
+
+/**
+ * Resolves one of our players to their 2K row by name. 2K publishes no NBA ids,
+ * so the match is name-based and legitimately misses — null is expected, not an
+ * error.
+ */
+export async function getRatings2kByName(name: string): Promise<Rating2kSummary | null> {
+  const { data } = await api.get<{ player: Rating2kSummary | null }>('/ratings2k/by-player-name', {
+    params: { name },
+  });
+  return data.player ?? null;
 }
 
 export async function getMyRoster(): Promise<RosterPlayer[]> {

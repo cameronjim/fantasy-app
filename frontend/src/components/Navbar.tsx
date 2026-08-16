@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { BarChart3, Users, TrendingUp, Dices, LogIn, User } from 'lucide-react';
+import { BarChart3, History, Gamepad2, Users, TrendingUp, Dices, LogIn, User } from 'lucide-react';
 import { StatusBadge } from './StatusBadge';
 import { ThemePicker } from './ThemePicker';
 import { getCurrentUser } from '../api/client';
@@ -12,6 +12,8 @@ interface NavbarProps {
 
 const tabs = [
   { to: '/', label: 'Stats', icon: BarChart3 },
+  { to: '/history', label: 'History', icon: History },
+  { to: '/ratings', label: '2K Ratings', icon: Gamepad2 },
   { to: '/fantasy', label: 'My Team', icon: Users },
   { to: '/improve', label: 'Improve Team', icon: TrendingUp },
   { to: '/betting', label: 'Betting', icon: Dices },
