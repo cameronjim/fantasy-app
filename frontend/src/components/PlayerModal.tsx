@@ -74,8 +74,18 @@ export const PlayerModal = ({ player, onClose }: PlayerModalProps) => {
             <div>
               <h3 className="font-bold text-2xl">{player.name}</h3>
               <p className="text-sm opacity-60">{player.team} · {player.position}</p>
-              {/* renders nothing when the player has no 2K match */}
-              <Rating2kBadge playerName={player.name} />
+              <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                {/* renders nothing when the player has no 2K match */}
+                <Rating2kBadge playerName={player.name} />
+                <Link
+                  to={`/player/${player.id}`}
+                  onClick={onClose}
+                  className="btn btn-primary btn-sm"
+                >
+                  <BarChart3 size={15} />
+                  Full Analytics
+                </Link>
+              </div>
             </div>
           </div>
           <button className="btn btn-sm btn-circle btn-ghost" onClick={onClose}>✕</button>
@@ -105,17 +115,6 @@ export const PlayerModal = ({ player, onClose }: PlayerModalProps) => {
         ))}
 
         <PlayerCareerSection nbaPlayerId={player.nba_id} />
-
-        <div className="modal-action mt-4">
-          <Link
-            to={`/player/${player.id}`}
-            onClick={onClose}
-            className="btn btn-primary btn-block"
-          >
-            <BarChart3 size={18} />
-            Full Analytics — trends, percentiles & projections
-          </Link>
-        </div>
       </div>
       <div className="modal-backdrop" onClick={onClose} />
     </div>
