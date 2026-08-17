@@ -45,13 +45,14 @@ export const PercentilePanel = ({ percentiles, pool }: PercentilePanelProps): JS
                 key={row.stat}
                 className="grid grid-cols-[72px_1fr_auto] items-center gap-2 sm:gap-3"
               >
-                <span className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider opacity-70">
-                  <span className="truncate">{label}</span>
+                {/* opacity must stay off this container: the tooltip bubble is a
+                    descendant, and a translucent ancestor makes the bubble
+                    translucent AND traps it under later rows' progress bars
+                    (opacity < 1 creates a stacking context). dim the text only. */}
+                <span className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider">
+                  <span className="truncate opacity-70">{label}</span>
                   {hint && (
-                    <span
-                      className="tooltip tooltip-right before:max-w-[220px] before:text-xs before:whitespace-normal"
-                      data-tip={hint}
-                    >
+                    <span className="tooltip tooltip-right" data-tip={hint}>
                       <Info size={11} className="opacity-50" aria-label={`${label} explanation`} />
                     </span>
                   )}
