@@ -33,11 +33,20 @@ export class PlayerAnalyticsPage {
   }
 
   distributionTab(statLabel: string): Locator {
-    return this.page.getByRole('tab', { name: statLabel, exact: true });
+    // scoped: the trends section has a tablist with the same stat names
+    return this.page
+      .getByRole('tablist', { name: 'Distribution stat' })
+      .getByRole('tab', { name: statLabel, exact: true });
   }
 
-  pointsTrendChart(): Locator {
-    return this.page.getByTestId('points-trend-chart');
+  trendTab(statLabel: string): Locator {
+    return this.page
+      .getByRole('tablist', { name: 'Trend stat' })
+      .getByRole('tab', { name: statLabel, exact: true });
+  }
+
+  trendChart(): Locator {
+    return this.page.getByTestId('trend-chart');
   }
 
   recentGamesSection(): Locator {
