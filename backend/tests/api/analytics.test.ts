@@ -7,13 +7,16 @@ const { query } = await import('../../src/db.js');
 const { clearAnalyticsCache, ANALYTICS_STATS, POOL_DEFINITION } = await import(
   '../../src/services/analytics.js'
 );
+const { clearPredictionsCache } = await import('../../src/services/predictions.js');
 const queryMock = vi.mocked(query);
 
 // the analytics routes issue their queries in a fixed order:
 //   1. the player row
 //   2. pool season averages, pool game-log totals, team abbreviations
 //   3. the player's own game logs
-// steps 2 is skipped once the pool snapshot is cached.
+//   4. the newest stored prediction for their next game
+// step 2 is skipped once the pool snapshot is cached; step 4 is skipped for the
+// five minutes that player's prediction stays cached.
 
 const lebronRow = {
   id: 5,
@@ -76,13 +79,33 @@ const logRows = Array.from({ length: 20 }, (_, i) =>
   })
 );
 
-function mockPlayerAnalyticsQueries(logs: Array<Record<string, unknown>> = logRows): void {
+// one long-format row per (stat, quantile) of the newest complete run. empty by
+// default: most of these tests predate the prediction store and must keep
+// passing with `prediction: null`.
+function predictionRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    model_version: '2026-02-28',
+    predicted_at: new Date('2026-03-01T13:30:00.000Z'),
+    game_date: new Date(2026, 2, 2),
+    stat: 'pts',
+    quantile: null,
+    value: 25,
+    conditional: true,
+    ...overrides,
+  };
+}
+
+function mockPlayerAnalyticsQueries(
+  logs: Array<Record<string, unknown>> = logRows,
+  predictions: Array<Record<string, unknown>> = []
+): void {
   queryMock
     .mockResolvedValueOnce(pgResult([lebronRow]))
     .mockResolvedValueOnce(pgResult(poolRows))
     .mockResolvedValueOnce(pgResult(poolTotalsRows))
     .mockResolvedValueOnce(pgResult(teamRows))
-    .mockResolvedValueOnce(pgResult(logs));
+    .mockResolvedValueOnce(pgResult(logs))
+    .mockResolvedValueOnce(pgResult(predictions));
 }
 
 function mockPoolQueries(): void {
@@ -94,8 +117,10 @@ function mockPoolQueries(): void {
 
 beforeEach(() => {
   queryMock.mockReset();
-  // the pool snapshot is cached for an hour; each test starts from cold
+  // the pool snapshot is cached for an hour and predictions for five minutes;
+  // each test starts from cold
   clearAnalyticsCache();
+  clearPredictionsCache();
 });
 
 describe('GET /api/players/:id/analytics', () => {
@@ -299,9 +324,10 @@ describe('GET /api/players/:id/analytics', () => {
     // act
     const res = await request(app).get('/api/players/5/analytics');
 
-    // assert — only the player row and their logs, no pool aggregates
+    // assert — only the player row and their logs. no pool aggregates, and no
+    // second prediction read either: that one is cached per player.
     expect(res.status).toBe(200);
-    expect(afterFirst).toBe(5);
+    expect(afterFirst).toBe(6);
     expect(queryMock.mock.calls.length - afterFirst).toBe(2);
     expect(res.body.pool.sample_size).toBe(3);
   });
@@ -338,6 +364,71 @@ describe('GET /api/players/:id/analytics', () => {
     // assert
     expect(res.status).toBe(500);
     expect(res.body.error).toBe('Failed to fetch player analytics');
+  });
+
+  it('serves the newest stored prediction alongside the history', async () => {
+    // arrange
+    mockPlayerAnalyticsQueries(logRows, [
+      predictionRow({ stat: 'prob_active', value: 0.82, conditional: false }),
+      predictionRow({ stat: 'ast', value: 8 }),
+      predictionRow({ stat: 'pts_uncond', value: 20.5, conditional: false }),
+      predictionRow({ stat: 'minutes', quantile: 0.1, value: 26 }),
+      predictionRow({ stat: 'minutes', quantile: 0.5, value: 34.5 }),
+      predictionRow({ stat: 'minutes', quantile: 0.9, value: 41 }),
+      predictionRow({ stat: 'pts', quantile: 0.1, value: 14 }),
+      predictionRow({ stat: 'pts', quantile: 0.5, value: 24.5 }),
+      predictionRow({ stat: 'pts', quantile: 0.9, value: 37 }),
+    ]);
+
+    // act
+    const res = await request(app).get('/api/players/5/analytics');
+
+    // assert
+    expect(res.status).toBe(200);
+    expect(res.body.prediction).toMatchObject({
+      as_of: '2026-03-01T13:30:00.000Z',
+      model_version: '2026-02-28',
+      game_date: '2026-03-02',
+      prob_active: 0.82,
+      conditional: true,
+      unconditional_pts: 20.5,
+    });
+    expect(res.body.prediction.projected.minutes).toEqual({ p10: 26, p50: 34.5, p90: 41 });
+    expect(res.body.prediction.projected.ast).toBe(8);
+    expect(res.body.prediction.projected.reb).toBeNull();
+  });
+
+  it('binds the nba player id to the prediction query rather than the row id', async () => {
+    // arrange — predictions key on players.nba_id, not players.id
+    mockPlayerAnalyticsQueries(logRows, [predictionRow()]);
+
+    // act
+    await request(app).get('/api/players/5/analytics');
+
+    // assert
+    const [sql, params] = queryMock.mock.calls[5];
+    expect(sql).toContain('player_game_predictions');
+    expect(params).toEqual(['2544']);
+  });
+
+  it('keeps the rest of the page when the prediction tables are missing', async () => {
+    // arrange — migration 014 is applied by hand, so there is a real window in
+    // which the analytics query works and the prediction query does not
+    queryMock
+      .mockResolvedValueOnce(pgResult([lebronRow]))
+      .mockResolvedValueOnce(pgResult(poolRows))
+      .mockResolvedValueOnce(pgResult(poolTotalsRows))
+      .mockResolvedValueOnce(pgResult(teamRows))
+      .mockResolvedValueOnce(pgResult(logRows))
+      .mockRejectedValueOnce(new Error('relation "player_game_predictions" does not exist'));
+
+    // act
+    const res = await request(app).get('/api/players/5/analytics');
+
+    // assert
+    expect(res.status).toBe(200);
+    expect(res.body.prediction).toBeNull();
+    expect(res.body.percentiles).toHaveLength(ANALYTICS_STATS.length);
   });
 });
 

@@ -267,6 +267,43 @@ describe('PlayerPage', () => {
     expect(screen.getByText(/medium confidence/i)).toBeInTheDocument();
   });
 
+  it('renders quantile bands, play probability and the schedule-adjusted line', async () => {
+    // arrange — the shape the prediction store actually serves (migration 014)
+    analyticsMock.mockResolvedValue(
+      fullPayload({
+        prediction: {
+          summary: '82% to play, 34.5 min (26.0-41.0), 24.5 pts if he plays.',
+          projected: {
+            minutes: { p10: 26, p50: 34.5, p90: 41 },
+            pts: { p10: 14, p50: 24.5, p90: 37 },
+            ast: 8,
+            reb: null,
+          },
+          prob_active: 0.82,
+          conditional: true,
+          unconditional_pts: 20.5,
+          game_date: '2026-03-02',
+          model_version: '2026-02-28',
+          as_of: '2026-03-01T13:30:00Z',
+        },
+      })
+    );
+
+    // act
+    renderPage();
+
+    // assert — bands show median + spread, nulls are skipped, context is visible
+    expect(await screen.findByRole('heading', { name: /Projection/i })).toBeInTheDocument();
+    expect(screen.getByText('34.5')).toBeInTheDocument();
+    expect(screen.getByText('26.0–41.0')).toBeInTheDocument();
+    expect(screen.getByText('24.5')).toBeInTheDocument();
+    expect(screen.getByText('14.0–37.0')).toBeInTheDocument();
+    expect(screen.getByText('82% to play')).toBeInTheDocument();
+    expect(screen.getByText(/Schedule-adjusted points/i)).toBeInTheDocument();
+    expect(screen.getByText('20.5')).toBeInTheDocument();
+    expect(screen.getByText(/stat lines assume he plays/i)).toBeInTheDocument();
+  });
+
   it('shows an error state with a retry button when the analytics call fails', async () => {
     // arrange
     analyticsMock.mockRejectedValue(new Error('analytics down'));

@@ -47,17 +47,35 @@ python train.py --version 2026-08-16
 # 3. evaluate: rolling-origin report -> reports/<version>.md
 python evaluate.py --version 2026-08-16
 
-# 4. predict: next games -> parquet
+# 4. predict: next games -> parquet, and optionally to postgres
 python predict.py --version 2026-08-16 --out data\predictions.parquet
-python predict.py --version 2026-08-16 --write-db    # exits: migration 014 pending
+python predict.py --version 2026-08-16 --write-db    # needs DATABASE_URL + migration 014
 
 # tests
 python -m pytest tests -v
 ```
 
-`--write-db` is wired but inert. The predictions table arrives with migration
-014, which is not in the repo yet; the flag exits non-zero with that message
-rather than pretending to succeed.
+`--write-db` inserts one `prediction_runs` row and one
+`player_game_predictions` row per (player, game, stat, quantile), in a single
+transaction, against the tables from `db/migrations/014_predictions.sql`. That
+migration is applied by hand in the Neon SQL editor — run it against prod and
+the dev branch before the first `--write-db`, then record it in
+`schema_migrations` the way `scraper/check_migrations.py` expects.
+
+The store is **append-only**. A re-run writes a new run and never edits an old
+one, because a prediction that can be revised after the fact cannot be
+backtested. Serving reads the newest run with `status = 'complete'`.
+
+`--write-db` **refuses the approximation universe** unless
+`--allow-biased-universe` is passed, and stamps the reason into the run's notes
+when it is. A stored prediction outlives the caveat that shipped with it.
+
+Per scheduled player-game the run writes 13 rows: `prob_active` (unconditional,
+`[0,1]`), a conditional expected value and a `<stat>_uncond` schedule-level one
+for minutes/pts/ast, and P10/P50/P90 for minutes and pts. Quantiles come from
+the empirical residual quantiles of the training holdout window
+(`fnba_ml/intervals.py`), measured on appearances only, and are non-crossing by
+construction — offsets sorted when built, values sorted again when written.
 
 ### Artifacts
 
@@ -89,6 +107,8 @@ fnba_ml/
   features.py            leakage-safe as-of feature construction
   models.py              the ladder, EWMA champion, decomposed estimator, OOF guard
   evaluate.py            rolling-origin harness, segments, skill scores, champion picks
+  intervals.py           empirical residual quantiles -> non-crossing P10/P50/P90
+  store.py               the migration-014 row builder (pure) and its transaction
   registry.py            models/registry.json
 ```
 
@@ -267,7 +287,7 @@ this sample size, and no confidence intervals are computed.
 ## Tests
 
 ```powershell
-python -m pytest tests -v      # 58 tests
+python -m pytest tests -v      # 87 tests
 ```
 
 | File | Covers |
@@ -275,6 +295,7 @@ python -m pytest tests -v      # 58 tests
 | `tests/test_features.py` | all 12 leakage tests ported from `ml-spike/leakage_tests.py`, plus the `groupby().first()` trap regression and missingness-flag checks |
 | `tests/test_universe.py` | status-based preferred; fallback labeled and warns; approximation over-states availability and truncates long absences; schedule symmetry |
 | `tests/test_models.py` | decomposition math; out-of-fold discipline including a deliberately constructed in-fold failure; EWMA champion behaviour; metric helpers |
+| `tests/test_predictions.py` | the migration-014 row builder as a pure function: conditional vs unconditional flagging, quantile non-crossing (including a deliberately crossed input), `prob_active` clamped to [0,1], non-finite values dropped rather than zeroed. No database — `write_predictions` is read, never run |
 
 Every leakage test runs **twice**, once per universe construction, so a dropped
 shift fails on the production path and on the backtest path alike.

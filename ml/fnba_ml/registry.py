@@ -111,6 +111,43 @@ def upsert(entry: dict[str, object], path: Path = REGISTRY_PATH) -> dict[str, ob
     return registry
 
 
+def record_prediction_run(
+    model_version: str,
+    run: dict[str, object],
+    path: Path = REGISTRY_PATH,
+) -> dict[str, object] | None:
+    """link a database prediction_runs row back to the model that produced it.
+
+    the two records answer different questions and neither is redundant:
+    prediction_runs says "what was claimed and when", the registry entry says
+    "what produced it". without this list, going from a suspicious prediction to
+    the artifact that made it means matching on model_version strings by hand
+    and hoping no version was ever rebuilt.
+
+    a missing entry is a warning, not an error: the predictions are already
+    committed to the database by the time this is called, and failing here would
+    report a failure for a run that in fact succeeded.
+    """
+    registry = load_registry(path)
+    entries = list(registry.get("entries", []))
+    for entry in entries:
+        if entry.get("model_version") == model_version:
+            runs = list(entry.get("prediction_runs", []))  # type: ignore[arg-type]
+            runs.append(run)
+            entry["prediction_runs"] = runs
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"schema": REGISTRY_SCHEMA, "entries": entries}, fh, indent=2)
+                fh.write("\n")
+            log.info("registry: linked prediction run %s to %s", run.get("run_id"), model_version)
+            return entry
+
+    log.warning(
+        "no registry entry for %r; the prediction run was written to the database "
+        "but is not linked to a model artifact", model_version,
+    )
+    return None
+
+
 def find(model_version: str, path: Path = REGISTRY_PATH) -> dict[str, object] | None:
     for entry in load_registry(path).get("entries", []):
         if entry.get("model_version") == model_version:

@@ -1,4 +1,5 @@
 import { query } from '../db.js';
+import { getLatestPredictionForPlayer, type PlayerPrediction } from './predictions.js';
 
 // current-season analytics for a single player: where they sit inside the
 // rotation pool, what that pool's distribution looks like, and how their recent
@@ -152,7 +153,14 @@ export interface PlayerAnalytics {
     rolling: RollingPoint[];
     last10_vs_season: Last10Comparison[];
   };
-  prediction: null;
+  /**
+   * The stored forecast for this player's next game, or null when the model has
+   * not made one. Everything above is measured history; this is the only field
+   * that is a claim about the future, and it is served from the append-only
+   * prediction store rather than computed here — a number on this page has to
+   * be the same number a backtest will later be scored against.
+   */
+  prediction: PlayerPrediction | null;
 }
 
 export interface LeagueDistribution {
@@ -616,6 +624,9 @@ export async function getPlayerAnalytics(playerId: number): Promise<PlayerAnalyt
   const nbaId = row.nba_id === null || row.nba_id === undefined ? null : String(row.nba_id);
   const snapshot = await getPoolSnapshot();
   const logs = await fetchPlayerLogs(nbaId);
+  // sequential rather than parallel with the logs query: db.ts runs a pool of
+  // max 1 connection, so Promise.all here would only queue behind itself.
+  const prediction = await getLatestPredictionForPlayer(nbaId);
 
   // the player's own impacts come from their own logs rather than the pool
   // snapshot, so a player outside the pool still gets a real number.
@@ -722,7 +733,7 @@ export async function getPlayerAnalytics(playerId: number): Promise<PlayerAnalyt
       rolling,
       last10_vs_season: last10VsSeason(logs),
     },
-    prediction: null,
+    prediction,
   };
 }
 
