@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import type { Player } from '../types';
 import { PlayerCareerSection } from './PlayerCareerSection';
 import { Rating2kBadge } from './Rating2kBadge';
@@ -74,6 +75,9 @@ export const PlayerModal = ({ player, onClose }: PlayerModalProps) => {
               <p className="text-sm opacity-60">{player.team} · {player.position}</p>
               {/* renders nothing when the player has no 2K match */}
               <Rating2kBadge playerName={player.name} />
+              <Link to={`/player/${player.id}`} onClick={onClose} className="link link-primary text-xs mt-1 inline-block">
+                Full analytics →
+              </Link>
             </div>
           </div>
           <button className="btn btn-sm btn-circle btn-ghost" onClick={onClose}>✕</button>

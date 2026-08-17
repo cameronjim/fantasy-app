@@ -1,0 +1,17 @@
+# pinned to the versions this package was developed and verified against on
+# Python 3.14.5 (Windows). all of these had cp314 wheels available.
+pandas==3.0.5
+numpy==2.5.2
+pyarrow==25.0.1
+scikit-learn==1.9.0
+joblib==1.5.3
+lightgbm==4.7.0
+
+# markdown tables in the evaluation report (pandas .to_markdown)
+tabulate==0.10.0
+
+# postgres source only. never imported by a parquet-mode run or by the tests.
+psycopg2-binary==2.9.10
+python-dotenv==1.1.1
+
+pytest==9.1.1

@@ -298,6 +298,181 @@ CREATE TABLE IF NOT EXISTS nba_2k_rating_history (
     PRIMARY KEY (player_slug, game_version)
 );
 
+-- ---------------------------------------------------------------------------
+-- Data truth layer (migration 013): the schedule, per-game logs, and one status
+-- row per scheduled player-game — the training universe for availability
+-- prediction. See db/migrations/013_truth_layer.sql for the full rationale.
+--
+-- Ids are TEXT because NBA game ids carry leading zeros ("0022300061"). Nothing
+-- here is foreign-keyed to players/teams: those hold only the current roster and
+-- are churned on every scrape, while these hold every player ever scheduled.
+-- Stat columns are nullable — NULL records "the source did not report this",
+-- which is a different fact from a real 0.
+-- ---------------------------------------------------------------------------
+
+-- migrations are applied by hand against two databases, so this records which
+-- ones actually landed here. Read by scraper/check_migrations.py.
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    filename TEXT PRIMARY KEY,
+    checksum TEXT NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- one row per truth-layer scraper phase invocation, for tracing which rows came
+-- from which run. watermark_* are TEXT because the incremental sync records game
+-- dates and the backfill records season labels.
+CREATE TABLE IF NOT EXISTS ingestion_runs (
+    id SERIAL PRIMARY KEY,
+    kind TEXT NOT NULL,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finished_at TIMESTAMPTZ,
+    status TEXT NOT NULL DEFAULT 'running',
+    watermark_from TEXT,
+    watermark_to TEXT,
+    rows_written INTEGER,
+    notes TEXT
+);
+
+-- every scheduled game, played or not, keyed on NBA's game id. Separate from
+-- `games`, which keys on ESPN's event id — the two id spaces do not join.
+CREATE TABLE IF NOT EXISTS nba_schedule (
+    id SERIAL PRIMARY KEY,
+    nba_game_id TEXT NOT NULL UNIQUE,
+    season TEXT NOT NULL,
+    season_type TEXT NOT NULL,
+    game_date DATE NOT NULL,
+    scheduled_at TIMESTAMPTZ,
+    home_team_id TEXT,
+    away_team_id TEXT,
+    home_team_abbr TEXT,
+    away_team_abbr TEXT,
+    game_status TEXT,
+    postponed_status TEXT,
+    source TEXT NOT NULL,
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- one row per player per game they recorded a line for. minutes are decimal
+-- (34.20 for "34:12"); dnp_reason is the verbatim box-score COMMENT.
+CREATE TABLE IF NOT EXISTS player_game_logs (
+    id SERIAL PRIMARY KEY,
+    nba_player_id TEXT NOT NULL,
+    nba_game_id TEXT NOT NULL,
+    season TEXT NOT NULL,
+    season_type TEXT NOT NULL,
+    game_date DATE NOT NULL,
+    team_id TEXT,
+    team_abbr TEXT,
+    opponent_team_id TEXT,
+    is_home BOOLEAN,
+    started BOOLEAN,
+    minutes NUMERIC(5,2),
+    pts SMALLINT,
+    reb SMALLINT,
+    ast SMALLINT,
+    stl SMALLINT,
+    blk SMALLINT,
+    tov SMALLINT,
+    fgm SMALLINT,
+    fga SMALLINT,
+    fg3m SMALLINT,
+    fg3a SMALLINT,
+    ftm SMALLINT,
+    fta SMALLINT,
+    plus_minus SMALLINT,
+    dnp_reason TEXT,
+    source TEXT NOT NULL,
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ingestion_run_id INTEGER REFERENCES ingestion_runs (id) ON DELETE SET NULL,
+    UNIQUE (nba_player_id, nba_game_id)
+);
+
+-- two rows per game. doubles as the completed-game schedule, since one league
+-- game log request returns both sides of every played game. no wins/losses:
+-- those are standings, not a property of this game.
+CREATE TABLE IF NOT EXISTS team_game_logs (
+    id SERIAL PRIMARY KEY,
+    team_id TEXT NOT NULL,
+    nba_game_id TEXT NOT NULL,
+    season TEXT NOT NULL,
+    season_type TEXT NOT NULL,
+    game_date DATE NOT NULL,
+    team_abbr TEXT,
+    opponent_team_id TEXT,
+    is_home BOOLEAN,
+    minutes NUMERIC(6,2),
+    pts SMALLINT,
+    reb SMALLINT,
+    ast SMALLINT,
+    stl SMALLINT,
+    blk SMALLINT,
+    tov SMALLINT,
+    fgm SMALLINT,
+    fga SMALLINT,
+    fg3m SMALLINT,
+    fg3a SMALLINT,
+    ftm SMALLINT,
+    fta SMALLINT,
+    plus_minus SMALLINT,
+    source TEXT NOT NULL,
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ingestion_run_id INTEGER REFERENCES ingestion_runs (id) ON DELETE SET NULL,
+    UNIQUE (team_id, nba_game_id)
+);
+
+-- one row per scheduled player-game, appeared or not: the ML training universe.
+-- listed_inactive is NULL when the inactive list has not been fetched yet —
+-- "we do not know" must not collapse into "he was active".
+CREATE TABLE IF NOT EXISTS player_game_status (
+    id SERIAL PRIMARY KEY,
+    nba_player_id TEXT NOT NULL,
+    nba_game_id TEXT NOT NULL,
+    team_id TEXT,
+    rostered BOOLEAN NOT NULL,
+    listed_inactive BOOLEAN,
+    started BOOLEAN,
+    played BOOLEAN NOT NULL,
+    dnp_reason TEXT,
+    minutes NUMERIC(5,2),
+    source TEXT NOT NULL,
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ingestion_run_id INTEGER REFERENCES ingestion_runs (id) ON DELETE SET NULL,
+    UNIQUE (nba_player_id, nba_game_id)
+);
+
+-- which team a player belonged to over which span. valid_to NULL = still open.
+-- needed so a feature computed against his current team cannot leak a trade
+-- backwards into pre-trade rows.
+CREATE TABLE IF NOT EXISTS player_team_stints (
+    id SERIAL PRIMARY KEY,
+    nba_player_id TEXT NOT NULL,
+    team_id TEXT NOT NULL,
+    valid_from DATE NOT NULL,
+    valid_to DATE,
+    source TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (nba_player_id, team_id, valid_from)
+);
+
+-- append-only log of scraped injury designations. append-only because the model
+-- asks "what was known at the time", which an overwrite-in-place table cannot
+-- answer. players.injury_status keeps its overwrite behaviour for the UI.
+CREATE TABLE IF NOT EXISTS player_injury_reports (
+    id SERIAL PRIMARY KEY,
+    nba_player_id TEXT NOT NULL,
+    nba_game_id TEXT,
+    captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    report_as_of TIMESTAMPTZ,
+    status_raw TEXT,
+    status_normalized TEXT,
+    reason TEXT,
+    source TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_players_team ON players(team);
 CREATE INDEX IF NOT EXISTS idx_players_position ON players(position);
 CREATE INDEX IF NOT EXISTS idx_players_name ON players(name);
@@ -310,3 +485,20 @@ CREATE INDEX IF NOT EXISTS idx_nba_2k_players_team_type_overall ON nba_2k_player
 CREATE INDEX IF NOT EXISTS idx_nba_2k_players_overall ON nba_2k_players(overall DESC);
 CREATE INDEX IF NOT EXISTS idx_nba_2k_players_name ON nba_2k_players(name);
 CREATE INDEX IF NOT EXISTS idx_nba_2k_players_normalized_name ON nba_2k_players(normalized_name);
+CREATE INDEX IF NOT EXISTS idx_ingestion_runs_kind ON ingestion_runs(kind, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_nba_schedule_date ON nba_schedule(game_date);
+CREATE INDEX IF NOT EXISTS idx_nba_schedule_season ON nba_schedule(season, season_type);
+CREATE INDEX IF NOT EXISTS idx_player_game_logs_player_date ON player_game_logs(nba_player_id, game_date);
+CREATE INDEX IF NOT EXISTS idx_player_game_logs_season ON player_game_logs(season);
+CREATE INDEX IF NOT EXISTS idx_player_game_logs_game ON player_game_logs(nba_game_id);
+CREATE INDEX IF NOT EXISTS idx_team_game_logs_season ON team_game_logs(season);
+CREATE INDEX IF NOT EXISTS idx_team_game_logs_game ON team_game_logs(nba_game_id);
+CREATE INDEX IF NOT EXISTS idx_team_game_logs_team_date ON team_game_logs(team_id, game_date);
+CREATE INDEX IF NOT EXISTS idx_player_game_status_player ON player_game_status(nba_player_id);
+CREATE INDEX IF NOT EXISTS idx_player_game_status_game ON player_game_status(nba_game_id);
+CREATE INDEX IF NOT EXISTS idx_player_team_stints_player ON player_team_stints(nba_player_id, valid_from);
+-- a player belongs to exactly one team at a time, so at most one stint may be open.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_player_team_stints_one_open
+  ON player_team_stints(nba_player_id) WHERE valid_to IS NULL;
+CREATE INDEX IF NOT EXISTS idx_player_injury_reports_player_captured
+  ON player_injury_reports(nba_player_id, captured_at DESC);

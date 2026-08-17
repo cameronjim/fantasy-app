@@ -117,6 +117,9 @@ fantasy roster, the Claude-powered analysis surfaces, and the bet tracker.
 | ESPN public API (`site.api.espn.com`) | Games, scores, live scoreboard, betting odds | Not IP-blocked from AWS, which is why it backs the scoreboard and odds board instead of `cdn.nba.com`. |
 | [CBS Sports](https://www.cbssports.com/nba/injuries/) | Injury reports and specific positions | Parsed with Beautiful Soup. |
 | [`nba2kapi.com`](https://nba2kapi.com) | NBA 2K overall ratings, 35 attributes, badges, and rating history | Data originates from [2kratings.com](https://www.2kratings.com). Not affiliated with or endorsed by 2K Sports, Take-Two, or the NBA. Matching to our players is name-based, since 2K publishes no NBA ids. |
+| `stats.nba.com` &rarr; `scheduleleaguev2` | The season schedule, including games not yet played | Publishes the whole season in advance, which is what lets a prediction be made for tonight's game before any box score exists. Falls back to reconstructing completed games from `leaguegamelog` when the endpoint is unavailable. ESPN is deliberately *not* the fallback: it keys on its own event ids, which do not join to any `stats.nba.com` game id. |
+| `stats.nba.com` &rarr; `playergamelogs`, `leaguegamelog` | Per-game player and team box scores | One request each covers a whole season, or any date window within it, so the incremental sync costs two requests per run rather than one per game. |
+| `stats.nba.com` &rarr; `boxscoresummaryv3` (fallback `boxscoresummaryv2`) | Official per-game inactive lists, from the `InactivePlayers` result set | The only phase that costs a request **per game**, which is why the truth-layer backfill is slow and opt-in. `v3` is tried first because `nba_api` documents `v2` as having no data for games on or after 2025-04-10. |
 
 ## Configuration
 
@@ -225,18 +228,21 @@ component fetches directly.
 
 ## Database Schema and Migrations
 
-- **`db/schema.sql`** declares 19 tables: `players`, `teams`, `games`, `users`,
+- **`db/schema.sql`** declares 27 tables: `players`, `teams`, `games`, `users`,
   `password_reset_tokens`, `my_roster`, `analysis_cache`, `waiver_cache`,
   `bets`, `betting_cache`, `chat_history`, `page_views`, `rate_limits`,
   `player_season_stats`, `team_season_stats`, `nba_2k_players`,
-  `nba_2k_attributes`, `nba_2k_badges`, and `nba_2k_rating_history`. It
-  uses `CREATE TABLE / INDEX IF NOT EXISTS` throughout, so re-running it is safe.
+  `nba_2k_attributes`, `nba_2k_badges`, `nba_2k_rating_history`,
+  `schema_migrations`, `ingestion_runs`, `nba_schedule`, `player_game_logs`,
+  `team_game_logs`, `player_game_status`, `player_team_stints`, and
+  `player_injury_reports`. It uses `CREATE TABLE / INDEX IF NOT EXISTS`
+  throughout, so re-running it is safe.
 - **`db/migrations/`** holds sequential, hand-written SQL migrations, `001`
-  through `012`, covering email and password reset, team conference backfill,
+  through `013`, covering email and password reset, team conference backfill,
   user preferences, Google Sign-In, profile fields, betting, bet money fields,
   rate limits, admin and pageviews, the team abbreviation backfill, the
-  historical season-stats tables, and the NBA 2K ratings tables. Each is
-  idempotent, so re-applying one is harmless.
+  historical season-stats tables, the NBA 2K ratings tables, and the data truth
+  layer. Each is idempotent, so re-applying one is harmless.
 - The four `nba_2k_*` tables are key-value rather than wide (one row per
   attribute, per badge, per game version) because 2K reshuffles its attribute and
   badge sets every September, and with no migration runner a wide table would
@@ -246,8 +252,117 @@ component fetches directly.
   and does not declare `users.ai_preferences`, which migration `003` adds and the
   preferences and AI features depend on, so the schema alone is not enough.
 - Migrations are applied by hand in the Neon SQL editor.
+- Since there is no runner, "did I already apply this here?" has historically had
+  no answer. Migration `013` adds a `schema_migrations` table and
+  `scraper/check_migrations.py` reports against it:
+
+  ```bash
+  cd scraper
+  python check_migrations.py                        # prod (DATABASE_URL)
+  python check_migrations.py --dev                  # dev branch
+  python check_migrations.py --record 013_truth_layer.sql
+  ```
+
+  It is read-only except for `--record`, which writes a `schema_migrations` row
+  for a migration you have just applied by hand. It never executes SQL from a
+  migration file, so it cannot be mistaken for a runner. A database with no
+  `schema_migrations` table is reported as "nothing recorded" rather than
+  treated as empty.
 - Admin has no signup path and is enforced server-side. Grant it directly:
   `UPDATE users SET is_admin = TRUE WHERE email = 'you@example.com';`
+
+### The data truth layer
+
+Migration `013` adds the tables a fantasy availability model trains on. The
+short version of why: a model fitted only on recorded game logs answers "how
+much will he produce **given** he plays", and a Phase 0 feasibility spike
+measured that as overstating production over the real schedule by roughly half.
+The training unit therefore has to be the *scheduled player-game*, including the
+ones a player missed and the reason he missed them.
+
+| Table | Holds |
+|---|---|
+| `nba_schedule` | Every scheduled game, played or not, keyed on NBA's game id. Separate from `games`, which keys on ESPN event ids — the two id spaces do not join. |
+| `player_game_logs` | One row per player per game they recorded a line for. `minutes` is decimal (34.20 for `34:12`); `dnp_reason` is the verbatim box-score `COMMENT`. |
+| `team_game_logs` | Two rows per game. Doubles as the completed-game schedule. |
+| `player_game_status` | **The training universe.** One row per scheduled player-game, appeared or not, with `rostered` / `listed_inactive` / `played` kept distinct. |
+| `player_team_stints` | Which team a player belonged to over which span, so a feature cannot leak a trade backwards into pre-trade rows. |
+| `player_injury_reports` | Append-only history of scraped injury designations — "what was known at the time", which the overwrite-in-place `players.injury_status` cannot answer. |
+| `ingestion_runs` | One row per truth-layer scraper phase invocation, for tracing which rows came from which run. |
+
+Ids are `TEXT` throughout, because NBA game ids carry leading zeros
+(`0022300061`) and stop being valid ids the moment something parses them as a
+number.
+
+**The incremental half runs as part of the normal 6-hour cron** — schedule, game
+logs, then game status, after the existing four scrapes. Each phase logs and
+continues on failure, so an outage in one cannot cost the others. The game-log
+sync is watermarked on `MAX(game_date)` and re-reads a trailing 3-day window to
+pick up scorer corrections. The status phase is bounded to recent games and
+capped at 40 per run, since it costs one request per game.
+
+#### Runbook: migration → backfill → validate
+
+1. **Apply the migration by hand, to both databases.** Paste
+   `db/migrations/013_truth_layer.sql` into the Neon SQL editor and run it
+   against **prod first, then the dev branch**. Nothing below works until this
+   is done. Then record it:
+
+   ```bash
+   cd scraper
+   python check_migrations.py --record 013_truth_layer.sql
+   python check_migrations.py --dev --record 013_truth_layer.sql
+   ```
+
+2. **Backfill, locally.** Like `--backfill-history`, this must run from a
+   residential IP: `stats.nba.com` is Akamai-blocked from GitHub Actions and
+   throttles hard, so it is deliberately not part of the cron.
+
+   ```bash
+   cd scraper
+   pip install -r requirements.txt
+   python run_scraper.py --backfill-game-logs --dev          # rehearse on dev
+   python run_scraper.py --backfill-game-logs --dry-run      # reads only, writes nothing
+   python run_scraper.py --backfill-game-logs                # prod, 2022-23 to current
+   python run_scraper.py --backfill-game-logs --from 2022-23 --to 2024-25
+   ```
+
+   **Expect it to take hours.** Schedule and game logs are two requests per
+   season; the inactive lists are one request per game, paced at
+   `BACKFILL_REQUEST_DELAY_SECONDS` (5s). At ~1,230 games per season that is
+   **roughly 1.7 hours per season of pacing alone**, so ~7 hours for the default
+   four-season range, more with retries. It is resumable: a game is only fetched
+   if it has no `player_game_status` rows at all, so a killed run re-run from the
+   same command skips everything already done and costs only the two league-wide
+   calls per season to get going again.
+
+3. **Validate.** Read-only, takes no locks, safe against prod mid-scrape:
+
+   ```bash
+   python run_scraper.py --validate-game-logs
+   python run_scraper.py --validate-game-logs --from 2024-25 --to 2025-26
+   ```
+
+   Per season it checks two team rows per completed game, no duplicate
+   player/game keys, `FGM <= FGA`, `3PM <= 3PA`, `3PM <= FGM`, `FTM <= FTA`,
+   player-points summing to team points, and lists any completed scheduled game
+   with no logs or no status rows. It finishes with `pg_total_relation_size` for
+   each new table.
+
+`--dry-run` is honoured by every write path in the scraper, including the four
+original scrapes: reads still run, writes are counted and skipped.
+
+#### Tests
+
+The truth layer's parsing, watermark, stint, validation, and derivation logic is
+pure and unit-tested with no database and no network:
+
+```bash
+python -m pytest scraper/test_truth_layer.py
+```
+
+Fixtures are copied from `nba_api`'s own `expected_data` column declarations, so
+a fixture that drifts from the real response shape cannot pass silently.
 
 ## Deployment
 
@@ -323,11 +438,13 @@ fantasy-app/
 │       └── scraper.yml           # 6-hour scraper cron
 ├── db/
 │   ├── schema.sql                # full PostgreSQL schema
-│   ├── migrations/               # 001 through 010, sequential SQL migrations
+│   ├── migrations/               # 001 through 013, sequential SQL migrations
 │   └── seed.ts                   # sample players/teams/games
 ├── scraper/
 │   ├── requirements.txt
-│   └── run_scraper.py            # players, teams, games, injuries
+│   ├── run_scraper.py            # players, teams, games, injuries, truth layer
+│   ├── check_migrations.py       # migration state report (read-only)
+│   └── test_truth_layer.py       # pytest, pure functions, no db or network
 ├── backend/
 │   ├── package.json
 │   ├── serverless.yml            # Lambda + HTTP API definition

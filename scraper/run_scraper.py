@@ -24,6 +24,18 @@ and all-time rosters are large and only change when 2K adds a card):
 
 Defaults to current players only. Data comes from the unauthenticated public
 nba2kapi.com endpoint (which mirrors 2kratings.com); no key or signup is needed.
+
+Data truth layer (schedule, per-game logs, per-scheduled-player-game status).
+The incremental half runs as part of the normal un-flagged scrape. The one-time
+historical half is opt-in and, like --backfill-history, must be run locally from
+a residential IP:
+
+    python run_scraper.py --backfill-game-logs
+    python run_scraper.py --backfill-game-logs --from 2022-23 --to 2025-26
+    python run_scraper.py --validate-game-logs
+
+Every write path honours --dry-run, which reports what it would have written and
+executes nothing. Migration 013 must be applied first (see check_migrations.py).
 """
 
 import argparse
@@ -34,7 +46,8 @@ import re
 import sys
 import time
 import unicodedata
-from datetime import datetime, timedelta
+from collections.abc import Mapping, Sequence
+from datetime import date, datetime, timedelta
 from typing import Callable, TypeVar
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
@@ -47,6 +60,8 @@ from dotenv import load_dotenv
 from nba_api.stats.endpoints import (
     leaguedashplayerstats,
     leaguedashteamstats,
+    leaguegamelog,
+    playergamelogs,
 )
 
 env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
@@ -103,6 +118,10 @@ TEAM_ID_TO_ABBR = {
     "1610612761": "TOR", "1610612762": "UTA", "1610612764": "WAS",
 }
 
+# Truth-layer game logs report the opponent only as an abbreviation (inside
+# MATCHUP), so this is how an opponent team id is recovered.
+ABBR_TO_TEAM_ID = {abbr: team_id for team_id, abbr in TEAM_ID_TO_ABBR.items()}
+
 # Reverse of TEAM_META's full_name, used when a team id is unexpectedly missing
 # (e.g. NBA changes an id, or a future expansion team appears).
 NAME_TO_ABBR = {
@@ -154,7 +173,65 @@ NBA_2K_TEAM_TYPES = ("curr", "class", "allt")
 # static, so pulling them is an explicit opt-in.
 NBA_2K_DEFAULT_TEAM_TYPES = "curr"
 
+# ---- data truth layer ----
+
+SEASON_TYPE_REGULAR = "Regular Season"
+
+# Re-fetch this many days behind the stored watermark on every incremental run.
+# stats.nba.com revises box scores after the fact — scorer corrections usually
+# land the following morning — so the newest rows are the least final ones.
+GAME_LOG_CORRECTION_WINDOW_DAYS = 3
+
+# How far back the incremental status pass looks for completed games that still
+# have no player_game_status rows. Bounded so a cron run can never quietly turn
+# into a full-season backfill; that is what --backfill-game-logs is for.
+GAME_STATUS_RECENT_WINDOW_DAYS = 10
+# Hard ceiling on per-game inactive-list calls in one cron run. Each game is a
+# separate request to stats.nba.com, and the cron fires every 6 hours.
+GAME_STATUS_MAX_GAMES_PER_RUN = 40
+
+# The truth layer only goes back as far as the availability model needs. Rule
+# and roster-construction changes make older seasons less transferable, and each
+# season costs ~1,230 per-game requests to fetch inactive lists for.
+BACKFILL_GAME_LOGS_DEFAULT_FROM_SEASON = "2022-23"
+
+# NBA encodes the season type in the first three characters of a game id, which
+# is the only place it appears on some endpoints.
+GAME_ID_PREFIX_TO_SEASON_TYPE = {
+    "001": "Pre Season",
+    "002": "Regular Season",
+    "003": "All Star",
+    "004": "Playoffs",
+    "005": "PlayIn",
+}
+SEASON_TYPE_UNKNOWN = "Unknown"
+
+# Box-score points are integers on both sides, so player-sum vs team-total
+# should agree exactly. The only legitimate slack is a scorer correction that
+# has landed in one table but not yet the other.
+VALIDATION_POINTS_TOLERANCE = 1
+# validation prints offenders rather than just counting them, but not all of them.
+VALIDATION_MAX_EXAMPLES = 15
+
+TRUTH_LAYER_TABLES = (
+    "nba_schedule",
+    "player_game_logs",
+    "team_game_logs",
+    "player_game_status",
+    "player_team_stints",
+    "player_injury_reports",
+    "ingestion_runs",
+)
+
 _SEASON_PATTERN = re.compile(r"^(\d{4})-\d{2}$")
+_MATCHUP_PATTERN = re.compile(
+    r"^\s*(?P<team>[A-Za-z]{2,4})\s+(?P<sep>vs\.?|@)\s+(?P<opp>[A-Za-z]{2,4})\s*$",
+    re.IGNORECASE,
+)
+# v3 box scores report minutes as an ISO-8601 duration, e.g. "PT34M12.00S".
+_MINUTES_ISO_PATTERN = re.compile(
+    r"^PT(?:(?P<min>\d+(?:\.\d+)?)M)?(?:(?P<sec>\d+(?:\.\d+)?)S)?$", re.IGNORECASE
+)
 
 # maps NBA broad positions to specific positions for multi-position support
 _BROAD_TO_SPECIFIC: dict[str, list[str]] = {
@@ -359,7 +436,9 @@ def resolve_positions(cbs_pos: str, nba_broad_pos: str) -> str:
     return ""
 
 
-def scrape_players(conn: psycopg2.extensions.connection) -> None:
+def scrape_players(
+    conn: psycopg2.extensions.connection, dry_run: bool = False
+) -> None:
     logger.info("fetching player stats...")
 
     logger.info("fetching player positions from CBS Sports...")
@@ -385,7 +464,7 @@ def scrape_players(conn: psycopg2.extensions.connection) -> None:
         logger.error("error fetching player stats: %s", e)
         return
 
-    cur = conn.cursor()
+    cur = maybe_write_cursor(conn.cursor(), dry_run)
     count = 0
     for _, row in df.iterrows():
         player_id = str(row["PLAYER_ID"])
@@ -448,7 +527,9 @@ def scrape_players(conn: psycopg2.extensions.connection) -> None:
     logger.info("upserted %d players", count)
 
 
-def scrape_teams(conn: psycopg2.extensions.connection) -> None:
+def scrape_teams(
+    conn: psycopg2.extensions.connection, dry_run: bool = False
+) -> None:
     logger.info("fetching team stats...")
     time.sleep(2)
     try:
@@ -486,7 +567,7 @@ def scrape_teams(conn: psycopg2.extensions.connection) -> None:
     except Exception as e:
         logger.warning("could not fetch advanced team stats: %s", e)
 
-    cur = conn.cursor()
+    cur = maybe_write_cursor(conn.cursor(), dry_run)
     count = 0
     for _, row in df.iterrows():
         team_id = str(row["TEAM_ID"])
@@ -630,14 +711,16 @@ def _fetch_espn_scoreboard(date_str: str) -> list[dict]:
     return games
 
 
-def scrape_scoreboard(conn: psycopg2.extensions.connection) -> None:
+def scrape_scoreboard(
+    conn: psycopg2.extensions.connection, dry_run: bool = False
+) -> None:
     """Fetch games from ESPN for a rolling 10-day window (2 days back, 7 days ahead)."""
     logger.info("fetching games from ESPN (2 days back → 7 days ahead)...")
 
     et = ZoneInfo("America/New_York")
     today = datetime.now(et)
 
-    cur = conn.cursor()
+    cur = maybe_write_cursor(conn.cursor(), dry_run)
     total = 0
 
     for offset in range(-2, 8):  # -2 = day before yesterday, 7 = 7 days from now
@@ -679,7 +762,9 @@ def scrape_scoreboard(conn: psycopg2.extensions.connection) -> None:
     logger.info("total games upserted: %d", total)
 
 
-def scrape_injuries(conn: psycopg2.extensions.connection) -> None:
+def scrape_injuries(
+    conn: psycopg2.extensions.connection, dry_run: bool = False
+) -> None:
     logger.info("fetching injury report from CBS Sports...")
     time.sleep(1)
     try:
@@ -700,7 +785,7 @@ def scrape_injuries(conn: psycopg2.extensions.connection) -> None:
 
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    cur = conn.cursor()
+    cur = maybe_write_cursor(conn.cursor(), dry_run)
     cur.execute("UPDATE players SET injury_status = NULL, injury_detail = NULL")
 
     team_name_to_abbr = {
@@ -722,6 +807,7 @@ def scrape_injuries(conn: psycopg2.extensions.connection) -> None:
     }
 
     count = 0
+    logged = 0
     tables = soup.select("div.TableBase")
     for table in tables:
         team_el = table.select_one("span.TeamName a")
@@ -739,24 +825,51 @@ def scrape_injuries(conn: psycopg2.extensions.connection) -> None:
             injury_detail = cells[2].get_text(strip=True) if len(cells) > 2 else ""
             injury_status = cells[3].get_text(strip=True) if len(cells) > 3 else "Day-To-Day"
 
-            if player_name:
+            if not player_name:
+                continue
+
+            status = injury_status or "Day-To-Day"
+            detail = injury_detail or "Unknown"
+            # RETURNING nba_id so the append-only history below can key on the
+            # NBA player id. CBS publishes names only, so the players table is
+            # the only place that mapping exists.
+            cur.execute(
+                """
+                UPDATE players SET injury_status = %s, injury_detail = %s,
+                    updated_at = NOW()
+                WHERE LOWER(name) = LOWER(%s)
+                RETURNING nba_id
+                """,
+                (status, detail, player_name),
+            )
+            matched = cur.fetchall()
+            if matched:
+                count += len(matched)
+
+            # append-only history, one row per scrape per matched player. Never
+            # an upsert: "what did we know at 6am" is the question the model
+            # asks, and overwriting the row destroys the answer.
+            for (nba_id,) in matched:
+                if not nba_id:
+                    continue
+                logged += 1
                 cur.execute(
                     """
-                    UPDATE players SET injury_status = %s, injury_detail = %s,
-                        updated_at = NOW()
-                    WHERE LOWER(name) = LOWER(%s)
+                    INSERT INTO player_injury_reports (nba_player_id, captured_at,
+                                                       status_raw, status_normalized,
+                                                       reason, source)
+                    VALUES (%s, NOW(), %s, %s, %s, 'cbssports')
                     """,
-                    (
-                        injury_status or "Day-To-Day",
-                        injury_detail or "Unknown",
-                        player_name,
-                    ),
+                    (str(nba_id), status, normalize_injury_status(status), detail),
                 )
-                if cur.rowcount > 0:
-                    count += 1
 
     cur.close()
-    logger.info("updated %d player injuries", count)
+    logger.info(
+        "updated %d player injuries%s, logged %d report row(s)",
+        count,
+        " (dry run: no rows written)" if dry_run else "",
+        logged,
+    )
 
 
 def season_start_year(season: str) -> int:
@@ -1424,6 +1537,1688 @@ def sync_2k_ratings(
         logger.info("2k unavailable (re-run to retry): %s", ", ".join(unavailable))
 
 
+# ---------------------------------------------------------------------------
+# Data truth layer — pure helpers.
+#
+# Everything in this section is a plain function over plain data: no database,
+# no network. That is deliberate, and it is what scraper/test_truth_layer.py
+# covers, since the write paths below cannot be exercised without a real Neon
+# connection.
+# ---------------------------------------------------------------------------
+
+
+def parse_minutes(val: object) -> float | None:
+    """Decimal minutes from whatever shape a source reports.
+
+    Three are in play across the endpoints this scraper touches: the league-wide
+    game logs return a number (34.2), the v2 box scores return "MM:SS"
+    ("34:12"), and the v3 box scores return an ISO-8601 duration
+    ("PT34M12.00S"). All three mean the same thing, so all three are stored the
+    same way.
+
+    Returns None — never 0.0 — for missing, blank, or unparseable input. A
+    player with no minutes reported did not play zero minutes; we were simply
+    not told, and the availability model turns on that distinction.
+    """
+    if val is None:
+        return None
+
+    if isinstance(val, bool):
+        return None
+    if isinstance(val, (int, float)):
+        num = float(val)
+        return None if num != num else round(num, 2)  # NaN check
+
+    text = str(val).strip()
+    if not text:
+        return None
+
+    iso = _MINUTES_ISO_PATTERN.match(text)
+    if iso:
+        minutes = float(iso.group("min") or 0)
+        seconds = float(iso.group("sec") or 0)
+        return round(minutes + seconds / 60, 2)
+
+    if ":" in text:
+        head, _, tail = text.partition(":")
+        try:
+            return round(float(head or 0) + float(tail or 0) / 60, 2)
+        except ValueError:
+            return None
+
+    try:
+        return round(float(text), 2)
+    except ValueError:
+        return None
+
+
+def parse_game_date(val: object) -> date | None:
+    """Game date from the several formats the NBA endpoints hand back.
+
+    playergamelogs returns "2024-10-22T00:00:00", leaguegamelog returns
+    "2024-10-22", and the older per-player log returns "OCT 22, 2024". Any time
+    component is discarded rather than converted: these are already the
+    canonical Eastern-time game dates, so shifting them by a timezone would move
+    late games onto the wrong night.
+    """
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return val.date()
+    if isinstance(val, date):
+        return val
+
+    text = str(val).strip()
+    if not text:
+        return None
+
+    # ISO first: "2024-10-22" and "2024-10-22T00:00:00" share a leading date
+    try:
+        return date.fromisoformat(text.split("T", 1)[0])
+    except ValueError:
+        pass
+    for fmt in ("%b %d, %Y", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def parse_matchup(matchup: object) -> tuple[bool | None, str | None]:
+    """(is_home, opponent abbreviation) from a MATCHUP string.
+
+    "BOS vs. LAL" -> (True, "LAL"); "BOS @ LAL" -> (False, "LAL"). The league
+    game log carries no explicit home flag, so this string is the only place the
+    information exists. Returns (None, None) rather than guessing when the
+    string does not parse — an is_home that is wrong half the time is worse than
+    one that is absent.
+    """
+    match = _MATCHUP_PATTERN.match(str(matchup or ""))
+    if not match:
+        return None, None
+    is_home = match.group("sep").startswith("@") is False
+    return is_home, match.group("opp").upper()
+
+
+def season_type_from_game_id(game_id: object) -> str:
+    """Season type encoded in the first three characters of an NBA game id.
+
+    "0022300061" -> "Regular Season". Returns "Unknown" for an unrecognised
+    prefix rather than defaulting to Regular Season: a mislabelled playoff game
+    would quietly contaminate a regular-season training set.
+    """
+    text = str(game_id or "").strip()
+    return GAME_ID_PREFIX_TO_SEASON_TYPE.get(text[:3], SEASON_TYPE_UNKNOWN)
+
+
+def season_start_date(season: str) -> date:
+    """Earliest date a game of `season` could fall on.
+
+    July 1 rather than the actual opener: this is a bound, not a date, and it
+    cannot overlap the previous season no matter how early the league schedules
+    or how far into summer a suspended season runs.
+    """
+    return date(season_start_year(season), 7, 1)
+
+
+def game_log_fetch_from(
+    latest_logged_date: date | None,
+    season: str,
+    correction_window_days: int = GAME_LOG_CORRECTION_WINDOW_DAYS,
+) -> date:
+    """Earliest game date the incremental sync should ask the API for.
+
+    The watermark is the newest game date already stored, walked back by the
+    correction window so revised box scores get re-read. With nothing stored the
+    whole season is in scope, and the window never reaches back past the season
+    boundary.
+    """
+    floor = season_start_date(season)
+    if latest_logged_date is None:
+        return floor
+    return max(floor, latest_logged_date - timedelta(days=correction_window_days))
+
+
+def plan_stint_change(
+    open_stint: tuple[str, date] | None,
+    current_team_id: str,
+    current_team_first_game_date: date,
+    open_team_last_game_date: date | None,
+) -> dict | None:
+    """What to write when a player's latest game-log team changes.
+
+    Returns None when the open stint already names the right team — the common
+    case, evaluated for every player on every run. Otherwise a dict describing
+    both halves of the transition: the previous stint ends on the last date he
+    actually played for that team, and the new one starts on the first date he
+    played for the new one. The gap between a trade and his debut therefore
+    belongs to neither team, rather than being silently assigned to one.
+    """
+    if open_stint is not None and open_stint[0] == current_team_id:
+        return None
+
+    change: dict = {
+        "open_team_id": current_team_id,
+        "open_valid_from": current_team_first_game_date,
+        "close_team_id": None,
+        "close_valid_from": None,
+        "close_valid_to": None,
+    }
+    if open_stint is None:
+        return change
+
+    prev_team_id, prev_valid_from = open_stint
+    close_to = open_team_last_game_date or prev_valid_from
+    # a stint can never end before it began, nor on/after the next one starts
+    close_to = max(close_to, prev_valid_from)
+    close_to = min(close_to, max(prev_valid_from, current_team_first_game_date - timedelta(days=1)))
+    change.update(
+        close_team_id=prev_team_id,
+        close_valid_from=prev_valid_from,
+        close_valid_to=close_to,
+    )
+    return change
+
+
+# (rule name, the stat that must not exceed, the stat it must not exceed).
+BOX_SCORE_RULES: tuple[tuple[str, str, str], ...] = (
+    ("fgm_le_fga", "fgm", "fga"),
+    ("fg3m_le_fg3a", "fg3m", "fg3a"),
+    # a made three is also a made field goal, so this catches a class of
+    # mis-mapped columns that the two rules above cannot.
+    ("fg3m_le_fgm", "fg3m", "fgm"),
+    ("ftm_le_fta", "ftm", "fta"),
+)
+
+
+def box_score_violations(row: Mapping) -> list[str]:
+    """Names of the internal-consistency rules a box-score row breaks.
+
+    An empty list means consistent. A NULL on either side is never a violation:
+    an unreported stat is not a wrong stat, and treating it as one would flag
+    every historical row whose coverage is thin.
+    """
+    violations: list[str] = []
+    for name, left, right in BOX_SCORE_RULES:
+        lhs, rhs = row.get(left), row.get(right)
+        if lhs is None or rhs is None:
+            continue
+        if float(lhs) > float(rhs):
+            violations.append(name)
+    return violations
+
+
+# Longest phrase first: "out for season" must not be matched by the "out" rule,
+# and "day-to-day" must not be matched by "day".
+_INJURY_STATUS_BUCKETS: tuple[tuple[str, str], ...] = (
+    ("out for season", "out"),
+    ("season-ending", "out"),
+    ("game time decision", "day_to_day"),
+    ("day-to-day", "day_to_day"),
+    ("day to day", "day_to_day"),
+    ("questionable", "questionable"),
+    ("doubtful", "doubtful"),
+    ("probable", "probable"),
+    ("available", "available"),
+    ("active", "available"),
+    ("out", "out"),
+    ("gtd", "day_to_day"),
+)
+
+
+def normalize_injury_status(raw: object) -> str:
+    """Bucket a source's injury wording into a small fixed vocabulary.
+
+    Stored alongside the verbatim status_raw, never instead of it: every source
+    invents new phrasing each season, and an unrecognised value must degrade to
+    "unknown" rather than silently landing in the wrong bucket.
+    """
+    text = str(raw or "").strip().lower()
+    if not text:
+        return "unknown"
+    for phrase, bucket in _INJURY_STATUS_BUCKETS:
+        if phrase in text:
+            return bucket
+    return "unknown"
+
+
+def normalize_inactive_rows(rows: Sequence[Mapping]) -> list[dict]:
+    """Player/team ids from a box-score InactivePlayers result set.
+
+    Handles both shapes, because the endpoints disagree and the fallback matters:
+    BoxScoreSummaryV3 reports personId/teamId, BoxScoreSummaryV2 reports
+    PLAYER_ID/TEAM_ID. Rows without a player id are dropped — an inactive entry
+    that names nobody cannot be joined to anything.
+    """
+    normalized: list[dict] = []
+    for row in rows:
+        player_id = row.get("personId", row.get("PLAYER_ID"))
+        team_id = row.get("teamId", row.get("TEAM_ID"))
+        if player_id in (None, ""):
+            continue
+        normalized.append(
+            {
+                "nba_player_id": str(player_id),
+                "team_id": str(team_id) if team_id not in (None, "") else None,
+            }
+        )
+    return normalized
+
+
+def derive_game_status_rows(
+    nba_game_id: str,
+    played_rows: Sequence[Mapping],
+    inactive_rows: Sequence[Mapping],
+    source: str,
+) -> list[dict]:
+    """One player_game_status row per player who was on a roster for this game.
+
+    Three populations merge here, and keeping them apart is the whole point:
+
+      * a game-log row with no dnp_reason  -> played, active
+      * a game-log row *with* a dnp_reason -> dressed but did not play (a healthy
+        scratch or a late scratch); NBA box scores set COMMENT only when a
+        player did not appear, so a non-empty comment is the signal
+      * an inactive-list entry              -> listed inactive, did not play
+
+    rostered is the union of all three. A player who somehow appears in both the
+    game log and the inactive list keeps his played status and is still flagged
+    listed_inactive, so the contradiction stays visible in the data instead of
+    being resolved by whichever branch happened to run last.
+    """
+    by_player: dict[str, dict] = {}
+
+    for row in played_rows:
+        player_id = str(row.get("nba_player_id") or "")
+        if not player_id:
+            continue
+        dnp_reason = (row.get("dnp_reason") or "").strip() or None
+        by_player[player_id] = {
+            "nba_player_id": player_id,
+            "nba_game_id": nba_game_id,
+            "team_id": row.get("team_id"),
+            "rostered": True,
+            "listed_inactive": False,
+            "started": row.get("started"),
+            "played": dnp_reason is None,
+            "dnp_reason": dnp_reason,
+            "minutes": row.get("minutes"),
+            "source": source,
+        }
+
+    for row in normalize_inactive_rows(inactive_rows):
+        player_id = row["nba_player_id"]
+        existing = by_player.get(player_id)
+        if existing is not None:
+            existing["listed_inactive"] = True
+            continue
+        by_player[player_id] = {
+            "nba_player_id": player_id,
+            "nba_game_id": nba_game_id,
+            "team_id": row["team_id"],
+            "rostered": True,
+            "listed_inactive": True,
+            "started": False,
+            "played": False,
+            "dnp_reason": None,
+            "minutes": None,
+            "source": source,
+        }
+
+    return list(by_player.values())
+
+
+def schedule_rows_from_team_logs(
+    team_rows: Sequence[Mapping], season: str
+) -> list[dict]:
+    """Schedule rows reconstructed from a league team game log.
+
+    Two rows per game come back, one per team, and the MATCHUP string on each
+    says which side it is. That makes one request enough to rebuild a whole
+    season's completed schedule — the alternative being 1,230 per-game calls.
+
+    Only completed games can be recovered this way, which is why it is the
+    fallback and not the primary source: same-day prediction needs rows for
+    games that have not been played.
+    """
+    by_game: dict[str, dict] = {}
+    for row in team_rows:
+        game_id = str(row.get("GAME_ID") or "").strip()
+        game_date = parse_game_date(row.get("GAME_DATE"))
+        if not game_id or game_date is None:
+            continue
+
+        is_home, opponent_abbr = parse_matchup(row.get("MATCHUP"))
+        team_id = str(row.get("TEAM_ID") or "") or None
+        team_abbr = (row.get("TEAM_ABBREVIATION") or "") or None
+
+        entry = by_game.setdefault(
+            game_id,
+            {
+                "nba_game_id": game_id,
+                "season": season,
+                "season_type": season_type_from_game_id(game_id),
+                "game_date": game_date,
+                "scheduled_at": None,
+                "home_team_id": None,
+                "away_team_id": None,
+                "home_team_abbr": None,
+                "away_team_abbr": None,
+                # every game a team game log knows about has been played
+                "game_status": "Final",
+                "postponed_status": None,
+                "source": "leaguegamelog",
+            },
+        )
+        if is_home is True:
+            entry["home_team_id"] = team_id
+            entry["home_team_abbr"] = team_abbr
+            entry["away_team_abbr"] = entry["away_team_abbr"] or opponent_abbr
+        elif is_home is False:
+            entry["away_team_id"] = team_id
+            entry["away_team_abbr"] = team_abbr
+            entry["home_team_abbr"] = entry["home_team_abbr"] or opponent_abbr
+
+    return sorted(by_game.values(), key=lambda g: (g["game_date"], g["nba_game_id"]))
+
+
+def schedule_rows_from_league_schedule(
+    raw_rows: Sequence[Mapping], season: str
+) -> list[dict]:
+    """Schedule rows from the scheduleleaguev2 SeasonGames result set.
+
+    This endpoint publishes the full season in advance, including games with no
+    box score yet, which is the property that makes same-day prediction possible.
+    Its columns are camelCase (the modern NBA feeds) rather than the SHOUTY_CASE
+    of the stats endpoints.
+    """
+    rows: list[dict] = []
+    for raw in raw_rows:
+        game_id = str(raw.get("gameId") or "").strip()
+        game_date = parse_game_date(raw.get("gameDate"))
+        if not game_id or game_date is None:
+            continue
+
+        scheduled_at = raw.get("gameDateTimeUTC") or None
+        if scheduled_at:
+            try:
+                scheduled_at = datetime.fromisoformat(
+                    str(scheduled_at).replace("Z", "+00:00")
+                )
+            except ValueError:
+                scheduled_at = None
+
+        rows.append(
+            {
+                "nba_game_id": game_id,
+                "season": str(raw.get("seasonYear") or season),
+                "season_type": season_type_from_game_id(game_id),
+                "game_date": game_date,
+                "scheduled_at": scheduled_at,
+                "home_team_id": str(raw.get("homeTeam_teamId") or "") or None,
+                "away_team_id": str(raw.get("awayTeam_teamId") or "") or None,
+                "home_team_abbr": raw.get("homeTeam_teamTricode") or None,
+                "away_team_abbr": raw.get("awayTeam_teamTricode") or None,
+                "game_status": raw.get("gameStatusText") or None,
+                # non-null only for the handful of games the league moves
+                "postponed_status": _text_or_none(raw.get("postponedStatus")),
+                "source": "scheduleleaguev2",
+            }
+        )
+    return rows
+
+
+def build_player_game_log_row(
+    raw: Mapping, season: str, run_id: int | None
+) -> tuple | None:
+    """One player_game_logs tuple from a playergamelogs record.
+
+    Returns None when the record has no usable key (player id, game id, date),
+    because a row that cannot be joined is worse than a row that is absent.
+    Tuple order matches the column list in _PLAYER_GAME_LOG_UPSERT_SQL.
+    """
+    player_id = str(raw.get("PLAYER_ID") or "").strip()
+    game_id = str(raw.get("GAME_ID") or "").strip()
+    game_date = parse_game_date(raw.get("GAME_DATE"))
+    if not player_id or not game_id or game_date is None:
+        return None
+
+    is_home, opponent_abbr = parse_matchup(raw.get("MATCHUP"))
+    return (
+        player_id,
+        game_id,
+        str(raw.get("SEASON_YEAR") or season),
+        season_type_from_game_id(game_id),
+        game_date,
+        str(raw.get("TEAM_ID") or "") or None,
+        raw.get("TEAM_ABBREVIATION") or None,
+        ABBR_TO_TEAM_ID.get(opponent_abbr or ""),
+        is_home,
+        # the league-wide log reports no starting five; a per-game box score
+        # would, and the upsert below preserves whatever is already stored.
+        None,
+        parse_minutes(raw.get("MIN")),
+        _opt_int(raw.get("PTS")),
+        _opt_int(raw.get("REB")),
+        _opt_int(raw.get("AST")),
+        _opt_int(raw.get("STL")),
+        _opt_int(raw.get("BLK")),
+        _opt_int(raw.get("TOV")),
+        _opt_int(raw.get("FGM")),
+        _opt_int(raw.get("FGA")),
+        _opt_int(raw.get("FG3M")),
+        _opt_int(raw.get("FG3A")),
+        _opt_int(raw.get("FTM")),
+        _opt_int(raw.get("FTA")),
+        _opt_int(raw.get("PLUS_MINUS")),
+        # likewise: this endpoint only returns players who appeared, so it can
+        # never supply a COMMENT.
+        None,
+        "playergamelogs",
+        run_id,
+    )
+
+
+def build_team_game_log_row(
+    raw: Mapping, season: str, run_id: int | None
+) -> tuple | None:
+    """One team_game_logs tuple from a leaguegamelog (team mode) record."""
+    team_id = str(raw.get("TEAM_ID") or "").strip()
+    game_id = str(raw.get("GAME_ID") or "").strip()
+    game_date = parse_game_date(raw.get("GAME_DATE"))
+    if not team_id or not game_id or game_date is None:
+        return None
+
+    is_home, opponent_abbr = parse_matchup(raw.get("MATCHUP"))
+    return (
+        team_id,
+        game_id,
+        season,
+        season_type_from_game_id(game_id),
+        game_date,
+        raw.get("TEAM_ABBREVIATION") or None,
+        ABBR_TO_TEAM_ID.get(opponent_abbr or ""),
+        is_home,
+        parse_minutes(raw.get("MIN")),
+        _opt_int(raw.get("PTS")),
+        _opt_int(raw.get("REB")),
+        _opt_int(raw.get("AST")),
+        _opt_int(raw.get("STL")),
+        _opt_int(raw.get("BLK")),
+        _opt_int(raw.get("TOV")),
+        _opt_int(raw.get("FGM")),
+        _opt_int(raw.get("FGA")),
+        _opt_int(raw.get("FG3M")),
+        _opt_int(raw.get("FG3A")),
+        _opt_int(raw.get("FTM")),
+        _opt_int(raw.get("FTA")),
+        _opt_int(raw.get("PLUS_MINUS")),
+        "leaguegamelog",
+        run_id,
+    )
+
+
+_WRITE_VERBS = frozenset(
+    {"insert", "update", "delete", "create", "alter", "drop", "truncate", "merge"}
+)
+
+
+def is_write_statement(sql: str) -> bool:
+    """Whether a SQL string would modify data.
+
+    Used by the --dry-run cursor to decide what to skip. Reads must still run in
+    a dry run — reporting how many rows *would* be written means querying the
+    current watermark and the keys already present.
+
+    Errs toward "write" for CTE-prefixed statements: a data-modifying CTE
+    (WITH ... INSERT) is indistinguishable from a read by its first keyword, and
+    misclassifying one would let --dry-run write to the database. Skipping a
+    read by mistake only makes a dry-run count wrong.
+    """
+    stripped = (sql or "").strip()
+    # skip leading line comments so "-- upsert\nINSERT ..." is still a write
+    while stripped.startswith("--"):
+        _, _, stripped = stripped.partition("\n")
+        stripped = stripped.strip()
+    if not stripped:
+        return False
+
+    first = stripped.split(None, 1)[0].lower()
+    if first in _WRITE_VERBS:
+        return True
+    if first == "with":
+        lowered = stripped.lower()
+        return any(re.search(rf"\b{verb}\b", lowered) for verb in _WRITE_VERBS)
+    return False
+
+
+class DryRunCursor:
+    """Cursor wrapper that runs reads and only counts writes.
+
+    Wrapping rather than branching at every call site keeps the write paths
+    identical between a real run and a dry run, so --dry-run exercises the same
+    code that production does instead of a parallel copy of it.
+    """
+
+    def __init__(self, cur: psycopg2.extensions.cursor) -> None:
+        self._cur = cur
+        self._last_skipped = False
+        self.skipped_statements = 0
+        self.skipped_rows = 0
+
+    def execute(self, sql: str, params: object = None) -> None:
+        if is_write_statement(sql):
+            self._last_skipped = True
+            self.skipped_statements += 1
+            self.skipped_rows += 1
+            return
+        self._last_skipped = False
+        self._cur.execute(sql, params)
+
+    def execute_values(self, sql: str, rows: Sequence[tuple]) -> None:
+        self._last_skipped = True
+        self.skipped_statements += 1
+        self.skipped_rows += len(rows)
+
+    def fetchall(self) -> list:
+        # a skipped write has no result set; RETURNING clauses read as "nothing
+        # matched" rather than blowing up the dry run
+        return [] if self._last_skipped else self._cur.fetchall()
+
+    def fetchone(self) -> tuple | None:
+        return None if self._last_skipped else self._cur.fetchone()
+
+    @property
+    def rowcount(self) -> int:
+        return 0 if self._last_skipped else self._cur.rowcount
+
+    def close(self) -> None:
+        self._cur.close()
+
+
+def maybe_write_cursor(
+    cur: psycopg2.extensions.cursor, dry_run: bool
+) -> psycopg2.extensions.cursor | DryRunCursor:
+    """The cursor itself, or a write-swallowing wrapper when dry_run is set."""
+    return DryRunCursor(cur) if dry_run else cur
+
+
+def _batch_upsert(cur: object, sql: str, rows: Sequence[tuple]) -> int:
+    """execute_values, or a counted no-op under --dry-run. Returns rows sent."""
+    if not rows:
+        return 0
+    if isinstance(cur, DryRunCursor):
+        cur.execute_values(sql, rows)
+        return len(rows)
+    execute_values(cur, sql, rows, page_size=500)
+    return len(rows)
+
+
+# ---------------------------------------------------------------------------
+# Data truth layer — ingestion run bookkeeping.
+# ---------------------------------------------------------------------------
+
+
+def _start_ingestion_run(
+    conn: psycopg2.extensions.connection,
+    kind: str,
+    watermark_from: object = None,
+    watermark_to: object = None,
+    dry_run: bool = False,
+) -> int | None:
+    """Open an ingestion_runs row. Returns its id, or None under --dry-run.
+
+    A None run id is written into the log tables as NULL, which is exactly what
+    a row with no traceable run should carry.
+    """
+    if dry_run:
+        return None
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO ingestion_runs (kind, watermark_from, watermark_to, status)
+            VALUES (%s, %s, %s, 'running')
+            RETURNING id
+            """,
+            (
+                kind,
+                None if watermark_from is None else str(watermark_from),
+                None if watermark_to is None else str(watermark_to),
+            ),
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else None
+    finally:
+        cur.close()
+
+
+def _finish_ingestion_run(
+    conn: psycopg2.extensions.connection,
+    run_id: int | None,
+    status: str,
+    rows_written: int,
+    notes: str | None = None,
+    watermark_to: object = None,
+) -> None:
+    """Close an ingestion_runs row. A no-op when there is no run to close."""
+    if run_id is None:
+        return
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            UPDATE ingestion_runs
+               SET finished_at = NOW(), status = %s, rows_written = %s,
+                   notes = COALESCE(%s, notes),
+                   watermark_to = COALESCE(%s, watermark_to)
+             WHERE id = %s
+            """,
+            (
+                status,
+                rows_written,
+                notes,
+                None if watermark_to is None else str(watermark_to),
+                run_id,
+            ),
+        )
+    finally:
+        cur.close()
+
+
+# ---------------------------------------------------------------------------
+# Data truth layer — upsert SQL.
+# ---------------------------------------------------------------------------
+
+# fetched_at is omitted from the insert column lists on purpose: the column
+# defaults to NOW() on insert, and the DO UPDATE branches refresh it explicitly.
+# That keeps "when did we last see this row" honest without passing a timestamp
+# through every tuple.
+
+_SCHEDULE_UPSERT_SQL = """
+INSERT INTO nba_schedule (nba_game_id, season, season_type, game_date, scheduled_at,
+                          home_team_id, away_team_id, home_team_abbr, away_team_abbr,
+                          game_status, postponed_status, source)
+VALUES %s
+ON CONFLICT (nba_game_id) DO UPDATE SET
+    season = EXCLUDED.season,
+    season_type = EXCLUDED.season_type,
+    game_date = EXCLUDED.game_date,
+    -- COALESCE, not overwrite: the leaguegamelog fallback knows no tip-off time
+    -- and must not erase one the schedule endpoint already supplied.
+    scheduled_at = COALESCE(EXCLUDED.scheduled_at, nba_schedule.scheduled_at),
+    home_team_id = COALESCE(EXCLUDED.home_team_id, nba_schedule.home_team_id),
+    away_team_id = COALESCE(EXCLUDED.away_team_id, nba_schedule.away_team_id),
+    home_team_abbr = COALESCE(EXCLUDED.home_team_abbr, nba_schedule.home_team_abbr),
+    away_team_abbr = COALESCE(EXCLUDED.away_team_abbr, nba_schedule.away_team_abbr),
+    game_status = COALESCE(EXCLUDED.game_status, nba_schedule.game_status),
+    postponed_status = COALESCE(EXCLUDED.postponed_status, nba_schedule.postponed_status),
+    source = EXCLUDED.source,
+    fetched_at = NOW(),
+    updated_at = NOW()
+"""
+
+_PLAYER_GAME_LOG_UPSERT_SQL = """
+INSERT INTO player_game_logs (nba_player_id, nba_game_id, season, season_type, game_date,
+                              team_id, team_abbr, opponent_team_id, is_home, started,
+                              minutes, pts, reb, ast, stl, blk, tov, fgm, fga, fg3m,
+                              fg3a, ftm, fta, plus_minus, dnp_reason, source,
+                              ingestion_run_id)
+VALUES %s
+ON CONFLICT (nba_player_id, nba_game_id) DO UPDATE SET
+    season = EXCLUDED.season,
+    season_type = EXCLUDED.season_type,
+    game_date = EXCLUDED.game_date,
+    team_id = COALESCE(EXCLUDED.team_id, player_game_logs.team_id),
+    team_abbr = COALESCE(EXCLUDED.team_abbr, player_game_logs.team_abbr),
+    opponent_team_id = COALESCE(EXCLUDED.opponent_team_id, player_game_logs.opponent_team_id),
+    is_home = COALESCE(EXCLUDED.is_home, player_game_logs.is_home),
+    -- started and dnp_reason only ever come from a per-game box score. The
+    -- league-wide log sends NULL for both, and must not wipe what a box-score
+    -- pass already established.
+    started = COALESCE(EXCLUDED.started, player_game_logs.started),
+    dnp_reason = COALESCE(EXCLUDED.dnp_reason, player_game_logs.dnp_reason),
+    minutes = EXCLUDED.minutes,
+    pts = EXCLUDED.pts, reb = EXCLUDED.reb, ast = EXCLUDED.ast,
+    stl = EXCLUDED.stl, blk = EXCLUDED.blk, tov = EXCLUDED.tov,
+    fgm = EXCLUDED.fgm, fga = EXCLUDED.fga,
+    fg3m = EXCLUDED.fg3m, fg3a = EXCLUDED.fg3a,
+    ftm = EXCLUDED.ftm, fta = EXCLUDED.fta,
+    plus_minus = EXCLUDED.plus_minus,
+    source = EXCLUDED.source,
+    fetched_at = NOW(),
+    ingestion_run_id = COALESCE(EXCLUDED.ingestion_run_id, player_game_logs.ingestion_run_id)
+"""
+
+_TEAM_GAME_LOG_UPSERT_SQL = """
+INSERT INTO team_game_logs (team_id, nba_game_id, season, season_type, game_date,
+                            team_abbr, opponent_team_id, is_home, minutes, pts, reb,
+                            ast, stl, blk, tov, fgm, fga, fg3m, fg3a, ftm, fta,
+                            plus_minus, source, ingestion_run_id)
+VALUES %s
+ON CONFLICT (team_id, nba_game_id) DO UPDATE SET
+    season = EXCLUDED.season,
+    season_type = EXCLUDED.season_type,
+    game_date = EXCLUDED.game_date,
+    team_abbr = COALESCE(EXCLUDED.team_abbr, team_game_logs.team_abbr),
+    opponent_team_id = COALESCE(EXCLUDED.opponent_team_id, team_game_logs.opponent_team_id),
+    is_home = COALESCE(EXCLUDED.is_home, team_game_logs.is_home),
+    minutes = EXCLUDED.minutes,
+    pts = EXCLUDED.pts, reb = EXCLUDED.reb, ast = EXCLUDED.ast,
+    stl = EXCLUDED.stl, blk = EXCLUDED.blk, tov = EXCLUDED.tov,
+    fgm = EXCLUDED.fgm, fga = EXCLUDED.fga,
+    fg3m = EXCLUDED.fg3m, fg3a = EXCLUDED.fg3a,
+    ftm = EXCLUDED.ftm, fta = EXCLUDED.fta,
+    plus_minus = EXCLUDED.plus_minus,
+    source = EXCLUDED.source,
+    fetched_at = NOW(),
+    ingestion_run_id = COALESCE(EXCLUDED.ingestion_run_id, team_game_logs.ingestion_run_id)
+"""
+
+_GAME_STATUS_UPSERT_SQL = """
+INSERT INTO player_game_status (nba_player_id, nba_game_id, team_id, rostered,
+                                listed_inactive, started, played, dnp_reason,
+                                minutes, source, ingestion_run_id)
+VALUES %s
+ON CONFLICT (nba_player_id, nba_game_id) DO UPDATE SET
+    team_id = COALESCE(EXCLUDED.team_id, player_game_status.team_id),
+    rostered = EXCLUDED.rostered,
+    -- COALESCE so a later pass that only has game logs cannot reset a known
+    -- inactive flag back to "unknown".
+    listed_inactive = COALESCE(EXCLUDED.listed_inactive, player_game_status.listed_inactive),
+    started = COALESCE(EXCLUDED.started, player_game_status.started),
+    played = EXCLUDED.played,
+    dnp_reason = COALESCE(EXCLUDED.dnp_reason, player_game_status.dnp_reason),
+    minutes = COALESCE(EXCLUDED.minutes, player_game_status.minutes),
+    source = EXCLUDED.source,
+    fetched_at = NOW(),
+    ingestion_run_id = COALESCE(EXCLUDED.ingestion_run_id, player_game_status.ingestion_run_id)
+"""
+
+
+def _upsert_schedule_rows(cur: object, rows: Sequence[Mapping]) -> int:
+    tuples = [
+        (
+            r["nba_game_id"], r["season"], r["season_type"], r["game_date"],
+            r["scheduled_at"], r["home_team_id"], r["away_team_id"],
+            r["home_team_abbr"], r["away_team_abbr"], r["game_status"],
+            r["postponed_status"], r["source"],
+        )
+        for r in rows
+    ]
+    return _batch_upsert(cur, _SCHEDULE_UPSERT_SQL, tuples)
+
+
+def _upsert_game_status_rows(
+    cur: object, rows: Sequence[Mapping], run_id: int | None
+) -> int:
+    tuples = [
+        (
+            r["nba_player_id"], r["nba_game_id"], r["team_id"], r["rostered"],
+            r["listed_inactive"], r["started"], r["played"], r["dnp_reason"],
+            r["minutes"], r["source"], run_id,
+        )
+        for r in rows
+    ]
+    return _batch_upsert(cur, _GAME_STATUS_UPSERT_SQL, tuples)
+
+
+# ---------------------------------------------------------------------------
+# Data truth layer — fetchers.
+# ---------------------------------------------------------------------------
+
+
+def _fetch_player_game_logs(
+    season: str, date_from: date | None, season_type: str = SEASON_TYPE_REGULAR
+) -> list[dict]:
+    """League-wide player game logs, optionally bounded below by a date.
+
+    One request covers every player for the whole window. Per-player calls would
+    be ~570 requests for the same data.
+    """
+
+    def fetch() -> playergamelogs.PlayerGameLogs:
+        return playergamelogs.PlayerGameLogs(
+            season_nullable=season,
+            season_type_nullable=season_type,
+            date_from_nullable=date_from.strftime("%m/%d/%Y") if date_from else "",
+            timeout=60,
+        )
+
+    logs = _fetch_with_retry(f"player game logs {season}", fetch)
+    return logs.get_data_frames()[0].to_dict("records")
+
+
+def _fetch_team_game_logs(
+    season: str, date_from: date | None, season_type: str = SEASON_TYPE_REGULAR
+) -> list[dict]:
+    """League-wide team game logs — two rows per completed game."""
+
+    def fetch() -> leaguegamelog.LeagueGameLog:
+        return leaguegamelog.LeagueGameLog(
+            season=season,
+            season_type_all_star=season_type,
+            player_or_team_abbreviation="T",
+            date_from_nullable=date_from.strftime("%m/%d/%Y") if date_from else "",
+            timeout=60,
+        )
+
+    logs = _fetch_with_retry(f"team game logs {season}", fetch)
+    return logs.get_data_frames()[0].to_dict("records")
+
+
+def _fetch_league_schedule(season: str) -> list[dict]:
+    """Full-season schedule from scheduleleaguev2, including unplayed games.
+
+    Imported lazily and behind an ImportError guard: this endpoint does not
+    exist in older nba_api releases, and the caller falls back to reconstructing
+    completed games from the team game log when it is missing.
+    """
+    from nba_api.stats.endpoints import scheduleleaguev2
+
+    def fetch() -> object:
+        return scheduleleaguev2.ScheduleLeagueV2(season=season, timeout=60)
+
+    schedule = _fetch_with_retry(f"league schedule {season}", fetch)
+    return schedule.season_games.get_data_frame().to_dict("records")
+
+
+def _fetch_inactive_players(game_id: str) -> list[dict]:
+    """The official inactive list for one game.
+
+    BoxScoreSummaryV3 first: nba_api documents V2 as having no data for games on
+    or after 2025-04-10, and V2 raises a UserWarning on construction saying so.
+    V2 is still tried as a fallback because it remains the only source for older
+    seasons where V3 coverage is patchy. Both expose an InactivePlayers result
+    set; normalize_inactive_rows reconciles their column naming.
+    """
+    from nba_api.stats.endpoints import boxscoresummaryv2, boxscoresummaryv3
+
+    def fetch_v3() -> object:
+        return boxscoresummaryv3.BoxScoreSummaryV3(game_id=game_id, timeout=60)
+
+    def fetch_v2() -> object:
+        return boxscoresummaryv2.BoxScoreSummaryV2(game_id=game_id, timeout=60)
+
+    try:
+        summary = _fetch_with_retry(f"box score summary v3 {game_id}", fetch_v3)
+        rows = summary.inactive_players.get_data_frame().to_dict("records")
+        if rows:
+            return rows
+    except Exception as e:  # noqa: BLE001 - v2 is the whole point of the fallback
+        logger.debug("v3 summary failed for %s (%s), trying v2", game_id, e)
+
+    time.sleep(BACKFILL_REQUEST_DELAY_SECONDS)
+    summary = _fetch_with_retry(f"box score summary v2 {game_id}", fetch_v2)
+    return summary.inactive_players.get_data_frame().to_dict("records")
+
+
+# ---------------------------------------------------------------------------
+# Data truth layer — reads.
+# ---------------------------------------------------------------------------
+
+
+def _latest_logged_game_date(
+    conn: psycopg2.extensions.connection, season: str
+) -> date | None:
+    """Newest game date already in player_game_logs for a season, or None."""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT MAX(game_date) FROM player_game_logs WHERE season = %s", (season,)
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+    finally:
+        cur.close()
+
+
+def _games_needing_status(
+    conn: psycopg2.extensions.connection,
+    season: str,
+    since: date | None,
+    limit: int | None,
+) -> list[str]:
+    """Completed games with game logs but no player_game_status rows yet.
+
+    Driven off team_game_logs rather than nba_schedule so it only ever returns
+    games that actually finished — asking for the inactive list of a game that
+    has not tipped off wastes a request and returns nothing.
+    """
+    sql = [
+        """
+        SELECT DISTINCT t.nba_game_id, t.game_date
+          FROM team_game_logs t
+         WHERE t.season = %s
+           AND NOT EXISTS (
+                 SELECT 1 FROM player_game_status s
+                  WHERE s.nba_game_id = t.nba_game_id
+               )
+        """
+    ]
+    params: list[object] = [season]
+    if since is not None:
+        sql.append("AND t.game_date >= %s")
+        params.append(since)
+    sql.append("ORDER BY t.game_date DESC, t.nba_game_id")
+    if limit is not None:
+        sql.append("LIMIT %s")
+        params.append(limit)
+
+    cur = conn.cursor()
+    try:
+        cur.execute(" ".join(sql), tuple(params))
+        return [str(row[0]) for row in cur.fetchall()]
+    finally:
+        cur.close()
+
+
+def _played_rows_for_games(
+    conn: psycopg2.extensions.connection, game_ids: Sequence[str]
+) -> dict[str, list[dict]]:
+    """player_game_logs rows for the given games, grouped by game id."""
+    if not game_ids:
+        return {}
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT nba_game_id, nba_player_id, team_id, started, minutes, dnp_reason
+              FROM player_game_logs
+             WHERE nba_game_id = ANY(%s)
+            """,
+            (list(game_ids),),
+        )
+        grouped: dict[str, list[dict]] = {}
+        for game_id, player_id, team_id, started, minutes, dnp_reason in cur.fetchall():
+            grouped.setdefault(str(game_id), []).append(
+                {
+                    "nba_player_id": str(player_id),
+                    "team_id": team_id,
+                    "started": started,
+                    "minutes": float(minutes) if minutes is not None else None,
+                    "dnp_reason": dnp_reason,
+                }
+            )
+        return grouped
+    finally:
+        cur.close()
+
+
+# ---------------------------------------------------------------------------
+# Data truth layer — write paths.
+# ---------------------------------------------------------------------------
+
+
+def scrape_schedule(
+    conn: psycopg2.extensions.connection,
+    season: str = SEASON,
+    dry_run: bool = False,
+) -> None:
+    """Upsert the current season's schedule into nba_schedule.
+
+    Primary source is scheduleleaguev2, which publishes the whole season in
+    advance — including tonight's game, which is the point. If it is unavailable
+    (older nba_api, or the endpoint erroring) the completed half of the season is
+    rebuilt from the team game log instead, and the gap is logged loudly rather
+    than papered over: without future rows, same-day prediction has nothing to
+    predict against.
+
+    ESPN is deliberately NOT used as the fallback even though _fetch_espn_scoreboard
+    already exists. ESPN keys on its own event ids, which do not join to any
+    stats.nba.com game id, so ESPN rows in this table would be unjoinable to
+    every game log and status row.
+    """
+    logger.info("truth layer: syncing %s schedule...", season)
+    run_id = _start_ingestion_run(
+        conn, "schedule", watermark_from=season, watermark_to=season, dry_run=dry_run
+    )
+
+    rows: list[dict] = []
+    try:
+        rows = schedule_rows_from_league_schedule(_fetch_league_schedule(season), season)
+        logger.info("schedule: %d game(s) from scheduleleaguev2", len(rows))
+    except Exception as e:  # noqa: BLE001 - falling back is the handling
+        logger.warning(
+            "scheduleleaguev2 unavailable (%s); falling back to completed games "
+            "from the team game log — upcoming games will be missing until it "
+            "recovers",
+            e,
+        )
+        try:
+            team_rows = _fetch_team_game_logs(season, None)
+            rows = schedule_rows_from_team_logs(team_rows, season)
+            logger.info("schedule: %d completed game(s) from leaguegamelog", len(rows))
+        except Exception as fallback_error:  # noqa: BLE001
+            logger.error("schedule: both sources failed (%s)", fallback_error)
+            _finish_ingestion_run(
+                conn, run_id, "failed", 0, notes=str(fallback_error)[:500]
+            )
+            return
+
+    cur = maybe_write_cursor(conn.cursor(), dry_run)
+    try:
+        written = _upsert_schedule_rows(cur, rows)
+    finally:
+        cur.close()
+
+    _finish_ingestion_run(conn, run_id, "succeeded", written)
+    logger.info(
+        "schedule: %d row(s) upserted%s",
+        written,
+        " (dry run: nothing written)" if dry_run else "",
+    )
+
+
+def scrape_game_logs(
+    conn: psycopg2.extensions.connection,
+    season: str = SEASON,
+    dry_run: bool = False,
+) -> None:
+    """Incremental player + team game-log sync for the current season.
+
+    Watermarked on MAX(game_date) in player_game_logs, walked back by a trailing
+    correction window so revised box scores are re-read. Two requests total,
+    regardless of how far behind the watermark is.
+    """
+    latest = _latest_logged_game_date(conn, season)
+    date_from = game_log_fetch_from(latest, season)
+    logger.info(
+        "truth layer: syncing %s game logs from %s (watermark %s)",
+        season,
+        date_from.isoformat(),
+        latest.isoformat() if latest else "none",
+    )
+
+    run_id = _start_ingestion_run(
+        conn,
+        "game_logs_incremental",
+        watermark_from=date_from.isoformat(),
+        dry_run=dry_run,
+    )
+
+    try:
+        player_raw = _fetch_player_game_logs(season, date_from)
+        time.sleep(BACKFILL_REQUEST_DELAY_SECONDS)
+        team_raw = _fetch_team_game_logs(season, date_from)
+    except Exception as e:  # noqa: BLE001 - one phase failing must not end the run
+        logger.error("game logs: fetch failed (%s)", e)
+        _finish_ingestion_run(conn, run_id, "failed", 0, notes=str(e)[:500])
+        return
+
+    player_rows = [
+        row
+        for row in (build_player_game_log_row(raw, season, run_id) for raw in player_raw)
+        if row is not None
+    ]
+    team_rows = [
+        row
+        for row in (build_team_game_log_row(raw, season, run_id) for raw in team_raw)
+        if row is not None
+    ]
+
+    cur = maybe_write_cursor(conn.cursor(), dry_run)
+    try:
+        written = _batch_upsert(cur, _PLAYER_GAME_LOG_UPSERT_SQL, player_rows)
+        written += _batch_upsert(cur, _TEAM_GAME_LOG_UPSERT_SQL, team_rows)
+    finally:
+        cur.close()
+
+    # game_date sits at index 4 of the player tuple; see PLAYER_GAME_LOG column order
+    newest = max((row[4] for row in player_rows), default=latest)
+    _finish_ingestion_run(
+        conn,
+        run_id,
+        "succeeded",
+        written,
+        watermark_to=newest.isoformat() if newest else None,
+    )
+    logger.info(
+        "game logs: %d player row(s), %d team row(s) upserted%s",
+        len(player_rows),
+        len(team_rows),
+        " (dry run: nothing written)" if dry_run else "",
+    )
+
+    _sync_player_team_stints(conn, season, dry_run=dry_run)
+
+
+def scrape_game_status(
+    conn: psycopg2.extensions.connection,
+    season: str = SEASON,
+    dry_run: bool = False,
+    since: date | None = None,
+    limit: int | None = GAME_STATUS_MAX_GAMES_PER_RUN,
+    delay_seconds: float = BACKFILL_REQUEST_DELAY_SECONDS,
+    run_kind: str = "game_status_incremental",
+) -> int:
+    """Build player_game_status rows for completed games that lack them.
+
+    This is the expensive phase — one request per game — so the incremental path
+    is bounded twice over: to games in the recent window, and to a hard ceiling
+    on games per run. Anything older is the backfill's job.
+
+    Resumable by construction: a game is selected only if it has no status rows
+    at all, so a killed run picks up exactly where it stopped.
+
+    Returns the number of status rows written.
+    """
+    if since is None:
+        since = date.today() - timedelta(days=GAME_STATUS_RECENT_WINDOW_DAYS)
+
+    game_ids = _games_needing_status(conn, season, since, limit)
+    if not game_ids:
+        logger.info("game status: nothing to do, every recent game has status rows")
+        return 0
+
+    logger.info("truth layer: deriving status for %d game(s)", len(game_ids))
+    run_id = _start_ingestion_run(
+        conn,
+        run_kind,
+        watermark_from=since.isoformat() if since else None,
+        dry_run=dry_run,
+    )
+
+    played_by_game = _played_rows_for_games(conn, game_ids)
+    written = 0
+    failed = 0
+
+    cur = maybe_write_cursor(conn.cursor(), dry_run)
+    try:
+        for index, game_id in enumerate(game_ids):
+            try:
+                inactive_raw = _fetch_inactive_players(game_id)
+            except Exception as e:  # noqa: BLE001 - one game must not end the phase
+                failed += 1
+                logger.warning("game status: %s inactive list failed (%s)", game_id, e)
+                # almost always throttling, so back off harder before the next
+                time.sleep(delay_seconds * 2)
+                continue
+
+            rows = derive_game_status_rows(
+                game_id,
+                played_by_game.get(game_id, []),
+                inactive_raw,
+                "boxscoresummary+playergamelogs",
+            )
+            written += _upsert_game_status_rows(cur, rows, run_id)
+
+            if index + 1 < len(game_ids):
+                time.sleep(delay_seconds)
+    finally:
+        cur.close()
+
+    _finish_ingestion_run(
+        conn,
+        run_id,
+        "succeeded" if failed == 0 else "partial",
+        written,
+        notes=f"{failed} game(s) failed" if failed else None,
+    )
+    logger.info(
+        "game status: %d row(s) across %d game(s), %d failed%s",
+        written,
+        len(game_ids) - failed,
+        failed,
+        " (dry run: nothing written)" if dry_run else "",
+    )
+    return written
+
+
+def _sync_player_team_stints(
+    conn: psycopg2.extensions.connection, season: str, dry_run: bool = False
+) -> None:
+    """Close and open player_team_stints rows from the latest game logs.
+
+    Incremental and cheap: one query returns every player's current team plus
+    the dates needed to close the previous stint, and plan_stint_change decides
+    per player whether anything actually changed. In a normal run that is zero
+    changes; on a trade deadline it is a handful.
+    """
+    cur = conn.cursor()
+    try:
+        # DISTINCT ON gives the newest game-log row per player, which is the team
+        # he currently belongs to as far as the truth layer can observe.
+        cur.execute(
+            """
+            SELECT DISTINCT ON (nba_player_id)
+                   nba_player_id, team_id, game_date
+              FROM player_game_logs
+             WHERE season = %s AND team_id IS NOT NULL
+             ORDER BY nba_player_id, game_date DESC, nba_game_id DESC
+            """,
+            (season,),
+        )
+        latest_by_player = {
+            str(pid): (str(team_id), game_date) for pid, team_id, game_date in cur.fetchall()
+        }
+
+        cur.execute(
+            """
+            SELECT nba_player_id, team_id, valid_from
+              FROM player_team_stints
+             WHERE valid_to IS NULL
+            """
+        )
+        open_by_player = {
+            str(pid): (str(team_id), valid_from) for pid, team_id, valid_from in cur.fetchall()
+        }
+    finally:
+        cur.close()
+
+    changes: list[tuple[str, dict]] = []
+    for player_id, (team_id, _latest_date) in latest_by_player.items():
+        open_stint = open_by_player.get(player_id)
+        if open_stint is not None and open_stint[0] == team_id:
+            continue
+
+        boundaries = _stint_boundaries(conn, player_id, team_id, open_stint)
+        change = plan_stint_change(
+            open_stint,
+            team_id,
+            boundaries["first_with_new_team"],
+            boundaries["last_with_open_team"],
+        )
+        if change is not None:
+            changes.append((player_id, change))
+
+    if not changes:
+        logger.info("stints: no team changes to record")
+        return
+
+    write_cur = maybe_write_cursor(conn.cursor(), dry_run)
+    try:
+        for player_id, change in changes:
+            if change["close_team_id"] is not None:
+                write_cur.execute(
+                    """
+                    UPDATE player_team_stints
+                       SET valid_to = %s, updated_at = NOW()
+                     WHERE nba_player_id = %s AND team_id = %s
+                       AND valid_from = %s AND valid_to IS NULL
+                    """,
+                    (
+                        change["close_valid_to"],
+                        player_id,
+                        change["close_team_id"],
+                        change["close_valid_from"],
+                    ),
+                )
+            write_cur.execute(
+                """
+                INSERT INTO player_team_stints (nba_player_id, team_id, valid_from, source)
+                VALUES (%s, %s, %s, 'playergamelogs')
+                ON CONFLICT (nba_player_id, team_id, valid_from) DO NOTHING
+                """,
+                (player_id, change["open_team_id"], change["open_valid_from"]),
+            )
+    finally:
+        write_cur.close()
+
+    logger.info(
+        "stints: recorded %d team change(s)%s",
+        len(changes),
+        " (dry run: nothing written)" if dry_run else "",
+    )
+
+
+def _stint_boundaries(
+    conn: psycopg2.extensions.connection,
+    player_id: str,
+    new_team_id: str,
+    open_stint: tuple[str, date] | None,
+) -> dict:
+    """First game date with the new team, and last with the currently open one."""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT MIN(game_date) FROM player_game_logs
+             WHERE nba_player_id = %s AND team_id = %s AND game_date >= %s
+            """,
+            (player_id, new_team_id, open_stint[1] if open_stint else date.min),
+        )
+        row = cur.fetchone()
+        first_with_new = row[0] if row and row[0] else date.today()
+
+        last_with_open: date | None = None
+        if open_stint is not None:
+            cur.execute(
+                """
+                SELECT MAX(game_date) FROM player_game_logs
+                 WHERE nba_player_id = %s AND team_id = %s AND game_date >= %s
+                """,
+                (player_id, open_stint[0], open_stint[1]),
+            )
+            row = cur.fetchone()
+            last_with_open = row[0] if row else None
+
+        return {
+            "first_with_new_team": first_with_new,
+            "last_with_open_team": last_with_open,
+        }
+    finally:
+        cur.close()
+
+
+# ---------------------------------------------------------------------------
+# Data truth layer — historical backfill.
+# ---------------------------------------------------------------------------
+
+
+def backfill_game_logs_season(
+    conn: psycopg2.extensions.connection,
+    season: str,
+    dry_run: bool = False,
+    delay_seconds: float = BACKFILL_REQUEST_DELAY_SECONDS,
+) -> dict:
+    """Backfill one season: schedule, game logs, then per-game inactive lists.
+
+    Ordered cheapest-first on purpose. The two league-wide calls at the top cost
+    one request each and give the schedule, the team logs, and every player log
+    for the season. Only the inactive lists need a request per game, and by then
+    the schedule already exists — so a run killed during that phase has already
+    banked the expensive-to-lose part, and the next run skips every game that
+    already has status rows.
+    """
+    logger.info("%s: fetching team game logs...", season)
+    team_raw = _fetch_team_game_logs(season, None)
+    time.sleep(delay_seconds)
+    logger.info("%s: fetching player game logs...", season)
+    player_raw = _fetch_player_game_logs(season, None)
+
+    run_id = _start_ingestion_run(
+        conn,
+        "game_logs_backfill",
+        watermark_from=season,
+        watermark_to=season,
+        dry_run=dry_run,
+    )
+
+    schedule_rows = schedule_rows_from_team_logs(team_raw, season)
+    player_rows = [
+        row
+        for row in (build_player_game_log_row(raw, season, run_id) for raw in player_raw)
+        if row is not None
+    ]
+    team_rows = [
+        row
+        for row in (build_team_game_log_row(raw, season, run_id) for raw in team_raw)
+        if row is not None
+    ]
+
+    cur = maybe_write_cursor(conn.cursor(), dry_run)
+    try:
+        schedule_written = _upsert_schedule_rows(cur, schedule_rows)
+        log_written = _batch_upsert(cur, _PLAYER_GAME_LOG_UPSERT_SQL, player_rows)
+        log_written += _batch_upsert(cur, _TEAM_GAME_LOG_UPSERT_SQL, team_rows)
+    finally:
+        cur.close()
+
+    logger.info(
+        "%s: %d schedule row(s), %d player log(s), %d team log(s)",
+        season, schedule_written, len(player_rows), len(team_rows),
+    )
+    _finish_ingestion_run(
+        conn, run_id, "succeeded", schedule_written + log_written
+    )
+
+    # unbounded window and no per-run ceiling here: the backfill's whole job is
+    # to work through every game the season has.
+    status_written = scrape_game_status(
+        conn,
+        season=season,
+        dry_run=dry_run,
+        since=season_start_date(season),
+        limit=None,
+        delay_seconds=delay_seconds,
+        run_kind="game_status_backfill",
+    )
+
+    return {
+        "schedule": schedule_written,
+        "player_logs": len(player_rows),
+        "team_logs": len(team_rows),
+        "status": status_written,
+    }
+
+
+def backfill_game_logs(
+    conn: psycopg2.extensions.connection,
+    from_season: str,
+    to_season: str,
+    dry_run: bool = False,
+) -> None:
+    """One-time truth-layer backfill over a range of seasons.
+
+    Opt-in only and never part of the cron, for the same reasons
+    --backfill-history is not: stats.nba.com is Akamai-blocked from CI and
+    throttles residential IPs. Per-season failure is tolerated so one bad season
+    does not cost the whole run.
+
+    Budget roughly 1,230 games per season at BACKFILL_REQUEST_DELAY_SECONDS
+    apiece for the inactive-list phase — about 2 hours per season, longer with
+    retries.
+    """
+    seasons = season_range(from_season, to_season)
+    logger.info(
+        "truth-layer backfill: %d season(s), %s -> %s%s",
+        len(seasons), seasons[0], seasons[-1], " (dry run)" if dry_run else "",
+    )
+
+    succeeded: list[str] = []
+    failed: list[str] = []
+
+    for season in seasons:
+        try:
+            counts = backfill_game_logs_season(conn, season, dry_run=dry_run)
+        except Exception as e:  # noqa: BLE001 - one season must not end the run
+            failed.append(season)
+            logger.error("%s: failed, moving on (%s)", season, e)
+            time.sleep(BACKFILL_REQUEST_DELAY_SECONDS * 4)
+            continue
+
+        succeeded.append(season)
+        logger.info(
+            "%s: done — %d schedule, %d player logs, %d team logs, %d status",
+            season, counts["schedule"], counts["player_logs"],
+            counts["team_logs"], counts["status"],
+        )
+
+    logger.info(
+        "truth-layer backfill summary: %d succeeded, %d failed",
+        len(succeeded), len(failed),
+    )
+    if failed:
+        logger.info("failed (re-run to retry): %s", ", ".join(failed))
+
+
+# ---------------------------------------------------------------------------
+# Data truth layer — validation.
+# ---------------------------------------------------------------------------
+
+
+def _scalar(conn: psycopg2.extensions.connection, sql: str, params: tuple = ()) -> object:
+    cur = conn.cursor()
+    try:
+        cur.execute(sql, params)
+        row = cur.fetchone()
+        return row[0] if row else None
+    finally:
+        cur.close()
+
+
+def _rows(conn: psycopg2.extensions.connection, sql: str, params: tuple = ()) -> list[tuple]:
+    cur = conn.cursor()
+    try:
+        cur.execute(sql, params)
+        return cur.fetchall()
+    finally:
+        cur.close()
+
+
+def _report_examples(label: str, rows: Sequence[tuple]) -> None:
+    """Print a rule's offenders, capped, so a broken season is diagnosable."""
+    if not rows:
+        logger.info("    %-42s OK", label)
+        return
+    logger.warning("    %-42s %d offender(s)", label, len(rows))
+    for row in rows[:VALIDATION_MAX_EXAMPLES]:
+        logger.warning("        %s", ", ".join(str(v) for v in row))
+    if len(rows) > VALIDATION_MAX_EXAMPLES:
+        logger.warning("        ... and %d more", len(rows) - VALIDATION_MAX_EXAMPLES)
+
+
+def validate_game_logs(
+    conn: psycopg2.extensions.connection, from_season: str, to_season: str
+) -> None:
+    """Read-only integrity report over the truth layer, one section per season.
+
+    Writes nothing and takes no locks — safe to run against prod while the cron
+    is mid-scrape. Every check is phrased so that "OK" means the invariant held,
+    not merely that the query returned.
+    """
+    seasons = season_range(from_season, to_season)
+    logger.info("truth-layer validation: %s -> %s", seasons[-1], seasons[0])
+
+    for season in seasons:
+        games = _scalar(
+            conn,
+            "SELECT COUNT(DISTINCT nba_game_id) FROM team_game_logs WHERE season = %s",
+            (season,),
+        )
+        player_logs = _scalar(
+            conn, "SELECT COUNT(*) FROM player_game_logs WHERE season = %s", (season,)
+        )
+        status_rows = _scalar(
+            conn,
+            """
+            SELECT COUNT(*) FROM player_game_status s
+             WHERE EXISTS (SELECT 1 FROM team_game_logs t
+                            WHERE t.nba_game_id = s.nba_game_id AND t.season = %s)
+            """,
+            (season,),
+        )
+
+        logger.info("")
+        logger.info(
+            "%s: %s completed game(s), %s player log(s), %s status row(s)",
+            season, games, player_logs, status_rows,
+        )
+        if not games:
+            logger.info("    (nothing stored for this season)")
+            continue
+
+        _report_examples(
+            "team rows per game == 2",
+            _rows(
+                conn,
+                """
+                SELECT nba_game_id, COUNT(*) FROM team_game_logs
+                 WHERE season = %s GROUP BY nba_game_id HAVING COUNT(*) <> 2
+                 ORDER BY nba_game_id
+                """,
+                (season,),
+            ),
+        )
+        # the UNIQUE constraint makes this impossible; checked anyway, because a
+        # constraint that was never applied to this database is not a constraint.
+        _report_examples(
+            "no duplicate (player, game) keys",
+            _rows(
+                conn,
+                """
+                SELECT nba_player_id, nba_game_id, COUNT(*) FROM player_game_logs
+                 WHERE season = %s GROUP BY nba_player_id, nba_game_id HAVING COUNT(*) > 1
+                """,
+                (season,),
+            ),
+        )
+
+        for name, left, right in BOX_SCORE_RULES:
+            _report_examples(
+                f"{left} <= {right}",
+                _rows(
+                    conn,
+                    f"""
+                    SELECT nba_player_id, nba_game_id, {left}, {right}
+                      FROM player_game_logs
+                     WHERE season = %s AND {left} IS NOT NULL AND {right} IS NOT NULL
+                       AND {left} > {right}
+                     ORDER BY nba_game_id
+                    """,
+                    (season,),
+                ),
+            )
+
+        _report_examples(
+            f"player pts sum == team pts (+/-{VALIDATION_POINTS_TOLERANCE})",
+            _rows(
+                conn,
+                """
+                SELECT t.nba_game_id, t.team_id, t.pts, COALESCE(p.player_pts, 0)
+                  FROM team_game_logs t
+                  LEFT JOIN (
+                        SELECT nba_game_id, team_id, SUM(pts) AS player_pts
+                          FROM player_game_logs
+                         WHERE season = %s
+                         GROUP BY nba_game_id, team_id
+                       ) p
+                    ON p.nba_game_id = t.nba_game_id AND p.team_id = t.team_id
+                 WHERE t.season = %s AND t.pts IS NOT NULL
+                   AND ABS(t.pts - COALESCE(p.player_pts, 0)) > %s
+                 ORDER BY t.nba_game_id
+                """,
+                (season, season, VALIDATION_POINTS_TOLERANCE),
+            ),
+        )
+        _report_examples(
+            "completed schedule games have logs",
+            _rows(
+                conn,
+                """
+                SELECT s.nba_game_id, s.game_date, s.home_team_abbr, s.away_team_abbr
+                  FROM nba_schedule s
+                 WHERE s.season = %s
+                   AND s.game_date < CURRENT_DATE
+                   AND s.postponed_status IS NULL
+                   AND NOT EXISTS (SELECT 1 FROM team_game_logs t
+                                    WHERE t.nba_game_id = s.nba_game_id)
+                 ORDER BY s.game_date
+                """,
+                (season,),
+            ),
+        )
+        _report_examples(
+            "completed games have status rows",
+            _rows(
+                conn,
+                """
+                SELECT DISTINCT t.nba_game_id, t.game_date
+                  FROM team_game_logs t
+                 WHERE t.season = %s
+                   AND NOT EXISTS (SELECT 1 FROM player_game_status s
+                                    WHERE s.nba_game_id = t.nba_game_id)
+                 ORDER BY t.game_date
+                """,
+                (season,),
+            ),
+        )
+
+    logger.info("")
+    logger.info("storage:")
+    for table in TRUTH_LAYER_TABLES:
+        # to_regclass returns NULL instead of erroring when migration 013 has
+        # not been applied to whichever database this is pointed at.
+        size = _scalar(
+            conn,
+            "SELECT pg_size_pretty(pg_total_relation_size(to_regclass(%s)))",
+            (table,),
+        )
+        logger.info("    %-24s %s", table, size or "not present")
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="NBA stats scraper")
     # Mutually exclusive so `--dev --prod` is rejected rather than silently
@@ -1476,15 +3271,71 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             f"{', '.join(NBA_2K_TEAM_TYPES)} (default {NBA_2K_DEFAULT_TEAM_TYPES})"
         ),
     )
+    parser.add_argument(
+        "--backfill-game-logs",
+        dest="backfill_game_logs",
+        action="store_true",
+        help=(
+            "run the one-time truth-layer backfill (schedule, game logs, "
+            "per-game inactive lists) instead of the normal scrape; honours "
+            f"--from/--to, defaulting to {BACKFILL_GAME_LOGS_DEFAULT_FROM_SEASON}"
+        ),
+    )
+    parser.add_argument(
+        "--validate-game-logs",
+        dest="validate_game_logs",
+        action="store_true",
+        help="print a read-only truth-layer integrity report and exit",
+    )
+    parser.add_argument(
+        "--dry-run",
+        dest="dry_run",
+        action="store_true",
+        help="log what would be written and write nothing (reads still run)",
+    )
     return parser.parse_args(argv)
+
+
+def _truth_layer_season_bounds(args: argparse.Namespace) -> tuple[str, str]:
+    """--from/--to for the truth-layer commands.
+
+    They share the flags with --backfill-history, whose default reaches back to
+    1979-80. Honouring that here would ask for 45 seasons of per-game inactive
+    lists, so an untouched --from falls back to the truth layer's own default.
+    """
+    from_season = args.from_season
+    if from_season == BACKFILL_DEFAULT_FROM_SEASON:
+        from_season = BACKFILL_GAME_LOGS_DEFAULT_FROM_SEASON
+    return from_season, args.to_season
+
+
+def _run_phase(name: str, phase: Callable[[], None]) -> None:
+    """Run one scrape phase, logging and swallowing its failure.
+
+    Each phase is independent: a stats.nba.com outage during the game-log sync
+    must not cost the injury scrape that would have run after it.
+    """
+    try:
+        phase()
+    except Exception as e:  # noqa: BLE001 - independence is the whole point
+        logger.error("%s failed, continuing (%s)", name, e)
 
 
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
 
+    truth_from, truth_to = _truth_layer_season_bounds(args)
+
     if args.backfill_history:
         try:
             season_range(args.from_season, args.to_season)
+        except ValueError as e:
+            logger.error("%s", e)
+            sys.exit(2)
+
+    if args.backfill_game_logs or args.validate_game_logs:
+        try:
+            season_range(truth_from, truth_to)
         except ValueError as e:
             logger.error("%s", e)
             sys.exit(2)
@@ -1497,17 +3348,32 @@ def main(argv: list[str] | None = None) -> None:
             logger.error("%s", e)
             sys.exit(2)
 
+    if args.dry_run:
+        logger.info("--dry-run: reads will run, writes will be counted and skipped")
+
     conn = get_db(args.target)
     try:
         if args.backfill_history:
             backfill_history(conn, args.from_season, args.to_season)
+        elif args.backfill_game_logs:
+            backfill_game_logs(conn, truth_from, truth_to, dry_run=args.dry_run)
+        elif args.validate_game_logs:
+            validate_game_logs(conn, truth_from, truth_to)
         elif args.sync_2k:
             sync_2k_ratings(conn, team_types)
         else:
-            scrape_players(conn)
-            scrape_teams(conn)
-            scrape_scoreboard(conn)
-            scrape_injuries(conn)
+            scrape_players(conn, dry_run=args.dry_run)
+            scrape_teams(conn, dry_run=args.dry_run)
+            scrape_scoreboard(conn, dry_run=args.dry_run)
+            scrape_injuries(conn, dry_run=args.dry_run)
+            # truth layer runs last: it is the newest and least battle-tested
+            # part of the cron, and the four scrapes above back user-visible
+            # pages that must not be held hostage to it.
+            _run_phase("schedule", lambda: scrape_schedule(conn, dry_run=args.dry_run))
+            _run_phase("game logs", lambda: scrape_game_logs(conn, dry_run=args.dry_run))
+            _run_phase(
+                "game status", lambda: scrape_game_status(conn, dry_run=args.dry_run)
+            )
     finally:
         conn.close()
 

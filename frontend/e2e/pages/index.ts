@@ -7,6 +7,7 @@
 // page-object files.
 
 export { StatsPage } from './StatsPage';
+export { PlayerAnalyticsPage } from './PlayerAnalyticsPage';
 export { FantasyPage } from './FantasyPage';
 export { ImproveTeamPage } from './ImproveTeamPage';
 export { BettingPage } from './BettingPage';
