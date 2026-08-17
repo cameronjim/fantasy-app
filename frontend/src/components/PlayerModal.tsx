@@ -77,12 +77,15 @@ export const PlayerModal = ({ player, onClose }: PlayerModalProps) => {
               <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                 {/* renders nothing when the player has no 2K match */}
                 <Rating2kBadge playerName={player.name} />
+                {/* deliberately the same badge recipe as Rating2kBadge so the
+                    two read as one row of equal chips */}
                 <Link
                   to={`/player/${player.id}`}
                   onClick={onClose}
-                  className="btn btn-primary btn-sm"
+                  className="badge badge-sm badge-primary gap-1 font-semibold"
+                  title="Trends, percentiles and projections"
                 >
-                  <BarChart3 size={15} />
+                  <BarChart3 size={12} />
                   Full Analytics
                 </Link>
               </div>
