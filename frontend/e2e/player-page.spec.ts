@@ -24,7 +24,7 @@ test.describe('Player analytics page', () => {
     await analytics.goto(ALL_STAR.id);
 
     await expect(page.getByText(/vs rotation players/i)).toContainText(
-      '15+ games and 20+ minutes per game'
+      'GP >= 15 and MPG >= 12 this season'
     );
     await expect(page.getByText(/vs rotation players/i)).toContainText('n=312');
   });
