@@ -1,0 +1,237 @@
+"""deterministic synthetic parquet fixtures.
+
+the test suite must not depend on ``ml-spike/data`` existing - that directory
+is a throwaway spike artifact and is not committed. everything here is seeded,
+so two runs produce byte-identical files.
+
+the shapes match what :class:`fnba_ml.data.parquet_source.ParquetSource` reads:
+
+    player_logs_<season>.parquet          appearances only, nba_api-ish columns
+    team_logs_<season>.parquet            two rows per game, MATCHUP carries home/away
+    player_game_status_<season>.parquet   the roster/inactive table
+
+the data is shaped to exercise the cases the leakage tests care about:
+  - players who carry form across the season boundary, and rookies who do not
+  - a long injury (13 consecutive team-games) that the +/-15 day approximation
+    provably cannot represent, so the two universe constructions differ
+  - enough games per team that the 10-game opponent-form window fills
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+FIXTURE_DIR = Path(__file__).resolve().parent
+
+SEASON_STARTS = {"2023-24": "2023-11-01", "2024-25": "2024-11-01"}
+N_TEAMS = 8
+N_DATES = 20
+GAME_INTERVAL_DAYS = 3  # wide enough that a 13-game absence exceeds +/-15 days
+ROSTER_SIZE = 12
+RETURNING_PER_TEAM = 10
+
+# (minutes, P(play)) by roster slot - a fringe player is scheduled as often as
+# a star and appears less than half as much, which is the whole argument for
+# modelling availability separately
+SLOT_PROFILE = [
+    (33.0, 0.94), (31.0, 0.92),
+    (26.0, 0.88), (24.0, 0.86), (22.0, 0.85),
+    (16.0, 0.78), (14.0, 0.74), (12.0, 0.72),
+    (8.0, 0.48), (7.0, 0.44), (6.0, 0.40), (5.0, 0.36),
+]
+
+# roster slot 5 misses game indices [LONG_ABSENCE) of the second season
+LONG_ABSENCE_SLOT = 5
+LONG_ABSENCE_RANGE = range(5, 18)
+LONG_ABSENCE_SEASON = "2024-25"
+
+# the two new players each team signs for the second season debut late, so
+# their early rows genuinely have no history
+ROOKIE_DEBUT_INDEX = 3
+
+
+def _team_ids() -> list[str]:
+    return [str(1610612700 + i) for i in range(N_TEAMS)]
+
+
+def _team_abbr(team_id: str) -> str:
+    return f"T{int(team_id) - 1610612700:02d}"
+
+
+def _dates(season: str) -> list[pd.Timestamp]:
+    start = pd.Timestamp(SEASON_STARTS[season])
+    return [start + pd.Timedelta(days=GAME_INTERVAL_DAYS * i) for i in range(N_DATES)]
+
+
+def _pairings(date_index: int, teams: list[str]) -> list[tuple[str, str]]:
+    """rotate the team list so opponents vary across dates. returns (home, away)."""
+    rotated = teams[date_index % len(teams):] + teams[: date_index % len(teams)]
+    pairs = []
+    for i in range(0, len(rotated), 2):
+        a, b = rotated[i], rotated[i + 1]
+        pairs.append((a, b) if (date_index + i) % 2 == 0 else (b, a))
+    return pairs
+
+
+def _rosters() -> dict[tuple[str, str], list[str]]:
+    """(season, team) -> ordered player ids. slot order is the profile order."""
+    rosters: dict[tuple[str, str], list[str]] = {}
+    next_player = 2000
+    for team in _team_ids():
+        first = [str(next_player + i) for i in range(ROSTER_SIZE)]
+        next_player += ROSTER_SIZE
+        rosters[("2023-24", team)] = first
+
+        newcomers = [str(next_player + i) for i in range(ROSTER_SIZE - RETURNING_PER_TEAM)]
+        next_player += ROSTER_SIZE - RETURNING_PER_TEAM
+        rosters[("2024-25", team)] = first[:RETURNING_PER_TEAM] + newcomers
+    return rosters
+
+
+def _player_skill(rng: np.random.Generator, player_ids: list[str]) -> dict[str, dict[str, float]]:
+    return {
+        pid: {
+            "ppm": float(rng.uniform(0.35, 0.62)),
+            "apm": float(rng.uniform(0.04, 0.18)),
+            "rpm": float(rng.uniform(0.10, 0.28)),
+        }
+        for pid in player_ids
+    }
+
+
+def _build(seed: int) -> dict[str, pd.DataFrame]:
+    rng = np.random.default_rng(seed)
+    teams = _team_ids()
+    rosters = _rosters()
+    all_players = sorted({p for roster in rosters.values() for p in roster})
+    skill = _player_skill(rng, all_players)
+    names = {pid: f"Player {pid}" for pid in all_players}
+
+    status_rows: list[dict] = []
+    log_rows: list[dict] = []
+    team_rows: list[dict] = []
+    game_counter = 1
+
+    for season in SEASON_STARTS:
+        for d_idx, game_date in enumerate(_dates(season)):
+            for home, away in _pairings(d_idx, teams):
+                game_id = f"002{int(season[:4]) % 100:02d}{game_counter:05d}"
+                game_counter += 1
+                team_pts: dict[str, int] = {}
+
+                for team in (home, away):
+                    roster = rosters[(season, team)]
+                    pts_total = 0
+                    for slot, player_id in enumerate(roster):
+                        minutes_mean, p_play = SLOT_PROFILE[slot]
+
+                        forced_out = (
+                            season == LONG_ABSENCE_SEASON
+                            and slot == LONG_ABSENCE_SLOT
+                            and d_idx in LONG_ABSENCE_RANGE
+                        )
+                        rookie_not_yet = (
+                            season == LONG_ABSENCE_SEASON
+                            and slot >= RETURNING_PER_TEAM
+                            and d_idx < ROOKIE_DEBUT_INDEX
+                        )
+                        played = (
+                            not forced_out
+                            and not rookie_not_yet
+                            and bool(rng.random() < p_play)
+                        )
+
+                        row = {
+                            "PLAYER_ID": player_id,
+                            "GAME_ID": game_id,
+                            "TEAM_ID": team,
+                            "ROSTERED": True,
+                            "LISTED_INACTIVE": bool(forced_out or (not played and slot < 8)),
+                            "STARTED": bool(played and slot < 5),
+                            "PLAYED": played,
+                            "DNP_REASON": (
+                                "Injury/Illness" if forced_out
+                                else (None if played else "DNP - Coach's Decision")
+                            ),
+                            "MIN": None,
+                        }
+
+                        if played:
+                            minutes = float(np.clip(rng.normal(minutes_mean, 4.0), 1.0, 46.0))
+                            s = skill[player_id]
+                            pts = max(0.0, round(minutes * s["ppm"] + rng.normal(0, 3.0), 1))
+                            ast = max(0.0, round(minutes * s["apm"] + rng.normal(0, 0.8), 1))
+                            reb = max(0.0, round(minutes * s["rpm"] + rng.normal(0, 1.2), 1))
+                            fga = max(0.0, round(pts / 1.15 + rng.normal(0, 1.5), 1))
+                            row["MIN"] = round(minutes, 1)
+                            pts_total += int(round(pts))
+                            log_rows.append({
+                                "PLAYER_ID": player_id,
+                                "PLAYER_NAME": names[player_id],
+                                "TEAM_ID": team,
+                                "TEAM_ABBREVIATION": _team_abbr(team),
+                                "GAME_ID": game_id,
+                                "GAME_DATE": game_date,
+                                "SEASON_KEY": season,
+                                "MIN": round(minutes, 1),
+                                "PTS": pts,
+                                "AST": ast,
+                                "REB": reb,
+                                "FGA": fga,
+                                "FG3M": max(0.0, round(pts / 9.0 + rng.normal(0, 0.6), 1)),
+                                "FTM": max(0.0, round(pts / 7.0 + rng.normal(0, 0.6), 1)),
+                                "TOV": max(0.0, round(minutes * 0.05 + rng.normal(0, 0.5), 1)),
+                                "STL": max(0.0, round(minutes * 0.03 + rng.normal(0, 0.4), 1)),
+                                "BLK": max(0.0, round(minutes * 0.02 + rng.normal(0, 0.3), 1)),
+                                "PLUS_MINUS": round(float(rng.normal(0, 8)), 1),
+                            })
+                        status_rows.append(row)
+                    team_pts[team] = pts_total
+
+                for team, opponent in ((home, away), (away, home)):
+                    at_home = team == home
+                    team_rows.append({
+                        "TEAM_ID": team,
+                        "TEAM_ABBREVIATION": _team_abbr(team),
+                        "GAME_ID": game_id,
+                        "GAME_DATE": game_date,
+                        "SEASON_KEY": season,
+                        "MATCHUP": (
+                            f"{_team_abbr(team)} vs. {_team_abbr(opponent)}" if at_home
+                            else f"{_team_abbr(team)} @ {_team_abbr(opponent)}"
+                        ),
+                        "WL": "W" if team_pts[team] >= team_pts[opponent] else "L",
+                        "PTS": team_pts[team],
+                    })
+
+    return {
+        "player_logs": pd.DataFrame(log_rows),
+        "team_logs": pd.DataFrame(team_rows),
+        "player_game_status": pd.DataFrame(status_rows),
+    }
+
+
+def generate(out_dir: Path | None = None, seed: int = 17) -> Path:
+    """write the fixture parquet files and return the directory."""
+    out_dir = Path(out_dir or FIXTURE_DIR)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    frames = _build(seed)
+
+    status_games = frames["team_logs"][["GAME_ID", "SEASON_KEY"]].drop_duplicates()
+    frames["player_game_status"] = frames["player_game_status"].merge(
+        status_games, on="GAME_ID", how="left"
+    )
+
+    for name, frame in frames.items():
+        for season in SEASON_STARTS:
+            part = frame[frame["SEASON_KEY"] == season].drop(columns=["SEASON_KEY"])
+            path = out_dir / f"{name}_{season.replace('-', '_')}.parquet"
+            part.reset_index(drop=True).to_parquet(path, index=False)
+    return out_dir
+
+
+if __name__ == "__main__":
+    print(generate())

@@ -4,6 +4,7 @@ import { GoogleOAuthProvider } from '@react-oauth/google';
 import { Navbar } from './components/Navbar';
 import { StatsPage } from './pages/StatsPage';
 import { HistoryPage } from './pages/HistoryPage';
+import { PlayerPage } from './pages/PlayerPage';
 import { Ratings2kPage } from './pages/Ratings2kPage';
 import { FantasyPage } from './pages/FantasyPage';
 import { ImproveTeamPage } from './pages/ImproveTeamPage';
@@ -56,6 +57,7 @@ export const App = (): JSX.Element => {
           <main>
             <Routes>
               <Route path="/" element={<StatsPage />} />
+              <Route path="/player/:id" element={<PlayerPage />} />
               <Route path="/history" element={<HistoryPage />} />
               <Route path="/ratings" element={<Ratings2kPage />} />
               <Route path="/fantasy" element={<FantasyPage isLoggedIn={isLoggedIn} />} />

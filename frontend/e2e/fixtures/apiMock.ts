@@ -3,6 +3,7 @@ import { ALL_PLAYERS, type PlayerFixture } from './players';
 import type {
   Team, Game, TeamAnalysis,
   BettingGame, BettingPicksResponse, Bet, LedgerSummary,
+  PlayerAnalytics,
 } from '../../src/types';
 
 // route handlers that satisfy the api calls the app makes on first paint.
@@ -29,6 +30,9 @@ export interface MockOptions {
   teams?: Team[];
   games?: Game[];
   status?: DataStatus;
+  // payload for /api/players/:id/analytics; omitted means the endpoint 404s,
+  // which is what a player with no computed analytics looks like.
+  playerAnalytics?: PlayerAnalytics;
   rosterRequiresAuth?: boolean;
   teamAnalysis?: TeamAnalysis;
   waiverSuggestions?: WaiverSuggestionsResponse;
@@ -77,6 +81,16 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<void>
       ? players.filter((p) => p.name.toLowerCase().includes(search))
       : players;
     route.fulfill({ json: filtered });
+  });
+
+  // registered after the players list route because `**/api/players*` stops at
+  // the next slash and would otherwise leave this path unhandled.
+  await page.route('**/api/players/*/analytics', (route) => {
+    if (!opts.playerAnalytics) {
+      route.fulfill({ status: 404, json: { error: 'Not found' } });
+      return;
+    }
+    route.fulfill({ json: opts.playerAnalytics });
   });
 
   await page.route('**/api/teams', (route) => route.fulfill({ json: teams }));

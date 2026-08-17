@@ -110,6 +110,11 @@ npm run build                # vite build
 
 # e2e (one-time browser install: npm run test:e2e:install)
 npm run test:e2e             # playwright against the vite dev server
+
+# scraper (only when you touched scraper/)
+cd ../scraper
+pip install -r requirements.txt
+python -m pytest test_truth_layer.py
 ```
 
 If you're adding a feature, you must also have added or updated tests for
@@ -191,6 +196,14 @@ Failures block merge **only** if branch protection is configured (see §7).
 - The cron in `.github/workflows/scraper.yml` runs every 6 hours. If you
   change the cadence, update that file and verify `DATABASE_URL` is still
   passed via `secrets`.
+- Truth-layer logic (parsing, watermarks, stint transitions, validation rules,
+  status derivation) goes in a **pure function** and gets a test in
+  `scraper/test_truth_layer.py`. There is no test database, so anything that
+  needs a connection cannot be covered — keep the untestable surface to the
+  thin write paths that call the pure helpers.
+- Every new write path must honour `--dry-run`. Wrap the cursor with
+  `maybe_write_cursor(conn.cursor(), dry_run)` rather than branching at each
+  call site, so a dry run exercises the same code production does.
 
 ### 3g. When you're updating CI / GitHub Actions
 
@@ -374,6 +387,7 @@ The following are not allowed in committed code:
 | Frontend unit             | `frontend/test/`                   | Vitest + jsdom          |
 | Frontend test setup       | `frontend/test/setup.ts`           | runs before every file  |
 | Frontend E2E              | `frontend/e2e/`                    | Playwright              |
+| Scraper unit              | `scraper/test_truth_layer.py`      | pytest (no db, no network) |
 | Playwright page objects   | `frontend/e2e/pages/`              | POM classes             |
 | Playwright fixtures       | `frontend/e2e/fixtures/`           | route mocks, sample data|
 
