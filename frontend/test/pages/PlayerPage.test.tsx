@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { PlayerPage } from '../../src/pages/PlayerPage';
@@ -152,8 +152,7 @@ describe('PlayerPage', () => {
     expect(screen.getByRole('heading', { name: /Distribution/i })).toBeInTheDocument();
     expect(screen.getByTestId('distribution-chart')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /Trends/i })).toBeInTheDocument();
-    expect(screen.getByTestId('points-trend-chart')).toBeInTheDocument();
-    expect(screen.getByTestId('minutes-trend-chart')).toBeInTheDocument();
+    expect(screen.getByTestId('trend-chart')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /Recent Games/i })).toBeInTheDocument();
     expect(screen.getByText('BOS')).toBeInTheDocument();
     expect(screen.getByText('GSW')).toBeInTheDocument();
@@ -183,13 +182,36 @@ describe('PlayerPage', () => {
     renderPage();
     await screen.findByRole('heading', { name: /Distribution/i });
     const user = userEvent.setup();
+    // both the distribution and trends sections have a REB tab — scope to one
+    const tablist = within(screen.getByRole('tablist', { name: 'Distribution stat' }));
 
     // act
-    await user.click(screen.getByRole('tab', { name: 'REB' }));
+    await user.click(tablist.getByRole('tab', { name: 'REB' }));
 
     // assert
-    expect(screen.getByRole('tab', { name: 'REB' })).toHaveAttribute('aria-selected', 'true');
+    expect(tablist.getByRole('tab', { name: 'REB' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByTestId('distribution-chart')).toBeInTheDocument();
+  });
+
+  it('switches the trend chart when another trend stat is picked', async () => {
+    // arrange
+    renderPage();
+    await screen.findByRole('heading', { name: /Trends/i });
+    const user = userEvent.setup();
+    const tablist = within(screen.getByRole('tablist', { name: 'Trend stat' }));
+
+    // assert — every category is offered, points is the default
+    for (const label of ['PTS', 'REB', 'AST', 'STL', 'BLK', '3PM', 'TOV', 'MIN']) {
+      expect(tablist.getByRole('tab', { name: label })).toBeInTheDocument();
+    }
+    expect(tablist.getByRole('tab', { name: 'PTS' })).toHaveAttribute('aria-selected', 'true');
+
+    // act
+    await user.click(tablist.getByRole('tab', { name: 'BLK' }));
+
+    // assert
+    expect(tablist.getByRole('tab', { name: 'BLK' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('trend-chart')).toBeInTheDocument();
   });
 
   it('degrades to percentiles only when the player has no game logs', async () => {
@@ -208,7 +230,7 @@ describe('PlayerPage', () => {
     expect(await screen.findByRole('heading', { name: /Category Percentiles/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /Distribution/i })).toBeInTheDocument();
     expect(screen.getByText('No game logs yet')).toBeInTheDocument();
-    expect(screen.queryByTestId('points-trend-chart')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('trend-chart')).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /Recent Games/i })).not.toBeInTheDocument();
     expect(screen.getByText(/Game logs as of no game logs yet/i)).toBeInTheDocument();
   });

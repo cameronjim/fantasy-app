@@ -422,14 +422,14 @@ export interface AnalyticsGameLog {
   fta: NumericLike;
 }
 
-/** Trailing averages aligned to the same game dates as the logs. */
+/**
+ * Trailing averages aligned to the same game dates as the logs. One
+ * `<stat>_r5` and `<stat>_r10` key per trend stat (minutes shortens to
+ * `min_`), null while the window isn't full.
+ */
 export interface AnalyticsRollingPoint {
   game_date: string;
-  min_r5: NumericLike;
-  pts_r5: NumericLike;
-  pts_r10: NumericLike;
-  reb_r5: NumericLike;
-  ast_r5: NumericLike;
+  [rollingKey: string]: NumericLike | null;
 }
 
 /** Recent form against the player's own season baseline. `z` is null when the
