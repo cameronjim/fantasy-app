@@ -9,7 +9,16 @@ the spike's central finding, not an omission (REPORT.md section 6).
 
 metrics written to the registry come from a holdout window immediately before
 the training cutoff, never from the training rows themselves. the shipped
-artifact is then refit on the full window.
+artifact is then refit on the full window. the prediction-quantile offsets
+(fnba_ml/intervals.py) come from that same holdout window, for the same reason:
+residuals measured on training rows understate the spread.
+
+metadata.json carries feature_version, the git commit and the availability
+artifact's sha256 as well as the metrics, because those three are what a stored
+prediction needs to be traced back to the code and bytes that produced it
+(prediction_runs, migration 014). the registry keeps its own copy - it is the
+audit record - but predict.py should not have to read two files to write one
+provenance row.
 """
 
 from __future__ import annotations
@@ -37,11 +46,17 @@ from fnba_ml.cli import (  # noqa: E402
 from fnba_ml.config import (  # noqa: E402
     CHAMPIONS,
     CUTOFF_POLICY,
+    FEATURE_VERSION,
     LGBM_PARAMS,
     MODELS_DIR,
     resolve_cutoff,
 )
 from fnba_ml.features import available_features  # noqa: E402
+from fnba_ml.intervals import (  # noqa: E402
+    QUANTILE_TARGETS,
+    QuantileOffsets,
+    fit_residual_quantiles,
+)
 from fnba_ml.models import (  # noqa: E402
     AvailabilityModel,
     EwmaProduction,
@@ -97,6 +112,38 @@ def holdout_metrics(
     }
 
 
+def holdout_quantiles(
+    features: pd.DataFrame, cutoff: pd.Timestamp, holdout_days: int
+) -> dict[str, QuantileOffsets]:
+    """P10/P50/P90 offsets for the conditional champion, per target.
+
+    measured on APPEARANCES in the holdout window only. the estimate being
+    quantified is "given he plays", so a row where he did not play carries no
+    residual - folding those in as zeros would widen the interval with the
+    availability question the P(play) column already answers.
+    """
+    split_at = cutoff - pd.Timedelta(days=holdout_days)
+    train = features[features["GAME_DATE"] < split_at]
+    valid = features[(features["GAME_DATE"] >= split_at) & (features["GAME_DATE"] < cutoff)]
+    if "PLAYED" in valid.columns:
+        valid = valid[valid["PLAYED"] == 1]
+    if train.empty or valid.empty:
+        log.warning("holdout window is empty; no quantile offsets will be written")
+        return {}
+
+    window = (str(split_at.date()), str(pd.Timestamp(cutoff).date()))
+    offsets: dict[str, QuantileOffsets] = {}
+    for target in QUANTILE_TARGETS:
+        if target not in valid.columns or f"ewma_{target}" not in valid.columns:
+            log.warning("no ewma_%s / %s in the dataset; skipping its quantiles", target, target)
+            continue
+        estimator = EwmaProduction(target).fit(train)
+        offsets[target] = fit_residual_quantiles(
+            valid[target], estimator.predict(valid), target, window=window
+        )
+    return offsets
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     setup_logging(args.verbose)
@@ -138,14 +185,22 @@ def main(argv: list[str] | None = None) -> int:
         "players": int(train["PLAYER_ID"].nunique()),
         "played_rate": round(float(train["PLAYED"].mean()), 6),
     }
+    quantiles = holdout_quantiles(features, cutoff, args.holdout_days)
     production = {
         "estimator": EwmaProduction("PTS").kind,
         "halflife": EwmaProduction("PTS").halflife,
         "fallbacks": {k: round(v, 6) for k, v in fallbacks.items()},
+        "quantiles": {target: q.as_dict() for target, q in quantiles.items()},
     }
 
+    # provenance a stored prediction needs: which feature contract, which
+    # commit, and the exact bytes of the model that produced it. these land in
+    # prediction_runs.{feature_version,code_sha,artifact_checksum}.
     metadata = {
         "model_version": version,
+        "feature_version": FEATURE_VERSION,
+        "git_commit": registry.git_commit(),
+        "artifact_checksum": registry.sha256_file(out_dir / MODEL_FILE),
         "champions": CHAMPIONS,
         "availability_hyperparams": LGBM_PARAMS,
         "production": production,
@@ -182,6 +237,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"availability     : {CHAMPIONS['availability']} on {len(feature_cols)} features")
     print(f"production        : EWMA(halflife {production['halflife']}) - snapshot only, "
           f"{len(ewma_state):,} players")
+    print(f"feature version  : {FEATURE_VERSION}")
+    print(f"artifact sha256  : {metadata['artifact_checksum'][:16]}...")
+    for target, offsets in quantiles.items():
+        levels = ", ".join(
+            f"P{int(round(lv * 100)):02d} {off:+.2f}"
+            for lv, off in zip(offsets.levels, offsets.offsets)
+        )
+        print(f"quantiles {target:<6s} : {levels}  (n={offsets.n:,})")
     for key, value in metrics.items():
         print(f"  {key:28s} {value}")
     if not gain.empty:

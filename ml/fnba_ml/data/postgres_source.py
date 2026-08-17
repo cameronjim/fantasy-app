@@ -122,7 +122,7 @@ ORDER BY st.nba_player_id, s.game_date
 CUTOFF_CLAUSE = " AND {col} < %(cutoff)s"
 
 
-def _load_database_url() -> str:
+def load_database_url() -> str:
     try:
         from dotenv import load_dotenv  # noqa: PLC0415 - optional dependency
 
@@ -174,7 +174,7 @@ class PostgresSource:
     def _read(self, sql: str) -> pd.DataFrame:
         import psycopg2  # noqa: PLC0415 - optional at import time, required at call time
 
-        with psycopg2.connect(self._database_url or _load_database_url()) as conn:
+        with psycopg2.connect(self._database_url or load_database_url()) as conn:
             return pd.read_sql_query(sql, conn, params=self._params())
 
     # ------------------------------------------------------------------

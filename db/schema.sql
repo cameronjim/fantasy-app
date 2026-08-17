@@ -473,6 +473,56 @@ CREATE TABLE IF NOT EXISTS player_injury_reports (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- ---------------------------------------------------------------------------
+-- Prediction store (migration 014): what the model said, when it said it, and
+-- what it knew at the time. See db/migrations/014_predictions.sql for the full
+-- rationale.
+--
+-- APPEND-ONLY. A prediction is a claim made at an instant; updating one in
+-- place turns every later backtest into a measure of hindsight. New runs write
+-- new rows and never touch old ones.
+-- ---------------------------------------------------------------------------
+
+-- one row per prediction run: which model, which features, which commit, and
+-- the information boundary it respected. predicted_at is wall clock;
+-- forecast_cutoff_at is the last instant the run was allowed to see. A backtest
+-- re-run today has today's predicted_at and last season's forecast_cutoff_at,
+-- and only the second one is honest about what the model could know.
+CREATE TABLE IF NOT EXISTS prediction_runs (
+    id SERIAL PRIMARY KEY,
+    model_version TEXT NOT NULL,
+    feature_version TEXT NOT NULL,
+    code_sha TEXT,
+    trained_through DATE,
+    predicted_at TIMESTAMPTZ NOT NULL,
+    forecast_cutoff_at TIMESTAMPTZ NOT NULL,
+    artifact_checksum TEXT,
+    -- the serving path reads only 'complete'; a killed run leaves a partial slate.
+    status TEXT NOT NULL DEFAULT 'complete',
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- one row per (run, player, game, stat, quantile). Long format because the stat
+-- vocabulary grows. conditional TRUE = "given he plays"; FALSE = over the
+-- schedule, already multiplied by P(play) — roughly half the size, and serving
+-- one where the other was meant is not a rounding error. quantile NULL = an
+-- expected value; 0.10/0.50/0.90 are empirical prediction quantiles.
+-- Stat names: 'prob_active' (unconditional, [0,1]), the bare stat name for the
+-- conditional estimate, '<stat>_uncond' for the schedule-level expectation.
+CREATE TABLE IF NOT EXISTS player_game_predictions (
+    id BIGSERIAL PRIMARY KEY,
+    prediction_run_id INT NOT NULL REFERENCES prediction_runs (id),
+    nba_player_id TEXT NOT NULL,
+    nba_game_id TEXT NOT NULL,
+    game_date DATE NOT NULL,
+    stat TEXT NOT NULL,
+    quantile NUMERIC(3,2),
+    value NUMERIC NOT NULL,
+    conditional BOOLEAN NOT NULL,
+    UNIQUE (prediction_run_id, nba_player_id, nba_game_id, stat, quantile)
+);
+
 CREATE INDEX IF NOT EXISTS idx_players_team ON players(team);
 CREATE INDEX IF NOT EXISTS idx_players_position ON players(position);
 CREATE INDEX IF NOT EXISTS idx_players_name ON players(name);
@@ -502,3 +552,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_player_team_stints_one_open
   ON player_team_stints(nba_player_id) WHERE valid_to IS NULL;
 CREATE INDEX IF NOT EXISTS idx_player_injury_reports_player_captured
   ON player_injury_reports(nba_player_id, captured_at DESC);
+CREATE INDEX IF NOT EXISTS idx_prediction_runs_predicted_at ON prediction_runs(status, predicted_at DESC);
+-- the UNIQUE constraint above does not bite for expected values: Postgres treats
+-- NULL quantiles as distinct, so this is the index that stops a re-run doubling
+-- a slate. -1 is safe as the sentinel — real quantiles are in (0,1).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_player_game_predictions_key
+  ON player_game_predictions(prediction_run_id, nba_player_id, nba_game_id, stat, COALESCE(quantile, -1));
+CREATE INDEX IF NOT EXISTS idx_player_game_predictions_player_date
+  ON player_game_predictions(nba_player_id, game_date DESC);
+CREATE INDEX IF NOT EXISTS idx_player_game_predictions_run
+  ON player_game_predictions(prediction_run_id);
