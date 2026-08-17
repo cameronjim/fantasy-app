@@ -30,8 +30,8 @@ function fullPayload(overrides: Partial<PlayerAnalytics> = {}): PlayerAnalytics 
     as_of: { logs: '2026-02-04T12:00:00Z', distributions: '2026-02-04T13:00:00Z' },
     pool: {
       key: 'rotation',
-      label: 'rotation players',
-      definition: '15+ games and 20+ minutes per game',
+      label: 'Rotation players',
+      definition: 'GP >= 15 and MPG >= 12 this season',
       sample_size: 312,
     },
     percentiles: [
@@ -165,7 +165,7 @@ describe('PlayerPage', () => {
 
     // assert
     const poolLine = await screen.findByText(/^vs rotation players/i);
-    expect(poolLine).toHaveTextContent('15+ games and 20+ minutes per game');
+    expect(poolLine).toHaveTextContent('GP >= 15 and MPG >= 12 this season');
     expect(poolLine).toHaveTextContent('n=312');
   });
 
