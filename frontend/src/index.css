@@ -14,6 +14,16 @@
   --brand-red: #ef4444;   /* tailwind red-500 — matches the original error-toast look */
 }
 
+/* tailwind 4's preflight leaves <button> at the native `cursor: default`, so
+   any clickable button styled without daisyui's `btn` class (badges, chips,
+   icon buttons) silently loses its pointer affordance. restore the old
+   behavior app-wide; disabled buttons keep the default cursor. */
+@layer base {
+  button:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
 /* the two built-in themes don't carry the brand green/red, so override them
    here. the custom themes below bake the brand values in directly. */
 [data-theme="lofi"],
