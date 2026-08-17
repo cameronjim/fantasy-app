@@ -49,9 +49,159 @@ function formatPlayerLine(p: PlayerRow): string {
   );
 }
 
+/**
+ * Finite number, or null. `Number(null)` is 0, so a plain coercion would turn
+ * a missing projection into a confident "0% chance to play" — the opposite of
+ * "we don't know", and a claim the prompt would act on.
+ */
+function finite(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Compact recent-form block appended to the roster prompts: each player's
+ * last-10 averages against their own season, plus the modelled chance they
+ * suit up for their next game.
+ *
+ * Deliberately additive and deliberately fragile-proof. The data lives in the
+ * game-log and prediction tables from migrations 013/014, which a given
+ * environment may not have applied yet, so ANY failure here returns an empty
+ * string and the prompt is exactly what it was before. An AI feature must not
+ * go down because an optional enrichment table is missing.
+ *
+ * One query, regardless of roster size: the rolling windows are computed in
+ * SQL and the availability row is joined on.
+ */
+async function buildRosterAnalyticsBlock(
+  roster: Array<{ nba_id: string; name: string }>
+): Promise<string> {
+  if (roster.length === 0) return '';
+
+  try {
+    const ids = roster.map((p) => p.nba_id);
+    const result = await query(
+      `WITH logs AS (
+         SELECT g.nba_player_id,
+                g.minutes::float AS minutes,
+                g.pts::float     AS pts,
+                g.reb::float     AS reb,
+                g.ast::float     AS ast,
+                ROW_NUMBER() OVER (
+                  PARTITION BY g.nba_player_id ORDER BY g.game_date DESC
+                ) AS rn
+         FROM player_game_logs g
+         WHERE g.season = (SELECT MAX(season) FROM player_game_logs)
+           AND g.season_type = 'Regular Season'
+           AND g.nba_player_id = ANY($1)
+       ),
+       agg AS (
+         SELECT nba_player_id,
+                COUNT(*)::int                        AS games,
+                AVG(pts)     FILTER (WHERE rn <= 10) AS pts_l10,
+                AVG(pts)                             AS pts_season,
+                AVG(reb)     FILTER (WHERE rn <= 10) AS reb_l10,
+                AVG(reb)                             AS reb_season,
+                AVG(ast)     FILTER (WHERE rn <= 10) AS ast_l10,
+                AVG(ast)                             AS ast_season,
+                AVG(minutes) FILTER (WHERE rn <= 10) AS min_l10,
+                AVG(minutes)                         AS min_season
+         FROM logs
+         GROUP BY nba_player_id
+       ),
+       run AS (
+         SELECT id FROM prediction_runs
+         WHERE status = 'complete'
+         ORDER BY predicted_at DESC, id DESC
+         LIMIT 1
+       ),
+       prob AS (
+         SELECT DISTINCT ON (pgp.nba_player_id)
+                pgp.nba_player_id,
+                pgp.value::float AS prob_active
+         FROM player_game_predictions pgp
+         JOIN run ON run.id = pgp.prediction_run_id
+         WHERE pgp.stat = 'prob_active'
+           AND pgp.quantile IS NULL
+           AND pgp.nba_player_id = ANY($1)
+           AND pgp.game_date >= CURRENT_DATE
+         ORDER BY pgp.nba_player_id, pgp.game_date ASC
+       )
+       SELECT a.nba_player_id,
+              a.games,
+              a.pts_l10::float, a.pts_season::float,
+              a.reb_l10::float, a.reb_season::float,
+              a.ast_l10::float, a.ast_season::float,
+              a.min_l10::float, a.min_season::float,
+              pr.prob_active
+       FROM agg a
+       LEFT JOIN prob pr ON pr.nba_player_id = a.nba_player_id`,
+      [ids]
+    );
+
+    const nameById = new Map(roster.map((p) => [p.nba_id, p.name]));
+    const lines: string[] = [];
+    let anyProb = false;
+
+    for (const row of result.rows) {
+      const name = nameById.get(String(row.nba_player_id));
+      if (!name) continue;
+
+      const delta = (recent: unknown, season: unknown): string | null => {
+        const a = finite(recent);
+        const b = finite(season);
+        if (a === null || b === null) return null;
+        const diff = a - b;
+        return `${a.toFixed(1)} (${diff >= 0 ? '+' : ''}${diff.toFixed(1)})`;
+      };
+
+      const parts = [
+        ['PTS', delta(row.pts_l10, row.pts_season)],
+        ['REB', delta(row.reb_l10, row.reb_season)],
+        ['AST', delta(row.ast_l10, row.ast_season)],
+        ['MIN', delta(row.min_l10, row.min_season)],
+      ].filter((p): p is [string, string] => p[1] !== null);
+      if (parts.length === 0) continue;
+
+      const prob = finite(row.prob_active);
+      let line = `${name} (${row.games}g): ` + parts.map(([k, v]) => `${k} ${v}`).join(' ');
+      if (prob !== null) {
+        anyProb = true;
+        line += `, P(active next game) ${Math.round(prob * 100)}%`;
+      }
+      lines.push(line);
+    }
+
+    if (lines.length === 0) return '';
+
+    const heading = anyProb
+      ? 'RECENT FORM (last 10 games, change vs season average) AND MODELLED AVAILABILITY:'
+      : 'RECENT FORM (last 10 games, change vs season average):';
+    return `\n${heading}\n${lines.join('\n')}\n`;
+  } catch {
+    // 013/014 not applied, or the enrichment query failed for any other
+    // reason. The prompt is still complete without it.
+    return '';
+  }
+}
+
+/**
+ * `nba_id` is needed to join the roster to game logs and predictions. Rows
+ * without one (players that predate the scraper) simply skip the enrichment.
+ */
+function rosterNbaIds(rows: PlayerRow[]): Array<{ nba_id: string; name: string }> {
+  const out: Array<{ nba_id: string; name: string }> = [];
+  for (const row of rows) {
+    if (row.nba_id === null || row.nba_id === undefined || row.nba_id === '') continue;
+    out.push({ nba_id: String(row.nba_id), name: String(row.name ?? '') });
+  }
+  return out;
+}
+
 export async function buildTeamContext(userId: number): Promise<string> {
   const rosterResult = await query(
-    `SELECT p.name, p.team, p.position,
+    `SELECT p.nba_id, p.name, p.team, p.position,
             p.points_per_game, p.rebounds_per_game, p.assists_per_game, p.steals_per_game, p.blocks_per_game,
             p.field_goal_percentage, p.free_throw_percentage, p.three_pointers_made,
             p.turnovers_per_game, p.injury_status
@@ -77,6 +227,7 @@ export async function buildTeamContext(userId: number): Promise<string> {
     `3PM:${avg('three_pointers_made')} TO:${avg('turnovers_per_game')}\n\n`;
   context += `MY ROSTER (${players.length}):\n`;
   for (const p of players) context += formatPlayerLine(p) + '\n';
+  context += await buildRosterAnalyticsBlock(rosterNbaIds(players));
 
   return context;
 }
@@ -94,7 +245,7 @@ export async function buildWaiverContext(userId: number, leagueSize?: number): P
 
   // Pull the user's roster (with full stats for the prompt).
   const rosterResult = await query(
-    `SELECT p.id, p.name, p.team, p.position,
+    `SELECT p.id, p.nba_id, p.name, p.team, p.position,
             p.points_per_game, p.rebounds_per_game, p.assists_per_game, p.steals_per_game, p.blocks_per_game,
             p.field_goal_percentage, p.free_throw_percentage, p.three_pointers_made,
             p.turnovers_per_game, p.injury_status
@@ -150,6 +301,7 @@ export async function buildWaiverContext(userId: number, leagueSize?: number): P
     `3PM:${avg('three_pointers_made')} TO:${avg('turnovers_per_game')}\n\n`;
   context += `MY ROSTER (${players.length}):\n`;
   for (const p of players) context += formatPlayerLine(p) + '\n';
+  context += await buildRosterAnalyticsBlock(rosterNbaIds(players));
 
   context += `\nWAIVER CANDIDATES (fantasy rank ${rosteredCutoff + 1} – ${rosteredCutoff + waiverBandWidth}, presumed unrostered in a ${teams}-team league):\n`;
   for (const p of waiverPickups) {
