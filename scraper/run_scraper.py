@@ -34,6 +34,25 @@ a residential IP:
     python run_scraper.py --backfill-game-logs --from 2022-23 --to 2025-26
     python run_scraper.py --validate-game-logs
 
+SEASON ROLLOVER. The season is a CLI argument, not a constant to edit. --season
+overrides the SEASON default for every truth-layer phase, and --sync-truth runs
+just those phases, so the new season can be ingested before the SEASON default
+moves:
+
+    python run_scraper.py --dev --sync-truth --season 2026-27
+
+Between the schedule landing and opening night the new season has games scheduled
+and none played; every phase no-ops cleanly through that window rather than
+erroring. Once the new season has tipped off, flip the SEASON default (a
+one-line change) so the un-flagged cron follows it.
+
+ROSTER SNAPSHOT. player_team_stints is derived from game logs, so it cannot see a
+trade or a signing that happened between the last game of one season and the
+first of the next. This writes today's roster assignments from commonteamroster
+for all 30 teams:
+
+    python run_scraper.py --dev --roster-snapshot --season 2026-27 --dry-run
+
 Every write path honours --dry-run, which reports what it would have written and
 executes nothing. Migration 013 must be applied first (see check_migrations.py).
 """
@@ -58,6 +77,7 @@ from bs4 import BeautifulSoup
 from psycopg2.extras import execute_values
 from dotenv import load_dotenv
 from nba_api.stats.endpoints import (
+    commonteamroster,
     leaguedashplayerstats,
     leaguedashteamstats,
     leaguegamelog,
@@ -143,6 +163,18 @@ def _resolve_team_abbr(team_id: str, team_name: str) -> str:
         return abbr
     return NAME_TO_ABBR.get((team_name or "").strip().lower(), "")
 
+# THE CURRENT SEASON, and as of P5 it is a DEFAULT rather than a constant to edit.
+# Every truth-layer phase takes a ``season`` argument and ``--season`` overrides it,
+# so ingesting the new season on opening week is
+#
+#     python run_scraper.py --dev --sync-truth --season 2026-27
+#
+# and needs no code change. FLIPPING THIS DEFAULT IS THE OPENING-WEEK ONE-LINER:
+# change the string below to "2026-27" once the 2026-27 regular season has tipped
+# off, so the un-flagged 6-hour cron follows the new season. It is deliberately NOT
+# derived from today's date - a date-derived default would silently switch seasons
+# in the middle of the playoffs, which is exactly when the old season's rows are
+# still being corrected.
 SEASON = "2025-26"
 
 # Historical backfill defaults. 1979-80 is the first season with a three-point
@@ -1633,7 +1665,8 @@ def parse_game_date(val: object) -> date | None:
         return date.fromisoformat(text.split("T", 1)[0])
     except ValueError:
         pass
-    for fmt in ("%b %d, %Y", "%m/%d/%Y"):
+    # scheduleleaguev2 for 2026-27 returns "01/01/2027 00:00:00"
+    for fmt in ("%b %d, %Y", "%m/%d/%Y", "%m/%d/%Y %H:%M:%S"):
         try:
             return datetime.strptime(text, fmt).date()
         except ValueError:
@@ -1676,6 +1709,64 @@ def season_start_date(season: str) -> date:
     or how far into summer a suspended season runs.
     """
     return date(season_start_year(season), 7, 1)
+
+
+def season_end_date(season: str) -> date:
+    """Latest date a game of `season` could fall on.
+
+    June 30 of the following calendar year — the mirror of
+    :func:`season_start_date`'s July 1. Like it, a BOUND rather than a date: the
+    two together partition the calendar into non-overlapping season windows, so
+    "is this row inside the season I asked for" has one answer and no seam.
+    """
+    return date(season_start_year(season) + 1, 6, 30)
+
+
+def in_season(game_date: date | None, season: str) -> bool:
+    """Whether a game date falls inside `season`'s July 1 - June 30 window.
+
+    An unknown date is NOT in season: a row we cannot place is a row we must not
+    label, and the caller drops it rather than assigning it to whichever season
+    happened to be requested.
+    """
+    if game_date is None:
+        return False
+    return season_start_date(season) <= game_date <= season_end_date(season)
+
+
+def split_rows_on_season_boundary(
+    rows: Sequence[tuple], season: str, date_index: int
+) -> tuple[list[tuple], list[tuple]]:
+    """Partition built log tuples into (inside `season`, outside it).
+
+    THE SEASON-BOUNDARY GUARD. The incremental watermark logic assumes one
+    season: ``game_log_fetch_from`` floors the fetch window at
+    ``season_start_date`` and the endpoints are asked for one ``season`` at a
+    time, so in normal operation nothing out of range ever arrives. That is an
+    assumption about a remote API, not an invariant we control, and the failure
+    it protects against is silent and permanent: ``build_player_game_log_row``
+    stamps the REQUESTED season onto any row whose own SEASON_YEAR is missing, so
+    a stray April-2026 row returned by a 2026-27 request would be stored as a
+    2026-27 game. The truth layer would then hold the same game twice under two
+    seasons, and every downstream season-scoped aggregate — the availability
+    universe included — would double-count it.
+
+    Returns both halves rather than filtering silently, so the caller can log
+    what it refused. ``date_index`` is the tuple position of ``game_date``,
+    which differs between the player and team log column orders.
+    """
+    inside: list[tuple] = []
+    outside: list[tuple] = []
+    for row in rows:
+        (inside if in_season(row[date_index], season) else outside).append(row)
+    return inside, outside
+
+
+# tuple positions of ``game_date`` in the two log row builders. Named rather
+# than passed as bare 4s, because an off-by-one here would silently compare a
+# team id against a date and drop every row.
+PLAYER_LOG_DATE_INDEX = 4
+TEAM_LOG_DATE_INDEX = 4
 
 
 def game_log_fetch_from(
@@ -1897,6 +1988,16 @@ def schedule_rows_from_team_logs(
     Only completed games can be recovered this way, which is why it is the
     fallback and not the primary source: same-day prediction needs rows for
     games that have not been played.
+
+    Neutral-site games (NBA Cup semifinals, Mexico City, Paris, ...) report an
+    "@" MATCHUP for BOTH teams on this endpoint, so the claimed side cannot be
+    trusted blindly: two away claims would overwrite each other and one team
+    would silently vanish from the schedule row — and every downstream join on
+    (game, team) would drop that side's players. When a claimed slot is already
+    held by a different team, the row takes the other slot instead. The
+    home/away designation is then arbitrary for that game, but both teams are
+    always recorded, and scheduleleaguev2 (which knows the real designation)
+    overwrites it wherever that source runs.
     """
     by_game: dict[str, dict] = {}
     for row in team_rows:
@@ -1927,14 +2028,15 @@ def schedule_rows_from_team_logs(
                 "source": "leaguegamelog",
             },
         )
-        if is_home is True:
-            entry["home_team_id"] = team_id
-            entry["home_team_abbr"] = team_abbr
-            entry["away_team_abbr"] = entry["away_team_abbr"] or opponent_abbr
-        elif is_home is False:
-            entry["away_team_id"] = team_id
-            entry["away_team_abbr"] = team_abbr
-            entry["home_team_abbr"] = entry["home_team_abbr"] or opponent_abbr
+        if is_home is None:
+            continue
+
+        side, other = ("home", "away") if is_home else ("away", "home")
+        if entry[f"{side}_team_id"] not in (None, team_id):
+            side, other = other, side
+        entry[f"{side}_team_id"] = team_id
+        entry[f"{side}_team_abbr"] = team_abbr
+        entry[f"{other}_team_abbr"] = entry[f"{other}_team_abbr"] or opponent_abbr
 
     return sorted(by_game.values(), key=lambda g: (g["game_date"], g["nba_game_id"]))
 
@@ -1986,13 +2088,18 @@ def schedule_rows_from_league_schedule(
 
 
 def build_player_game_log_row(
-    raw: Mapping, season: str, run_id: int | None
+    raw: Mapping, season: str, run_id: int | None, source: str = "playergamelogs"
 ) -> tuple | None:
     """One player_game_logs tuple from a playergamelogs record.
 
     Returns None when the record has no usable key (player id, game id, date),
     because a row that cannot be joined is worse than a row that is absent.
     Tuple order matches the column list in _PLAYER_GAME_LOG_UPSERT_SQL.
+
+    Also accepts a leaguegamelog player-mode record: the two endpoints share
+    every column this reads except SEASON_YEAR, which falls back to the season
+    argument. Pass source="leaguegamelog" for those rows so the stored row says
+    where it really came from.
     """
     player_id = str(raw.get("PLAYER_ID") or "").strip()
     game_id = str(raw.get("GAME_ID") or "").strip()
@@ -2031,9 +2138,34 @@ def build_player_game_log_row(
         # likewise: this endpoint only returns players who appeared, so it can
         # never supply a COMMENT.
         None,
-        "playergamelogs",
+        source,
         run_id,
     )
+
+
+def supplement_player_log_rows(
+    primary_rows: Sequence[tuple],
+    league_raw: Sequence[Mapping],
+    season: str,
+    run_id: int | None,
+) -> list[tuple]:
+    """player_game_logs tuples for appearances playergamelogs failed to report.
+
+    playergamelogs silently omits zero-minute appearances (e.g. Dennis
+    Schröder's 0-minute game in 0022200140) that leaguegamelog's player mode
+    does report. Only the missing (player, game) keys are taken from the
+    league log: for rows both endpoints return, playergamelogs wins because its
+    MIN column carries seconds precision while leaguegamelog reports whole
+    minutes.
+    """
+    seen = {(row[0], row[1]) for row in primary_rows}
+    supplements: list[tuple] = []
+    for raw in league_raw:
+        row = build_player_game_log_row(raw, season, run_id, source="leaguegamelog")
+        if row is not None and (row[0], row[1]) not in seen:
+            seen.add((row[0], row[1]))
+            supplements.append(row)
+    return supplements
 
 
 def build_team_game_log_row(
@@ -2406,6 +2538,30 @@ def _fetch_player_game_logs(
     return logs.get_data_frames()[0].to_dict("records")
 
 
+def _fetch_league_player_game_logs(
+    season: str, date_from: date | None, season_type: str = SEASON_TYPE_REGULAR
+) -> list[dict]:
+    """League-wide player box-score lines from leaguegamelog's player mode.
+
+    Overlaps playergamelogs almost entirely, but not exactly: playergamelogs
+    omits zero-minute appearances that this endpoint reports. Fetched as a
+    supplement so those appearances still reach player_game_logs; see
+    supplement_player_log_rows for how the two are merged.
+    """
+
+    def fetch() -> leaguegamelog.LeagueGameLog:
+        return leaguegamelog.LeagueGameLog(
+            season=season,
+            season_type_all_star=season_type,
+            player_or_team_abbreviation="P",
+            date_from_nullable=date_from.strftime("%m/%d/%Y") if date_from else "",
+            timeout=60,
+        )
+
+    logs = _fetch_with_retry(f"league player game logs {season}", fetch)
+    return logs.get_data_frames()[0].to_dict("records")
+
+
 def _fetch_team_game_logs(
     season: str, date_from: date | None, season_type: str = SEASON_TYPE_REGULAR
 ) -> list[dict]:
@@ -2644,11 +2800,19 @@ def scrape_game_logs(
     season: str = SEASON,
     dry_run: bool = False,
 ) -> None:
-    """Incremental player + team game-log sync for the current season.
+    """Incremental player + team game-log sync for one season.
 
     Watermarked on MAX(game_date) in player_game_logs, walked back by a trailing
     correction window so revised box scores are re-read. Two requests total,
     regardless of how far behind the watermark is.
+
+    AN EMPTY SEASON IS A NORMAL OUTCOME, not an error. Between the schedule
+    landing (August) and opening night (October) the new season has a full
+    schedule and zero game logs, and every phase here must no-op cleanly through
+    that window: the endpoints return empty result sets, no rows are built, the
+    ingestion run closes 'succeeded' with 0 rows, and the stint sync finds no
+    team changes. Treating "no games yet" as a failure would make the whole
+    preseason look like an outage.
     """
     latest = _latest_logged_game_date(conn, season)
     date_from = game_log_fetch_from(latest, season)
@@ -2675,16 +2839,62 @@ def scrape_game_logs(
         _finish_ingestion_run(conn, run_id, "failed", 0, notes=str(e)[:500])
         return
 
+    # best-effort: the supplement only adds appearances playergamelogs omits
+    # (zero-minute games), so its failure must not cost the whole sync.
+    league_player_raw: list[dict] = []
+    try:
+        time.sleep(BACKFILL_REQUEST_DELAY_SECONDS)
+        league_player_raw = _fetch_league_player_game_logs(season, date_from)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "game logs: leaguegamelog player supplement failed (%s) — "
+            "zero-minute appearances may be missed this run", e,
+        )
+
     player_rows = [
         row
         for row in (build_player_game_log_row(raw, season, run_id) for raw in player_raw)
         if row is not None
     ]
+    supplements = supplement_player_log_rows(player_rows, league_player_raw, season, run_id)
+    if supplements:
+        logger.info(
+            "game logs: %d appearance(s) only leaguegamelog reported "
+            "(zero-minute games playergamelogs omits)", len(supplements),
+        )
+        player_rows.extend(supplements)
     team_rows = [
         row
         for row in (build_team_game_log_row(raw, season, run_id) for raw in team_raw)
         if row is not None
     ]
+
+    # THE SEASON-BOUNDARY GUARD, applied to both row sets before anything is
+    # written. See split_rows_on_season_boundary for why an out-of-range row is
+    # unrecoverable once stored rather than merely wrong.
+    player_rows, player_stray = split_rows_on_season_boundary(
+        player_rows, season, PLAYER_LOG_DATE_INDEX
+    )
+    team_rows, team_stray = split_rows_on_season_boundary(
+        team_rows, season, TEAM_LOG_DATE_INDEX
+    )
+    if player_stray or team_stray:
+        logger.warning(
+            "game logs: %d player and %d team row(s) fell outside the %s window "
+            "(%s..%s) and were DROPPED — the endpoint returned games from another "
+            "season",
+            len(player_stray), len(team_stray), season,
+            season_start_date(season).isoformat(),
+            season_end_date(season).isoformat(),
+        )
+
+    if not player_rows and not team_rows:
+        # the normal answer between the schedule landing and opening night. Said
+        # out loud so an operator can tell "no games yet" from "the fetch broke".
+        logger.info(
+            "game logs: %s has no game logs at or after %s yet — nothing to write",
+            season, date_from.isoformat(),
+        )
 
     cur = maybe_write_cursor(conn.cursor(), dry_run)
     try:
@@ -2693,8 +2903,7 @@ def scrape_game_logs(
     finally:
         cur.close()
 
-    # game_date sits at index 4 of the player tuple; see PLAYER_GAME_LOG column order
-    newest = max((row[4] for row in player_rows), default=latest)
+    newest = max((row[PLAYER_LOG_DATE_INDEX] for row in player_rows), default=latest)
     _finish_ingestion_run(
         conn,
         run_id,
@@ -2829,6 +3038,13 @@ def _sync_player_team_stints(
     the dates needed to close the previous stint, and plan_stint_change decides
     per player whether anything actually changed. In a normal run that is zero
     changes; on a trade deadline it is a handful.
+
+    A SEASON WITH NO GAME LOGS YET produces an empty ``latest_by_player`` and
+    therefore zero changes — the correct answer, and the reason this can be
+    called unconditionally from the game-log sync during the preseason. What it
+    CANNOT do in that window is notice an offseason trade, because a trade is only
+    observable here once the player has appeared for his new team; see
+    :func:`scrape_roster_snapshot` for the path that closes that gap.
     """
     cur = conn.cursor()
     try:
@@ -2917,6 +3133,341 @@ def _sync_player_team_stints(
     )
 
 
+# ---------------------------------------------------------------------------
+# Data truth layer — the offseason roster snapshot.
+# ---------------------------------------------------------------------------
+
+# the `source` stamped on stints this path writes. A distinct value from
+# 'playergamelogs' on purpose: a game-log stint is an OBSERVATION (he played for
+# that team on that date), a snapshot stint is a DECLARATION (the league's roster
+# page says he belongs to that team today). They have different reliability and
+# different failure modes, and a query that cannot tell them apart cannot say
+# which.
+ROSTER_SNAPSHOT_SOURCE = "roster_snapshot"
+
+# 30 sequential requests to stats.nba.com. Same pacing as the rest of the
+# per-entity crawls here, for the same reason.
+ROSTER_SNAPSHOT_REQUEST_DELAY_SECONDS = BACKFILL_REQUEST_DELAY_SECONDS
+
+
+def plan_roster_snapshot(
+    snapshot: Mapping[str, str],
+    open_stints: Mapping[str, tuple[str, date]],
+    snapshot_date: date,
+) -> list[dict]:
+    """What a roster snapshot changes about player_team_stints.
+
+    WHY THIS PATH EXISTS AT ALL. ``player_team_stints`` is built from game logs
+    (:func:`_sync_player_team_stints`), so it can only learn that a player changed
+    teams once he has PLAYED for the new one. Every trade and every free-agent
+    signing between the last game of April and the first game of October is
+    therefore invisible to it, and an October prediction built off it would put a
+    traded star on his old team — with his old team's teammate-context sums, which
+    is the error that propagates to everyone else on both rosters.
+
+    THE CLOSE DATE IS THE DAY BEFORE THE SNAPSHOT, not the player's last game with
+    the old team. The two differ by the whole offseason, and only one of them is
+    something we observed: we know he is on the new roster TODAY and we do not know
+    when he stopped being on the old one. Closing at the last game would assert a
+    transaction date the truth layer never saw; closing the day before the snapshot
+    asserts only "the old stint was over by the time we looked", which is true.
+    The gap belongs to the old team under this rule — the opposite of the game-log
+    planner's choice, where the gap belongs to neither — because here there is no
+    second observed date to bound it with.
+
+    A PLAYER MISSING FROM EVERY ROSTER IS NOT CLOSED. Absence from the snapshot has
+    two indistinguishable causes: he is genuinely unsigned, or one team's fetch
+    failed and took its whole roster with it. Closing on absence would turn a
+    single HTTP error into fifteen wrongly-ended stints, so only a player observed
+    on a DIFFERENT team moves. The cost is a stale open stint for a retired player,
+    which over-states nothing the model reads.
+
+    Returns one dict per moved player, in the shape :func:`plan_stint_change`
+    returns, so both paths share the writer below.
+    """
+    changes: list[dict] = []
+    for player_id in sorted(snapshot):
+        team_id = snapshot[player_id]
+        open_stint = open_stints.get(player_id)
+        if open_stint is not None and open_stint[0] == team_id:
+            continue
+
+        change: dict = {
+            "player_id": player_id,
+            "open_team_id": team_id,
+            "open_valid_from": snapshot_date,
+            "close_team_id": None,
+            "close_valid_from": None,
+            "close_valid_to": None,
+        }
+        if open_stint is not None:
+            prev_team_id, prev_valid_from = open_stint
+            # a stint can never end before it began. A snapshot taken on the same
+            # day a stint opened closes it on its own start date rather than the
+            # day before, which is a zero-length stint and still ordered.
+            close_to = max(prev_valid_from, snapshot_date - timedelta(days=1))
+            change.update(
+                close_team_id=prev_team_id,
+                close_valid_from=prev_valid_from,
+                close_valid_to=close_to,
+            )
+        changes.append(change)
+    return changes
+
+
+def _fetch_team_roster(team_id: str, season: str) -> list[dict]:
+    """The current roster for one team, from commonteamroster."""
+
+    def fetch() -> commonteamroster.CommonTeamRoster:
+        return commonteamroster.CommonTeamRoster(
+            team_id=team_id, season=season, timeout=60
+        )
+
+    roster = _fetch_with_retry(f"team roster {team_id} {season}", fetch)
+    return roster.get_data_frames()[0].to_dict("records")
+
+
+def fetch_roster_snapshot(
+    season: str, delay_seconds: float = ROSTER_SNAPSHOT_REQUEST_DELAY_SECONDS
+) -> tuple[dict[str, str], list[str]]:
+    """{player_id: team_id} across all 30 teams, plus the teams that failed.
+
+    A per-team failure is reported rather than raised: 29 of 30 rosters is
+    materially better than none, and :func:`plan_roster_snapshot` never closes a
+    stint on absence, so a missing team costs coverage and cannot cost
+    correctness.
+    """
+    snapshot: dict[str, str] = {}
+    failed: list[str] = []
+    team_ids = sorted(TEAM_ID_TO_ABBR)
+    for index, team_id in enumerate(team_ids):
+        try:
+            rows = _fetch_team_roster(team_id, season)
+        except Exception as e:  # noqa: BLE001 - one team must not end the phase
+            failed.append(TEAM_ID_TO_ABBR[team_id])
+            logger.warning(
+                "roster snapshot: %s roster failed (%s)", TEAM_ID_TO_ABBR[team_id], e
+            )
+            time.sleep(delay_seconds * 2)
+            continue
+
+        for raw in rows:
+            player_id = str(raw.get("PLAYER_ID") or "").strip()
+            if not player_id:
+                continue
+            # a player on two rosters is a data error, not a two-team player.
+            # The later team wins and the collision is logged rather than
+            # silently resolved.
+            if player_id in snapshot and snapshot[player_id] != team_id:
+                logger.warning(
+                    "roster snapshot: player %s appears on both %s and %s; taking %s",
+                    player_id, TEAM_ID_TO_ABBR.get(snapshot[player_id]),
+                    TEAM_ID_TO_ABBR[team_id], TEAM_ID_TO_ABBR[team_id],
+                )
+            snapshot[player_id] = team_id
+
+        done = index + 1
+        logger.info(
+            "roster snapshot: %d/%d teams (%d players so far)",
+            done, len(team_ids), len(snapshot),
+        )
+        if done < len(team_ids):
+            time.sleep(delay_seconds)
+    return snapshot, failed
+
+
+def _open_stints(conn: psycopg2.extensions.connection) -> dict[str, tuple[str, date]]:
+    """{player_id: (team_id, valid_from)} for every currently open stint."""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT nba_player_id, team_id, valid_from
+              FROM player_team_stints
+             WHERE valid_to IS NULL
+            """
+        )
+        return {
+            str(pid): (str(team_id), valid_from)
+            for pid, team_id, valid_from in cur.fetchall()
+        }
+    finally:
+        cur.close()
+
+
+def _last_logged_team(
+    conn: psycopg2.extensions.connection, season: str
+) -> dict[str, str]:
+    """{player_id: team_id} from each player's LAST game log of `season`.
+
+    The end-of-season roster as the truth layer observed it, used only to report
+    how much the offseason moved. It is not the write baseline — open stints are —
+    because a stint can have been opened by a source other than a game log.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT DISTINCT ON (nba_player_id) nba_player_id, team_id
+              FROM player_game_logs
+             WHERE season = %s AND team_id IS NOT NULL
+             ORDER BY nba_player_id, game_date DESC, nba_game_id DESC
+            """,
+            (season,),
+        )
+        return {str(pid): str(team_id) for pid, team_id in cur.fetchall()}
+    finally:
+        cur.close()
+
+
+def write_roster_snapshot_csv(
+    path: str, snapshot: Mapping[str, str], snapshot_date: date, season: str
+) -> int:
+    """The fetched snapshot as a csv, for a consumer that cannot read the table.
+
+    A FILE, NOT A DATABASE WRITE, and it is written even under --dry-run for
+    exactly that reason: the point of a dry run is to see what the snapshot says
+    before committing it, and the ml side's preseason projection needs the
+    assignments before ``player_team_stints`` has them. Columns are the table's
+    own, so a later load is a straight insert.
+    """
+    import csv  # noqa: PLC0415 - used by this one path only
+
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["nba_player_id", "team_id", "valid_from", "source", "season"])
+        for player_id in sorted(snapshot):
+            writer.writerow([
+                player_id, snapshot[player_id], snapshot_date.isoformat(),
+                ROSTER_SNAPSHOT_SOURCE, season,
+            ])
+    return len(snapshot)
+
+
+def scrape_roster_snapshot(
+    conn: psycopg2.extensions.connection,
+    season: str = SEASON,
+    dry_run: bool = False,
+    snapshot_date: date | None = None,
+    reference_season: str | None = None,
+    delay_seconds: float = ROSTER_SNAPSHOT_REQUEST_DELAY_SECONDS,
+    snapshot_out: str | None = None,
+) -> int:
+    """Write today's (player, team) assignments into player_team_stints.
+
+    THE OFFSEASON PATCH for the game-log-derived stint table. Run once after free
+    agency settles and again on opening week; between them it is idempotent, since
+    a player whose open stint already names his current team produces no change.
+
+    ``reference_season`` is the season whose end-of-season teams the movement
+    count is reported against — information about the offseason, not an input to
+    what gets written. Returns the number of players that moved.
+    """
+    snapshot_date = snapshot_date or date.today()
+    reference_season = reference_season or season_label(season_start_year(season) - 1)
+
+    logger.info(
+        "truth layer: roster snapshot for %s as of %s (30 teams)",
+        season, snapshot_date.isoformat(),
+    )
+    run_id = _start_ingestion_run(
+        conn,
+        "roster_snapshot",
+        watermark_from=season,
+        watermark_to=snapshot_date.isoformat(),
+        dry_run=dry_run,
+    )
+
+    snapshot, failed = fetch_roster_snapshot(season, delay_seconds)
+    if not snapshot:
+        logger.error("roster snapshot: every team failed; nothing to do")
+        _finish_ingestion_run(
+            conn, run_id, "failed", 0, notes="all 30 team rosters failed"
+        )
+        return 0
+
+    if snapshot_out:
+        written_csv = write_roster_snapshot_csv(
+            snapshot_out, snapshot, snapshot_date, season
+        )
+        logger.info("roster snapshot: %d row(s) -> %s", written_csv, snapshot_out)
+
+    open_stints = _open_stints(conn)
+    changes = plan_roster_snapshot(snapshot, open_stints, snapshot_date)
+
+    # the offseason movement report. Measured against the END-OF-SEASON game-log
+    # team rather than against the stint table, because the stint table can be
+    # empty (a fresh environment) and "how many players changed team since April"
+    # is a fact about the league either way.
+    previous = _last_logged_team(conn, reference_season)
+    shared = [pid for pid in snapshot if pid in previous]
+    moved = [pid for pid in shared if snapshot[pid] != previous[pid]]
+    new_to_league = [pid for pid in snapshot if pid not in previous]
+    gone = [pid for pid in previous if pid not in snapshot]
+
+    write_cur = maybe_write_cursor(conn.cursor(), dry_run)
+    try:
+        for change in changes:
+            if change["close_team_id"] is not None:
+                write_cur.execute(
+                    """
+                    UPDATE player_team_stints
+                       SET valid_to = %s, updated_at = NOW()
+                     WHERE nba_player_id = %s AND team_id = %s
+                       AND valid_from = %s AND valid_to IS NULL
+                    """,
+                    (
+                        change["close_valid_to"],
+                        change["player_id"],
+                        change["close_team_id"],
+                        change["close_valid_from"],
+                    ),
+                )
+            write_cur.execute(
+                """
+                INSERT INTO player_team_stints (nba_player_id, team_id, valid_from, source)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (nba_player_id, team_id, valid_from) DO NOTHING
+                """,
+                (
+                    change["player_id"],
+                    change["open_team_id"],
+                    change["open_valid_from"],
+                    ROSTER_SNAPSHOT_SOURCE,
+                ),
+            )
+    finally:
+        write_cur.close()
+
+    notes = f"{len(changes)} stint change(s)"
+    if failed:
+        notes += f"; {len(failed)} team(s) failed: {','.join(failed)}"
+    _finish_ingestion_run(
+        conn, run_id, "partial" if failed else "succeeded", len(changes), notes=notes
+    )
+
+    logger.info(
+        "roster snapshot: %d players across %d team(s)%s",
+        len(snapshot), 30 - len(failed),
+        f" ({len(failed)} failed: {', '.join(failed)})" if failed else "",
+    )
+    logger.info(
+        "roster snapshot: %d stint change(s) to write (%d closing an open stint)%s",
+        len(changes),
+        sum(1 for c in changes if c["close_team_id"] is not None),
+        " (dry run: nothing written)" if dry_run else "",
+    )
+    logger.info(
+        "offseason movement vs %s end-of-season teams: %d of %d returning players "
+        "changed team (%.1f%%); %d players new to the truth layer; %d %s players "
+        "not on any current roster",
+        reference_season, len(moved), len(shared),
+        100.0 * len(moved) / max(len(shared), 1),
+        len(new_to_league), len(gone), reference_season,
+    )
+    return len(changes)
+
+
 def _stint_boundaries(
     conn: psycopg2.extensions.connection,
     player_id: str,
@@ -2982,6 +3533,43 @@ def backfill_game_logs_season(
     logger.info("%s: fetching player game logs...", season)
     player_raw = _fetch_player_game_logs(season, None)
 
+    # best-effort supplement for the zero-minute appearances playergamelogs omits
+    league_player_raw: list[dict] = []
+    try:
+        time.sleep(delay_seconds)
+        logger.info("%s: fetching league player game logs (supplement)...", season)
+        league_player_raw = _fetch_league_player_game_logs(season, None)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "%s: leaguegamelog player supplement failed (%s) — zero-minute "
+            "appearances may be missed", season, e,
+        )
+
+    # scheduleleaguev2 serves historical seasons too and, unlike the team game
+    # log, knows the real home/away designation of neutral-site games. The team
+    # log reconstruction remains the fallback; it records both teams either way
+    # but its neutral-site designations are arbitrary.
+    schedule_rows: list[dict] = []
+    try:
+        time.sleep(delay_seconds)
+        schedule_rows = [
+            r
+            for r in schedule_rows_from_league_schedule(
+                _fetch_league_schedule(season), season
+            )
+            # regular season only: the backfill's game logs and status rows go
+            # no further, and playoff/preseason schedule rows with no logs
+            # would light up the validation report for every backfilled season
+            if r["season_type"] == SEASON_TYPE_REGULAR
+        ]
+        logger.info("%s: %d schedule row(s) from scheduleleaguev2", season, len(schedule_rows))
+    except Exception as e:  # noqa: BLE001 - falling back is the handling
+        logger.warning(
+            "%s: scheduleleaguev2 unavailable (%s); reconstructing the schedule "
+            "from the team game log", season, e,
+        )
+        schedule_rows = schedule_rows_from_team_logs(team_raw, season)
+
     run_id = _start_ingestion_run(
         conn,
         "game_logs_backfill",
@@ -2990,17 +3578,38 @@ def backfill_game_logs_season(
         dry_run=dry_run,
     )
 
-    schedule_rows = schedule_rows_from_team_logs(team_raw, season)
     player_rows = [
         row
         for row in (build_player_game_log_row(raw, season, run_id) for raw in player_raw)
         if row is not None
     ]
+    supplements = supplement_player_log_rows(player_rows, league_player_raw, season, run_id)
+    if supplements:
+        logger.info(
+            "%s: %d appearance(s) only leaguegamelog reported "
+            "(zero-minute games playergamelogs omits)", season, len(supplements),
+        )
+        player_rows.extend(supplements)
     team_rows = [
         row
         for row in (build_team_game_log_row(raw, season, run_id) for raw in team_raw)
         if row is not None
     ]
+
+    # the same season-boundary guard the incremental sync applies. The backfill
+    # walks one season per call, so a row from a neighbouring season here would be
+    # written twice over the course of a multi-season run.
+    player_rows, player_stray = split_rows_on_season_boundary(
+        player_rows, season, PLAYER_LOG_DATE_INDEX
+    )
+    team_rows, team_stray = split_rows_on_season_boundary(
+        team_rows, season, TEAM_LOG_DATE_INDEX
+    )
+    if player_stray or team_stray:
+        logger.warning(
+            "%s: %d player and %d team log row(s) fell outside the season window "
+            "and were DROPPED", season, len(player_stray), len(team_stray),
+        )
 
     cur = maybe_write_cursor(conn.cursor(), dry_run)
     try:
@@ -3172,6 +3781,26 @@ def validate_game_logs(
                 SELECT nba_game_id, COUNT(*) FROM team_game_logs
                  WHERE season = %s GROUP BY nba_game_id HAVING COUNT(*) <> 2
                  ORDER BY nba_game_id
+                """,
+                (season,),
+            ),
+        )
+        # a team-game the schedule row doesn't name is invisible to every
+        # downstream join on (game, team) — neutral-site games broke exactly
+        # this way when both teams reported an "@" matchup.
+        _report_examples(
+            "every team log side is named on its schedule row",
+            _rows(
+                conn,
+                """
+                SELECT t.nba_game_id, t.game_date, t.team_abbr,
+                       s.home_team_abbr, s.away_team_abbr
+                  FROM team_game_logs t
+                  JOIN nba_schedule s ON s.nba_game_id = t.nba_game_id
+                 WHERE t.season = %s
+                   AND t.team_id IS DISTINCT FROM s.home_team_id
+                   AND t.team_id IS DISTINCT FROM s.away_team_id
+                 ORDER BY t.game_date, t.nba_game_id
                 """,
                 (season,),
             ),
@@ -3379,6 +4008,44 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="print a read-only truth-layer integrity report and exit",
     )
     parser.add_argument(
+        "--sync-truth",
+        dest="sync_truth",
+        action="store_true",
+        help=(
+            "run ONLY the truth-layer phases (schedule, game logs, game status, "
+            "injury reports) for --season, skipping the four user-facing scrapes. "
+            "this is the opening-week command: --sync-truth --season 2026-27"
+        ),
+    )
+    parser.add_argument(
+        "--roster-snapshot",
+        dest="roster_snapshot",
+        action="store_true",
+        help=(
+            "write current (player, team) assignments into player_team_stints "
+            "from commonteamroster for all 30 teams. run after free agency: the "
+            "stint table is built from game logs and cannot see an offseason trade"
+        ),
+    )
+    parser.add_argument(
+        "--snapshot-out",
+        dest="snapshot_out",
+        default=None,
+        help=(
+            "with --roster-snapshot, also write the fetched assignments to this "
+            "csv. a file, not a database write, so it happens under --dry-run too"
+        ),
+    )
+    parser.add_argument(
+        "--season",
+        dest="season",
+        default=SEASON,
+        help=(
+            f"season the truth-layer phases operate on, e.g. 2026-27 "
+            f"(default {SEASON})"
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         dest="dry_run",
         action="store_true",
@@ -3412,10 +4079,35 @@ def _run_phase(name: str, phase: Callable[[], None]) -> None:
         logger.error("%s failed, continuing (%s)", name, e)
 
 
+def _truth_layer_phases(
+    conn: psycopg2.extensions.connection, season: str, dry_run: bool
+) -> None:
+    """The four truth-layer syncs, in dependency order, each independently fatal.
+
+    Season-scoped: schedule, game logs (which carries the stint sync), game
+    status. NOT season-scoped: the injury report, which is a scrape of a page
+    showing today's designations and has no season parameter to give it — it is
+    run here because ``player_injury_reports`` is a truth-layer table and the
+    override layer reads it, not because it varies with ``season``.
+    """
+    _run_phase("schedule", lambda: scrape_schedule(conn, season, dry_run=dry_run))
+    _run_phase("game logs", lambda: scrape_game_logs(conn, season, dry_run=dry_run))
+    _run_phase(
+        "game status", lambda: scrape_game_status(conn, season, dry_run=dry_run)
+    )
+    _run_phase("injuries", lambda: scrape_injuries(conn, dry_run=dry_run))
+
+
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
 
     truth_from, truth_to = _truth_layer_season_bounds(args)
+
+    try:
+        season_start_year(args.season)
+    except ValueError as e:
+        logger.error("%s", e)
+        sys.exit(2)
 
     if args.backfill_history:
         try:
@@ -3452,6 +4144,13 @@ def main(argv: list[str] | None = None) -> None:
             validate_game_logs(conn, truth_from, truth_to)
         elif args.sync_2k:
             sync_2k_ratings(conn, team_types)
+        elif args.roster_snapshot:
+            scrape_roster_snapshot(
+                conn, args.season, dry_run=args.dry_run,
+                snapshot_out=args.snapshot_out,
+            )
+        elif args.sync_truth:
+            _truth_layer_phases(conn, args.season, args.dry_run)
         else:
             scrape_players(conn, dry_run=args.dry_run)
             scrape_teams(conn, dry_run=args.dry_run)
@@ -3460,10 +4159,15 @@ def main(argv: list[str] | None = None) -> None:
             # truth layer runs last: it is the newest and least battle-tested
             # part of the cron, and the four scrapes above back user-visible
             # pages that must not be held hostage to it.
-            _run_phase("schedule", lambda: scrape_schedule(conn, dry_run=args.dry_run))
-            _run_phase("game logs", lambda: scrape_game_logs(conn, dry_run=args.dry_run))
             _run_phase(
-                "game status", lambda: scrape_game_status(conn, dry_run=args.dry_run)
+                "schedule", lambda: scrape_schedule(conn, args.season, dry_run=args.dry_run)
+            )
+            _run_phase(
+                "game logs", lambda: scrape_game_logs(conn, args.season, dry_run=args.dry_run)
+            )
+            _run_phase(
+                "game status",
+                lambda: scrape_game_status(conn, args.season, dry_run=args.dry_run),
             )
     finally:
         conn.close()
