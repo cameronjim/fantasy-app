@@ -550,16 +550,54 @@ export interface PlayerPredictionsResponse {
   games: UpcomingGamePrediction[];
 }
 
+/**
+ * The reference set the slate's impact z-scores are measured against, described
+ * by the server so the page never hardcodes the definition of a number it
+ * displays. Same shape as the analytics pool descriptor.
+ */
+export interface SlatePool {
+  key: string;
+  label: string;
+  definition: string;
+  sample_size: number;
+}
+
+/** Unconditional per-category projections, for the compact line under a name. */
+export interface SlateProjectedCategories {
+  reb: NumericLike | null;
+  ast: NumericLike | null;
+  stl: NumericLike | null;
+  blk: NumericLike | null;
+  tov: NumericLike | null;
+  fg3m: NumericLike | null;
+}
+
 /** One projected player inside a slate game. */
 export interface SlatePlayer {
   nba_player_id: string;
   name: string;
+  /**
+   * True when `name` is a stand-in built from the NBA player id because the
+   * roster table has no row for him yet. Rendered as an id, not as a person.
+   */
+  name_is_placeholder: boolean;
   team_abbr: string | null;
   /** Chance the player appears at all, 0-1. Null when the run didn't model it. */
   prob_active: NumericLike | null;
   /** Unconditional expected points — availability is already priced in. */
   proj_pts: NumericLike | null;
   proj_min_p50: NumericLike | null;
+  projected: SlateProjectedCategories;
+  /**
+   * Projected TOTAL fantasy impact: the sum of this player's z-scores across
+   * the nine categories, against `SlateResponse.pool`. 0 is an average night on
+   * the slate. Null when the run did not project every category for him.
+   */
+  impact: NumericLike | null;
+  /** Among the best few impact players in this game. */
+  spotlight: boolean;
+  /** Among the best impact players anywhere on the slate. */
+  slate_spotlight: boolean;
 }
 
 export interface SlateGame {
@@ -569,7 +607,9 @@ export interface SlateGame {
   home_team_abbr: string | null;
   away_team_id: string | null;
   away_team_abbr: string | null;
-  /** Top projected players, best first. Empty until a run has completed. */
+  /** The best impact in this game — the server orders the cards by it. */
+  top_impact: NumericLike | null;
+  /** Top projected players, best impact first. Empty until a run completes. */
   players: SlatePlayer[];
 }
 
@@ -577,6 +617,7 @@ export interface SlateResponse {
   date: string;
   /** Null until a model run has completed — the page shows its own notice. */
   run: PredictionRun | null;
+  pool: SlatePool;
   games: SlateGame[];
 }
 

@@ -5,7 +5,19 @@ import { pgResult } from '../helpers/mockDb.js';
 const { app } = await import('../../src/app.js');
 const { query } = await import('../../src/db.js');
 const { REASON_WEIGHTS } = await import('../../src/services/watchlist.js');
+const { IMPACT_POOL_KEY, IMPACT_POOL_LABEL, IMPACT_POOL_DEFINITION, POINTS_UNCOND_STAT } =
+  await import('../../src/services/slate.js');
 const queryMock = vi.mocked(query);
+
+/** The pool descriptor every slate response echoes, for a pool of `size`. */
+function poolOf(size: number): Record<string, unknown> {
+  return {
+    key: IMPACT_POOL_KEY,
+    label: IMPACT_POOL_LABEL,
+    definition: IMPACT_POOL_DEFINITION,
+    sample_size: size,
+  };
+}
 
 // the slate route issues its queries in a fixed order:
 //   1. the day's schedule
@@ -46,6 +58,11 @@ const runRow = {
   predicted_at: new Date('2026-02-04T11:00:00.000Z'),
 };
 
+/**
+ * One pivoted prediction row as `fetchPredictions` returns it: the box-score
+ * columns are the run's UNCONDITIONAL expectations (`<stat>_uncond`), which is
+ * what makes them comparable across a slate.
+ */
 function predictionRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     nba_game_id: '0022500555',
@@ -53,8 +70,18 @@ function predictionRow(overrides: Record<string, unknown> = {}): Record<string, 
     name: 'LeBron James',
     team_abbr: 'LAL',
     prob_active: 0.93,
-    proj_pts: 24.6,
     proj_min_p50: 34.2,
+    pts: 24.6,
+    reb: 7.4,
+    ast: 8.1,
+    stl: 1.1,
+    blk: 0.6,
+    tov: 3.2,
+    fg3m: 2.0,
+    fgm: 9.2,
+    fga: 18.0,
+    ftm: 4.1,
+    fta: 5.6,
     ...overrides,
   };
 }
@@ -78,7 +105,7 @@ describe('GET /api/predictions/slate', () => {
             name: 'Stephen Curry',
             team_abbr: 'GSW',
             prob_active: 0.99,
-            proj_pts: 28.4,
+            pts: 28.4,
             proj_min_p50: 33.1,
           }),
         ])
@@ -94,6 +121,7 @@ describe('GET /api/predictions/slate', () => {
       model_version: 'v1-decomposed',
       predicted_at: '2026-02-04T11:00:00.000Z',
     });
+    expect(res.body.pool).toEqual(poolOf(2));
     expect(res.body.games).toHaveLength(1);
     expect(res.body.games[0]).toMatchObject({
       nba_game_id: '0022500555',
@@ -103,21 +131,48 @@ describe('GET /api/predictions/slate', () => {
       away_team_id: '1610612744',
       away_team_abbr: 'GSW',
     });
-    // best projected scorer leads
+    // the two rows are identical except for points, so points is the only
+    // category that separates them and the better scorer leads on impact.
     expect(res.body.games[0].players[0]).toEqual({
       nba_player_id: '201939',
       name: 'Stephen Curry',
+      name_is_placeholder: false,
       team_abbr: 'GSW',
       prob_active: 0.99,
       proj_pts: 28.4,
       proj_min_p50: 33.1,
+      projected: { reb: 7.4, ast: 8.1, stl: 1.1, blk: 0.6, tov: 3.2, fg3m: 2 },
+      impact: 1,
+      spotlight: true,
+      slate_spotlight: true,
     });
+    expect(res.body.games[0].top_impact).toBe(1);
+  });
+
+  it('reads the unconditional stat names, not `conditional = false` on the bare ones', async () => {
+    // arrange — the contradictory predicate this endpoint used to carry matched
+    // zero rows, which showed up as "- pts" for every player rather than as an
+    // error. See the STAT VOCABULARY block in services/slate.ts.
+    queryMock
+      .mockResolvedValueOnce(pgResult(scheduleRows))
+      .mockResolvedValueOnce(pgResult([runRow]))
+      .mockResolvedValueOnce(pgResult(teamRows))
+      .mockResolvedValueOnce(pgResult([predictionRow()]));
+
+    // act
+    await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
+
+    // assert
+    const [sql, params] = queryMock.mock.calls[3];
+    expect(params).toContain(POINTS_UNCOND_STAT);
+    expect(params).not.toContain('pts');
+    expect(sql).not.toMatch(/conditional\s*=\s*false/);
   });
 
   it('caps each game at eight players', async () => {
     // arrange
     const many = Array.from({ length: 15 }, (_, i) =>
-      predictionRow({ nba_player_id: String(i), name: `Player ${i}`, proj_pts: i })
+      predictionRow({ nba_player_id: String(i), name: `Player ${i}`, pts: i })
     );
     queryMock
       .mockResolvedValueOnce(pgResult(scheduleRows))
@@ -131,6 +186,93 @@ describe('GET /api/predictions/slate', () => {
     // assert
     expect(res.body.games[0].players).toHaveLength(8);
     expect(res.body.games[0].players[0].name).toBe('Player 14');
+  });
+
+  it('labels a player with no roster row instead of rendering a blank name', async () => {
+    // arrange — an offseason addition the season-stats scrape has not written
+    // yet: predictions exist, `players` has nothing, so the LEFT JOIN gives a
+    // NULL name. As an empty string it also sorted FIRST alphabetically.
+    queryMock
+      .mockResolvedValueOnce(pgResult(scheduleRows))
+      .mockResolvedValueOnce(pgResult([runRow]))
+      .mockResolvedValueOnce(pgResult(teamRows))
+      .mockResolvedValueOnce(
+        pgResult([
+          predictionRow({ nba_player_id: '1642850', name: null, team_abbr: null, pts: 4.1 }),
+          predictionRow({ nba_player_id: '201939', name: 'Stephen Curry', pts: 28.4 }),
+        ])
+      );
+
+    // act
+    const res = await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
+
+    // assert
+    const [first, second] = res.body.games[0].players;
+    expect(first.name).toBe('Stephen Curry');
+    expect(second.name).toBe('NBA #1642850 (new roster)');
+    expect(second.name_is_placeholder).toBe(true);
+    expect(first.name_is_placeholder).toBe(false);
+  });
+
+  it('spotlights the top impact players per game and across the slate', async () => {
+    // arrange — five players in one game, separated only by points
+    queryMock
+      .mockResolvedValueOnce(pgResult(scheduleRows))
+      .mockResolvedValueOnce(pgResult([runRow]))
+      .mockResolvedValueOnce(pgResult(teamRows))
+      .mockResolvedValueOnce(
+        pgResult(
+          [30, 24, 18, 12, 6].map((pts, i) =>
+            predictionRow({ nba_player_id: `p${i}`, name: `Player ${i}`, pts })
+          )
+        )
+      );
+
+    // act
+    const res = await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
+
+    // assert — three per game, and all five are inside the slate's top ten
+    const players = res.body.games[0].players;
+    expect(players.map((p: { spotlight: boolean }) => p.spotlight)).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
+    ]);
+    expect(players.every((p: { slate_spotlight: boolean }) => p.slate_spotlight)).toBe(true);
+    // impact is a z-score sum, so an average night on this slate is 0
+    expect(players[2].impact).toBe(0);
+  });
+
+  it('orders the game cards by the biggest projected impact on them', async () => {
+    // arrange — the star is in the game with the LATER id, which is where the
+    // old schedule-order listing would have buried him
+    queryMock
+      .mockResolvedValueOnce(
+        pgResult([
+          { ...scheduleRows[0], nba_game_id: '0022500111' },
+          { ...scheduleRows[0], nba_game_id: '0022500999' },
+        ])
+      )
+      .mockResolvedValueOnce(pgResult([runRow]))
+      .mockResolvedValueOnce(pgResult(teamRows))
+      .mockResolvedValueOnce(
+        pgResult([
+          predictionRow({ nba_game_id: '0022500111', nba_player_id: 'a', pts: 9.5 }),
+          predictionRow({ nba_game_id: '0022500999', nba_player_id: 'b', pts: 31.5 }),
+        ])
+      );
+
+    // act
+    const res = await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
+
+    // assert
+    expect(res.body.games.map((g: { nba_game_id: string }) => g.nba_game_id)).toEqual([
+      '0022500999',
+      '0022500111',
+    ]);
+    expect(res.body.games[0].top_impact).toBeGreaterThan(res.body.games[1].top_impact);
   });
 
   it('still lists the games when no run has finished yet', async () => {
@@ -164,6 +306,7 @@ describe('GET /api/predictions/slate', () => {
     expect(res.body).toEqual({
       date: '2026-07-04',
       run: { model_version: 'v1-decomposed', predicted_at: '2026-02-04T11:00:00.000Z' },
+      pool: poolOf(0),
       games: [],
     });
   });
@@ -177,7 +320,7 @@ describe('GET /api/predictions/slate', () => {
 
     // assert
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ date: '2026-02-04', run: null, games: [] });
+    expect(res.body).toEqual({ date: '2026-02-04', run: null, pool: poolOf(0), games: [] });
   });
 
   it('keeps the games when only the prediction tables are missing', async () => {
