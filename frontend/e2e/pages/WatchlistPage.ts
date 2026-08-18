@@ -1,10 +1,12 @@
 import type { Locator, Page } from '@playwright/test';
 
 /**
- * The watchlist route. Its two controls — the window picker and the position
- * chips — are both plain buttons, so this object exposes them by their visible
- * label rather than by a test id: a spec that clicks "Week" is asserting the
- * label a manager reads, not an implementation detail.
+ * The watchlist route. Its controls — the window picker, the position
+ * segmented control, and the team select — are the same segmented-button /
+ * select pattern as the Stats page (see StatsPage.ts / StatsPage.tsx), so
+ * this object exposes them by their visible label rather than by a test id: a
+ * spec that clicks "Week" is asserting the label a manager reads, not an
+ * implementation detail.
  */
 export class WatchlistPage {
   constructor(private readonly page: Page) {}
@@ -19,9 +21,14 @@ export class WatchlistPage {
     return this.page.getByRole('button', { name: label, exact: true });
   }
 
-  /** One of All positions / Guards / Forwards / Centers / PG / SG / SF / PF. */
+  /** One of All / PG / SG / SF / PF / C / Guards / Forwards. */
   positionChip(label: string): Locator {
     return this.page.getByTestId('position-filter').getByRole('button', { name: label, exact: true });
+  }
+
+  /** The client-side team filter — same classes as the Stats page's team select. */
+  get teamSelect(): Locator {
+    return this.page.getByRole('combobox', { name: 'Filter by team' });
   }
 
   /** The resolved date range the server sent back. */
