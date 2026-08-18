@@ -7,24 +7,47 @@ where the code looks conservative, that is deliberate.
 ## The one-sentence design
 
 ```
-E[stat over the schedule] = P(play) × E[stat | played]
+E[stat | plays]           = E[minutes | plays] × EWMA(stat per minute)
+E[stat over the schedule] = P(play) × E[stat | plays]
 ```
 
-`P(play)` is a trained LightGBM classifier — the only genuinely learnable
-target in the spike (**−22.8% Brier** vs a shifted appearance rate, stable
-across all three validation origins). `E[stat | played]` is **EWMA(halflife 5)**,
-not a model: no trained conditional estimator beat it by more than ~1%, and
+`P(play)` is a trained LightGBM classifier — the most learnable target in the
+spike (**−34% Brier** vs a shifted appearance rate on the four-season dataset,
+stable across all five origins). `E[minutes | plays]` is a trained LightGBM
+regressor, promoted 2026-08-17 (−2.1% MAE vs EWMA, all five origins). The
+**production rate** is `EWMA(halflife 5)` of stat-per-minute and is *not* a model:
+no trained conditional estimator beat a smoothed rate by more than ~1%, and
 several lost outright on stars and fringe players. Ridge and LightGBM remain
 implemented as challengers and are never promoted automatically.
 
-There is therefore **no production ML model in the promoted path.** That is the
-finding, not an omission — see `fnba_ml/config.py::CHAMPIONS`.
+**Minutes propagate.** Until 2026-08-17 the composition was
+`P(play) × EWMA(stat)`, in which the minutes model's output could not reach a
+production projection at all — `EWMA(stat)` averages past whole-game *totals* and
+already contains the minutes the player used to get, so a backup whose minutes
+model said 30 kept the points EWMA of his 14-minute nights. The per-minute form
+fixes that, for the conditional card number as well as the unconditional one.
+Measured: **3.955** MAE against **4.007** for the form it replaced (five origins,
+unconditional points). Parity was the bar; the improvement is incidental. See
+`fnba_ml/config.py::CHAMPIONS['composition']`.
 
 Why bother with the decomposition at all: applying a conditional-on-playing
-estimate to every scheduled row scores 5.29 MAE on unconditional points; simply
-counting misses as zeros scores 4.63 (12.4% better, for free); the decomposition
-reaches 4.17 (another 10%). It also yields a calibrated `P(play)`, which start/sit
-decisions need and a direct model cannot recover.
+estimate to every scheduled row scores 5.67 MAE on unconditional points on the
+four-season dataset; counting misses as zeros scores 4.57; the composition reaches
+3.955. It also yields `P(play)` as a first-class output, which start/sit decisions
+need and a direct model cannot recover — direct LightGBM on all scheduled rows
+measures 3.986 and is still not the champion for that reason.
+
+### The serving layer the model cannot supply
+
+`P(play)` knows nothing about the injury report — the report history only starts
+accumulating 2026-08-16, so training on it earlier would be
+leakage-by-imputation. `fnba_ml/overrides.py` therefore corrects `P(play)` at
+serving time from the latest official designation known at the run's information
+boundary (OUT → 0.02, DOUBTFUL → 0.10, QUESTIONABLE → blended, PROBABLE → floored,
+everything else untouched). The constants are hand-set; the model's own
+probability is stored beside the overridden one so the layer stays measurable and
+those constants can be replaced by learned ones. Full policy table in
+`MODEL.md` section 7.1.
 
 ---
 
@@ -41,14 +64,23 @@ py -3.14 -m venv .venv
 python build_dataset.py --source parquet --data-dir ..\ml-spike\data
 python build_dataset.py --source postgres            # needs DATABASE_URL
 
-# 2. train: availability model + EWMA snapshot -> models/<version>/ + registry
+# 1b. widen an EXISTING dataset with box columns the build predates, without
+#     rebuilding it. read-only: one SELECT, one parquet out. every pre-existing
+#     column is passed through untouched, and --verify asserts it.
+python backfill_dataset.py --source postgres --stats FGM --verify
+
+# 2. train: availability + minutes models + rate snapshot -> models/<version>/ + registry
 python train.py --version 2026-08-16
 
 # 3. evaluate: rolling-origin report -> reports/<version>.md
+#    exits 1 if the promoted composition regresses >1% against the one it
+#    replaced, for ANY of the eleven served stats
 python evaluate.py --version 2026-08-16
+python evaluate.py --version 2026-08-16 --rate-halflife-selection
 
 # 4. predict: next games -> parquet, and optionally to postgres
 python predict.py --version 2026-08-16 --out data\predictions.parquet
+python predict.py --version 2026-08-16 --statuses data\statuses.parquet --horizon lock
 python predict.py --version 2026-08-16 --write-db    # needs DATABASE_URL + migration 014
 
 # tests
@@ -70,18 +102,47 @@ backtested. Serving reads the newest run with `status = 'complete'`.
 `--allow-biased-universe` is passed, and stamps the reason into the run's notes
 when it is. A stored prediction outlives the caveat that shipped with it.
 
-Per scheduled player-game the run writes 13 rows: `prob_active` (unconditional,
-`[0,1]`), a conditional expected value and a `<stat>_uncond` schedule-level one
-for minutes/pts/ast, and P10/P50/P90 for minutes and pts. Quantiles come from
-the empirical residual quantiles of the training holdout window
-(`fnba_ml/intervals.py`), measured on appearances only, and are non-crossing by
-construction — offsets sorted when built, values sorted again when written.
+Per scheduled player-game the run writes **62 rows**, plus 2 more if an injury
+override applied: `prob_active` (unconditional, `[0,1]`, post-override),
+`prob_active_model` (pre-override), and for each of the twelve served stats —
+minutes plus the full nine-category vocabulary, `pts reb ast stl blk tov fg3m
+fgm fga ftm fta` — a conditional expected value, a `<stat>_uncond` schedule-level
+one and P10/P50/P90. For overridden rows only there are `status_override` (reason
+as a numeric code) and `status_captured_at` (epoch seconds). None of these are new
+**columns**: migration 014 is long-format precisely so the vocabulary can grow
+without a schema change, and every name above was already reserved in that
+migration's own comment — going from 3 served stats to 12 changed no schema and
+required no migration.
+
+**Percentages are never written.** FG% and FT% are derived by consumers from the
+makes/attempts expectations, because `E[FGM/FGA] != E[FGM]/E[FGA]` and, more
+practically, a fantasy league scores a manager's *weekly aggregate*
+`sum(FGM)/sum(FGA)` over every player-game he rostered. Shipping the primitives
+lets a consumer aggregate that correctly; shipping a per-game percentage would
+force it to aggregate wrongly. **Turnovers are not sign-flipped** either — TOV is
+a category a manager wants to lose, which is a scoring fact the backend's
+`zScoreRank` already owns, and inverting it here would mean every consumer had to
+know which of the nine columns had been pre-negated.
+
+Every emitted row is **coherent**: `FGM <= FGA`, `FG3M <= FGM` and `FTM <= FTA`
+hold on the conditional estimate, the unconditional estimate and each quantile
+level. That is a real correction, not a defensive no-op — see "per-stat halflife"
+below.
+
+Quantiles come from the empirical residual quantiles of the training holdout
+window (`fnba_ml/intervals.py`), measured on appearances only against the
+estimator that actually ships, and are non-crossing by construction — offsets
+sorted when built, values sorted again when written.
+
+Every run records its **forecast horizon** (`--horizon early|gameday|lock`, i.e.
+T-24h / T-6h / T-60m) in `prediction_runs.notes` and in the registry entry. The
+same model scoring the same game at T-24h and T-60m makes two different claims.
 
 ### Artifacts
 
 | Path | Committed? | Notes |
 |---|---|---|
-| `models/<version>/` | yes | `availability_model.joblib`, `ewma_state.parquet`, `metadata.json`, `feature_gain.csv` |
+| `models/<version>/` | yes | `availability_model.joblib`, `minutes_model.joblib`, `ewma_state.parquet`, `metadata.json`, `feature_gain.csv` |
 | `models/registry.json` | yes | one entry per version: training window, hyperparams, metrics, per-artifact sha256, git commit |
 | `reports/<version>.md` | yes | the evaluation record for that version |
 | `reports/*_results.csv` | no | tidy long results, for numeric diffing between runs |
@@ -105,8 +166,12 @@ fnba_ml/
   data/postgres_source.py  SQL against the migration-013 tables (NOT executed in tests)
   universe.py            scheduled-player-game rows: status-based, or BIASED fallback
   features.py            leakage-safe as-of feature construction
-  models.py              the ladder, EWMA champion, decomposed estimator, OOF guard
-  evaluate.py            rolling-origin harness, segments, skill scores, champion picks
+  models.py              the ladder, availability + minutes champions, per-minute
+                         rates, the minutes-propagating composition, OOF guards
+  overrides.py           serving-time injury-report policy on P(play) (pure)
+  evaluate.py            rolling-origin harness, segments, skill scores, champion
+                         picks, composition parity check (per stat), the 9-cat
+                         rate ladder and the inner-fold halflife selection
   intervals.py           empirical residual quantiles -> non-crossing P10/P50/P90
   store.py               the migration-014 row builder (pure) and its transaction
   registry.py            models/registry.json
@@ -129,7 +194,7 @@ strictly before G":
 2. An explicit `.shift(1)` before every `.rolling()` / `.expanding()` for
    anything computed on the universe or schedule frames.
 
-And there are **two** as-of joins, not one:
+And there are **three** as-of joins, not one:
 
 - **career-scoped** (`roll{3,5,10}_*`, `ewma_*`, `n_appearances`) joined by
   `PLAYER_ID` — windows may span the offseason, so a returning player carries
@@ -137,6 +202,10 @@ And there are **two** as-of joins, not one:
   when in-season history does not exist.
 - **season-scoped** (`std_*`, `avail_rate_std`, `uncond_std_*`) joined by
   `PLAYER_ID + SEASON` — season-to-date means must reset at the boundary.
+- **career-scoped over a narrower row set** (`ewma_*_per_min`) joined by
+  `PLAYER_ID` — computed only over appearances with minutes > 0, so it cannot ride
+  along on the career frame. Per-minute efficiency is far more stable across an
+  offseason than minutes are, which is exactly why the composition splits them.
 
 The spike originally used a single join keyed on `PLAYER_ID + SEASON` while
 rolling windows were grouped by `PLAYER_ID` alone. Not leakage, but incoherent,
@@ -151,17 +220,28 @@ It returns the first **non-null** value per column, so a test written with it
 `drop_duplicates(keep="first")`. Pinned by
 `test_groupby_first_cannot_detect_the_leak`.
 
-### 3. Out-of-fold `P(play)` must never leak in-fold
+### 3. Out-of-fold `P(play)` **and** `E[minutes]` must never leak in-fold
 
-The decomposition multiplies an availability probability into a downstream
-estimate. If that probability came from a model whose training window included
-the row being predicted, nothing downstream can detect it.
+The composition multiplies *two* model outputs into a downstream estimate. If
+either came from a model whose training window included the row being predicted,
+nothing downstream can detect it.
 
-So every `P(play)` travels with the cutoff of the model that produced it
-(`P_PLAY_CUTOFF`), and `models.validate_out_of_fold` refuses any row whose
-cutoff is not at or before its own game date. `decomposed_estimate` calls the
-guard itself rather than trusting callers. `AvailabilityModel.fit` refuses a
-training frame containing rows on or after its cutoff.
+So both travel with the cutoff of the model that produced them (`P_PLAY_CUTOFF`,
+`MIN_PRED_CUTOFF`), and `models.validate_out_of_fold` refuses any row whose cutoff
+is not at or before its own game date. `AvailabilityModel.fit` and
+`MinutesModel.fit` both refuse a training frame containing rows on or after their
+cutoff.
+
+There is a third guard, because per-quantity honesty is not sufficient once two
+models are multiplied: `models.assert_same_cutoff` requires both halves to share
+one training cutoff. An availability model that stopped in January composed with a
+minutes model that stopped in March mixes two views of what was knowable, and
+neither per-quantity guard fires — both cutoffs precede the game.
+`minutes_propagated_estimate` runs all three itself rather than trusting callers.
+
+The same discipline extends one layer out to the injury-report override: a report
+whose `captured_at` is at or after the run's information boundary is dropped, or a
+backtest of the T-24h horizon quietly reads the T-60m report and looks prescient.
 
 ---
 
@@ -241,7 +321,7 @@ team-games, played rate 0.6638, 100% appearance coverage** — identical.
 | PTS\|played MAE — EWMA | 4.5664 | 4.5665 | — |
 | PTS\|played MAE — ridge | 4.5202 | 4.5203 | — |
 | Unconditional PTS MAE — decomposed (P × LightGBM) | 4.1698 | 4.1681 | −0.04% |
-| Unconditional PTS MAE — decomposed (P × EWMA, **champion**) | not run | 4.1719 | — |
+| Unconditional PTS MAE — decomposed (P × EWMA, champion *at the time*) | not run | 4.1719 | — |
 | Unconditional PTS MAE — direct LightGBM | 4.1950 | 4.1955 | — |
 | Unconditional PTS MAE — naive unconditional | 4.6340 | 4.6340 | — |
 | Unconditional PTS MAE — naive conditional | 5.2928 | 5.2928 | — |
@@ -249,10 +329,16 @@ team-games, played rate 0.6638, 100% appearance coverage** — identical.
 Every baseline matches exactly. The LightGBM deltas are the row-ordering effect
 described above, not a logic change.
 
-Note the champion decomposition (`P × EWMA`, 4.1719) is within 0.1% of the
+Note the then-champion decomposition (`P × EWMA`, 4.1719) is within 0.1% of the
 spike's `P × LightGBM` variant (4.1681) — the trained conditional model buys
 essentially nothing at the unconditional level either, which is the whole
-argument for shipping the EWMA.
+argument for shipping a smoothed rate rather than a model.
+
+**This table is a frozen port-fidelity record against the two-season spike, not a
+current scoreboard.** It predates the four-season backfill and the 2026-08-17
+composition change, and it is deliberately not re-run: its purpose is to prove the
+port reproduced the spike, and a table that keeps moving cannot do that. Current
+numbers live in `reports/<version>.md`.
 
 ---
 
@@ -276,26 +362,97 @@ empirical **80% interval coverage** for the champion production estimate.
 `evaluate.select_champions` reports the measured winner per target next to the
 configured champion and flags mismatches. A mismatch is a finding to look at,
 **not** an instruction to promote — a 1% MAE edge does not justify a trained
-model in the serving path.
+model in the serving path. Four families are reported: availability, minutes,
+production, and **composition** (how the promoted estimators are combined, which
+is a separate decision from which they are).
+
+`evaluate.composition_parity` additionally checks the promoted composition against
+the one it replaced and the CLI **exits 1** if it lost more than 1% MAE. The
+composition change was made for correctness, so parity is the bar; a regression
+past it is a finding that should stop a pipeline, not a line someone has to notice
+in 18 kB of markdown. `evaluate.rate_composition_parity` asks the same question
+**once per served stat** — the correctness argument for minutes propagation is
+stat-agnostic, so the accuracy bar has to be cleared stat-by-stat rather than
+cleared once for points and assumed for blocks.
+
+### Per-stat halflife, and what it costs
+
+Every production rate is a smoothed stat-per-minute, and until the 9-cat
+extension every one of them used the same halflife of 5 — which was fine while
+"every one of them" meant points and assists, both of which had been selected at
+5. A block, a steal and a field-goal attempt are not observed with remotely the
+same signal-to-noise, so each of the nine new stats got its own halflife,
+selected on **inner folds carved out of each origin's own training window** over
+the grid `{3, 5, 8, 12, 20}` — never on the rows the report then scores. PTS and
+AST are **frozen** at the production tournament's verdict and cannot move.
+
+The rule is pre-registered in `config.RATE_HALFLIVES`: the pooled best halflife
+ships only if it beats 5 by more than 0.5% relative MAE **and** is the per-origin
+winner in at least 3 of the 5 origins. Otherwise the stat keeps 5 and is marked
+ambiguous — because picking the smallest of six numbers that are all within noise
+of each other is not a finding.
+
+That 0.5% bar is set by **coherence**, not by statistics. Two EWMAs at the same
+halflife are the same weighted average of the same rows, so `FGM <= FGA` survives
+the averaging; two at *different* halflives are not, and it does not. Every
+distinct halflife introduced into a constrained pair is therefore a source of
+violations that the serving clip has to correct, and a halflife buying under half
+a percent of MAE has not paid for the clipping it causes. The report measures how
+often the clip actually binds, and the number is readable as a check on that
+reasoning: a constraint whose two stats share a halflife should read ~0.
 
 Caveats inherited from the spike: two seasons, three origins, one month of
 validation each. Differences under ~2% are not distinguishable from noise at
 this sample size, and no confidence intervals are computed.
+
+### The prospective test is pre-registered and frozen
+
+Everything above is **retrospective**: the out-of-fold discipline is real, and the
+questions were still chosen after the era was visible. The 2026-27 season is the
+first genuinely untouched evaluation this system will get, and it counts only if
+the protocol was fixed before opening night.
+
+**MODEL.md section 13 (`prospective_2026_27_v1`) is that pre-registration** — the
+pinned artifact and its checksums, five primary endpoints, nine frozen cohorts, a
+three-rung comparison ladder (shifted appearance rate / per-stat frozen baselines /
+a `v1` no-teammate shadow run), a ten-row falsification table with thresholds
+derived from measured between-origin variance, exactly three look dates
+(**2026-12-01, 2027-02-15, 2027-04-20**), the cold-start rules, and the ops
+commitments that make the store auditable.
+
+`config.PROSPECTIVE_2026_27` carries the machine-checkable half and
+`tests/test_prospective_freeze.py` enforces it. **A failure there is not a bug in
+the test** — it means the served configuration moved after the freeze, and the
+response is a bump to `prospective_2026_27_v2` with a re-freeze (before opening
+night) or a revert (after it). Editing a frozen literal to match a drifted constant
+defeats the entire point.
+
+The single most important number in section 13: the teammate-context availability
+claim is **−1.9%** and the minimum detectable effect for it at **season end** is
+**2.0%**. One full season is barely enough to test this document's headline. The
+protocol says so up front rather than discovering it in April.
 
 ---
 
 ## Tests
 
 ```powershell
-python -m pytest tests -v      # 87 tests
+python -m pytest tests -q      # 468 tests
 ```
 
 | File | Covers |
 |---|---|
-| `tests/test_features.py` | all 12 leakage tests ported from `ml-spike/leakage_tests.py`, plus the `groupby().first()` trap regression and missingness-flag checks |
+| `tests/test_rate_targets.py` | the 9-category extension, in five blocks. **The vocabulary**: every served stat has a store name and every store name is inside migration 014's reserved list — which is parsed out of the `.sql` file rather than restated, because the schema has no `CHECK` on `stat`, so that comment *is* the contract and a typo'd name would insert cleanly and be invisible to every consumer. **The per-stat halflife**: each rate column reconstructed from the raw ratio at that stat's own configured halflife, plus a negative control showing two halflives on the same history disagree — without it the entire selection mechanism could be inert and every assertion would still pass. PTS/AST pinned frozen at the tournament's verdict. **Coherence**: the clip moves the bounded stat down and never raises the bound, the FG3M→FGM→FGA chain settles in one pass, a missing bound is skipped rather than clipping makes to nothing, and — the test that justifies the clip existing at all — equal halflives *cannot* produce an incoherent expectation while different ones demonstrably can, on a history whose truth is coherent in every row. **The emitted rows**: all eleven stats reach the store conditional, unconditional and at every quantile level. **The selection rule**: material-but-inconsistent and consistent-but-immaterial winners both fall back to the default, a frozen target cannot be moved by *any* evidence, and the synthetic fixture carries its own negative control proving its pooled and per-origin axes are independent |
+| `tests/test_features.py` | all 12 leakage tests ported from `ml-spike/leakage_tests.py`, plus the `groupby().first()` trap regression, missingness-flag checks, the per-minute rate definition (hand-recomputed) and the rate backfill reproducing the built-in columns exactly |
 | `tests/test_universe.py` | status-based preferred; fallback labeled and warns; approximation over-states availability and truncates long absences; schedule symmetry |
-| `tests/test_models.py` | decomposition math; out-of-fold discipline including a deliberately constructed in-fold failure; EWMA champion behaviour; metric helpers |
-| `tests/test_predictions.py` | the migration-014 row builder as a pure function: conditional vs unconditional flagging, quantile non-crossing (including a deliberately crossed input), `prob_active` clamped to [0,1], non-finite values dropped rather than zeroed. No database — `write_predictions` is read, never run |
+| `tests/test_models.py` | composition math; out-of-fold discipline for **both** multiplied quantities including deliberately constructed in-fold failures and a mismatched-cutoff pair; the minutes-propagation regression test (double the predicted minutes → double both estimates, checked through the fitted serving path); per-minute rate behaviour and the cameo floor; metric helpers |
+| `tests/test_overrides.py` | every status rule and its exact arithmetic; the questionable blend; probable as a floor that can never lower a projection (now by arithmetic rather than by a `max`); unlisted and passthrough statuses; unconditional recomputation with conditional estimates and quantiles left alone; the newest-admissible-report rule; a report captured at or after the boundary refused (the leakage case); missing/empty statuses as an identity; the TEXT-vs-int64 id trap |
+| `tests/test_evaluate.py` | the composition-parity verdict logic, including the sign of a regression and the could-not-run case reporting nothing rather than a pass; the composition champion family appearing in the selection table; cohort masks defined on dataset columns rather than model output; the permutation controls |
+| `tests/test_predictions.py` | the migration-014 row builder as a pure function: conditional vs unconditional flagging, quantile non-crossing (including a deliberately crossed input), `prob_active` clamped to [0,1], non-finite values dropped rather than zeroed, both probabilities stored, override reason as a code and `captured_at` as epoch seconds, horizon labels in the run record. No database — `write_predictions` is read, never run |
+| `tests/test_teammates.py` | the **oracle** (v2) teammate family, kept because it is the evaluation bracket's upper bound and an oracle whose arithmetic is wrong is a useless bound: self-exclusion under a rebuilt feature frame, the split as-of contract with negative controls on both halves, the usage arithmetic against a hand computation, rank independence from the row's own availability |
+| `tests/test_teammates_v3.py` | the **served** (v3) family: teammate-outcome invariance pinned to PASS on the expected columns and to **FAIL** on the oracle ones; closed-form sensitivity to `p_j` for every column; the shrinkage weight at four points; career-scoped magnitudes crossing the season boundary; backward-only reliability features; the base model refusing teammate context; the cross-fit's out-of-fold stamp on every row plus a tampered-cutoff rejection; the team-game block permutation collapsing both gain share and out-of-sample MAE |
+| `tests/test_prospective_freeze.py` | **the 2026-27 pre-registration, enforced.** Every pinned artifact checksum recomputed from the bytes on disk, per file so a failure names *which* artifact moved, plus an assertion that the pinned set covers the whole directory (six passing per-file checks would not notice a seventh file appearing). Then the frozen serving configuration against the live module: champions, per-stat halflives and estimators (parametrised per stat, with STL's `expanding` called out separately because it is the most surprising entry), the 51-column feature contract by digest, the override constants against `overrides.DEFAULT_POLICY` — including the PROBABLE floor condition `s >= 1 - w`, which the defaults satisfy with *equality* and which therefore needs a float tolerance to be checkable at all — the horizon windows, the coherence constraints and the frozen cohort definitions. Then the protocol's own shape: exactly three look dates asserted literally, ordered, inside the season, with non-decreasing row minimums; and the falsification table checked for the properties that make it binding — every endpoint names all three looks (a `None` is a pre-registered "no power here", a *missing* key is an oversight), no threshold is a placeholder, no endpoint is report-only everywhere, thresholds only tighten across looks, no bar demands more than the retrospective effect it tests, and the Dec-1 teammate-context bars sit on the *worse* side of zero because at ~1.5 month-blocks the MDE exceeds the effect. The one row we expect to fail (REB/TOV/FG3M at halflife 20, which section 12.4's validation rows already contradict) is pinned as expected-to-fail |
+| `tests/test_serving_context.py` | the serving wiring: an injury report must raise a teammate's `exp_vacated_minutes` by exactly the probability shift times the absent player's magnitude, the as-of filter applies at the context stage too, an absent report is an identity, the rebuilt features carry the base model's cutoff, and the corrected measured-offset horizon definition with its stored per-run facts |
 
 Every leakage test runs **twice**, once per universe construction, so a dropped
 shift fails on the production path and on the backtest path alike.

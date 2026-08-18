@@ -7,6 +7,7 @@ from pathlib import Path
 from .parquet_source import ParquetSource
 from .schema import (
     PLAYER_LOG_COLS,
+    POSITION_COLS,
     SCHEDULE_COLS,
     STAT_COLS,
     STATUS_COLS,
@@ -20,6 +21,7 @@ __all__ = [
     "ParquetSource",
     "PostgresSource",
     "PLAYER_LOG_COLS",
+    "POSITION_COLS",
     "SCHEDULE_COLS",
     "STAT_COLS",
     "STATUS_COLS",

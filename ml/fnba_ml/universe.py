@@ -28,7 +28,7 @@ import logging
 import numpy as np
 import pandas as pd
 
-from .config import FALLBACK_ROSTER_WINDOW_DAYS
+from .config import FALLBACK_ROSTER_WINDOW_DAYS, POSITION_GROUPS
 from .data.schema import STAT_COLS, normalise_dates, normalise_ids
 
 log = logging.getLogger(__name__)
@@ -36,11 +36,44 @@ log = logging.getLogger(__name__)
 SOURCE_STATUS = "status"
 SOURCE_APPROXIMATION = "approximation"
 
+# the team's own game totals, carried under TEAM_-prefixed names so nothing can
+# confuse a team total with the player's own line. these are the denominator of
+# the usage-rate feature and are outcomes of the target game, which is why
+# config.TARGET_COLS lists them: only a SHIFTED usage EWMA over prior games may
+# read them.
+TEAM_TOTAL_COLS: dict[str, str] = {
+    "MIN": "TEAM_MIN",
+    "FGA": "TEAM_FGA",
+    "FTA": "TEAM_FTA",
+    "TOV": "TEAM_TOV",
+}
+
 UNIVERSE_COLS: tuple[str, ...] = (
     "SEASON", "GAME_ID", "GAME_DATE", "TEAM_ID", "TEAM_ABBREVIATION",
     "OPP_TEAM_ID", "IS_HOME", "TEAM_PTS", "TEAM_PTS_ALLOWED",
-    "PLAYER_ID", "PLAYER_NAME", "PLAYED", "UNIVERSE_SOURCE",
+    *TEAM_TOTAL_COLS.values(),
+    "PLAYER_ID", "PLAYER_NAME", "POSITION", "POS_GROUP",
+    "PLAYED", "LISTED_INACTIVE", "UNIVERSE_SOURCE",
 ) + STAT_COLS
+
+
+def position_group(position: pd.Series) -> pd.Series:
+    """"PG,SG" -> "G". the FIRST listed position decides the bucket.
+
+    a multi-position string is ordered primary-first by the source, so taking the
+    head is taking the listed primary position rather than averaging two buckets
+    into neither. an unrecognised or missing string yields ``pd.NA``, never a
+    guess - the positional features are then null for that player's rows, which
+    LightGBM handles as missing and which a mislabelled bucket would not.
+    """
+    primary = (
+        position.astype("string")
+        .str.strip()
+        .str.upper()
+        .str.split(",").str[0]
+        .str.strip()
+    )
+    return primary.map(POSITION_GROUPS).astype("string")
 
 
 def team_game_frame(schedule: pd.DataFrame, team_logs: pd.DataFrame) -> pd.DataFrame:
@@ -69,6 +102,24 @@ def team_game_frame(schedule: pd.DataFrame, team_logs: pd.DataFrame) -> pd.DataF
         how="left",
     )
 
+    # the team's own possession totals, for the usage denominator. own team only:
+    # a player's usage share is measured against his own team's possessions, and
+    # an opponent copy would be four unused columns on 147k rows.
+    present = [c for c in TEAM_TOTAL_COLS if c in tl.columns]
+    if present:
+        totals = tl[["GAME_ID", "TEAM_ID", *present]].drop_duplicates(["GAME_ID", "TEAM_ID"])
+        tg = tg.merge(
+            totals.rename(columns={c: TEAM_TOTAL_COLS[c] for c in present}),
+            on=["GAME_ID", "TEAM_ID"],
+            how="left",
+        )
+    missing = [c for c in TEAM_TOTAL_COLS if c not in present]
+    if missing:
+        log.warning(
+            "team logs carry no %s; the usage-rate feature will be null",
+            ", ".join(missing),
+        )
+
     if "TEAM_ABBREVIATION" in tl.columns:
         abbr = tl[["TEAM_ID", "TEAM_ABBREVIATION"]].drop_duplicates("TEAM_ID")
         tg = tg.merge(abbr, on="TEAM_ID", how="left")
@@ -83,6 +134,7 @@ def _attach_outcomes(
     team_games: pd.DataFrame,
     player_logs: pd.DataFrame,
     source: str,
+    positions: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """join schedule context and the observed box score onto eligible rows."""
     universe = eligibility.merge(
@@ -117,6 +169,22 @@ def _attach_outcomes(
         universe["PLAYER_ID"].map(names.set_index("PLAYER_ID")["PLAYER_NAME"])
     )
 
+    # positions: reference data, left-joined so an unmatched player keeps a null
+    # bucket. a source with no positions at all still gets the columns, so the
+    # frame shape does not depend on which source built it.
+    if positions is not None and len(positions) > 0:
+        pos = normalise_ids(positions).drop_duplicates("PLAYER_ID")
+        universe = universe.merge(
+            pos[["PLAYER_ID", "POSITION"]], on="PLAYER_ID", how="left"
+        )
+    else:
+        universe["POSITION"] = pd.NA
+    universe["POS_GROUP"] = position_group(universe["POSITION"])
+
+    if "LISTED_INACTIVE" not in universe.columns:
+        universe["LISTED_INACTIVE"] = pd.NA
+    universe["LISTED_INACTIVE"] = universe["LISTED_INACTIVE"].astype("boolean")
+
     universe["UNIVERSE_SOURCE"] = source
     universe = universe[[c for c in UNIVERSE_COLS if c in universe.columns]]
     return universe.sort_values(
@@ -129,25 +197,43 @@ def universe_from_status(
     team_logs: pd.DataFrame,
     player_logs: pd.DataFrame,
     status: pd.DataFrame,
+    positions: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """preferred construction: rostered players per team-game, unapproximated."""
+    """preferred construction: rostered players per team-game, unapproximated.
+
+    LISTED_INACTIVE is carried through as of feature_version v2. it is the
+    official-inactive-list flag and it is the ABSENCE SET the vacated-resource
+    features aggregate over - for a row's TEAMMATES. it is in
+    ``config.TARGET_COLS`` because for the row's own player it is the availability
+    answer, not a feature (see :mod:`fnba_ml.teammates`).
+    """
     tg = team_game_frame(schedule, team_logs)
     st = normalise_ids(status)
 
     rostered = st["ROSTERED"].astype("boolean").fillna(True)
-    elig = st.loc[rostered, ["PLAYER_ID", "GAME_ID", "TEAM_ID", "PLAYED"]].copy()
+    keep = ["PLAYER_ID", "GAME_ID", "TEAM_ID", "PLAYED"]
+    if "LISTED_INACTIVE" in st.columns:
+        keep.append("LISTED_INACTIVE")
+    elig = st.loc[rostered, keep].copy()
     elig["PLAYED"] = elig["PLAYED"].astype("boolean").astype("Float64")
+    if "LISTED_INACTIVE" in elig.columns:
+        elig["LISTED_INACTIVE"] = elig["LISTED_INACTIVE"].astype("boolean")
 
     # a status row for a game that is not on the schedule is a data-truth bug,
     # not something to silently model around
     known = set(zip(tg["GAME_ID"], tg["TEAM_ID"]))
     unknown = [k for k in zip(elig["GAME_ID"], elig["TEAM_ID"]) if k not in known]
     if unknown:
-        log.warning("%d status rows reference team-games absent from the schedule", len(unknown))
+        sample = sorted({f"{game}/{team}" for game, team in unknown})[:5]
+        log.warning(
+            "%d status rows reference team-games absent from the schedule and are "
+            "DROPPED (e.g. %s) - check nba_schedule home/away team ids for those games",
+            len(unknown), ", ".join(sample),
+        )
         elig = elig[[k in known for k in zip(elig["GAME_ID"], elig["TEAM_ID"])]]
 
     log.info("status-based universe: %d rostered player-game rows", len(elig))
-    return _attach_outcomes(elig, tg, player_logs, SOURCE_STATUS)
+    return _attach_outcomes(elig, tg, player_logs, SOURCE_STATUS, positions)
 
 
 def approximate_universe(
@@ -155,6 +241,7 @@ def approximate_universe(
     team_logs: pd.DataFrame,
     player_logs: pd.DataFrame,
     window_days: int = FALLBACK_ROSTER_WINDOW_DAYS,
+    positions: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """BIASED fallback for parquet-fixture mode. do not ship predictions from it.
 
@@ -168,6 +255,11 @@ def approximate_universe(
         is ``2*w/interval`` team-games (16 at w=15)
       - availability base rate biased upward by at least +0.0192
       - traded players stay eligible for their old team for up to ``w`` days
+      - NO INACTIVE LIST EXISTS, so LISTED_INACTIVE is null on every row and the
+        teammate-absence set degenerates to "rostered and did not appear". on the
+        status universe the two definitions coincide exactly; here the set is
+        missing every absence the +/-15 day window already failed to represent,
+        which understates vacated resources rather than inventing them
     """
     log.warning(
         "BIASED UNIVERSE: no player_game_status available, falling back to the "
@@ -215,7 +307,7 @@ def approximate_universe(
         raise ValueError("approximation produced no eligible player-games")
     elig = pd.concat(rows, ignore_index=True)
     log.info("approximated universe: %d eligible player-game rows", len(elig))
-    return _attach_outcomes(elig, tg, player_logs, SOURCE_APPROXIMATION)
+    return _attach_outcomes(elig, tg, player_logs, SOURCE_APPROXIMATION, positions)
 
 
 def build_universe(source) -> pd.DataFrame:
@@ -224,10 +316,16 @@ def build_universe(source) -> pd.DataFrame:
     team_logs = source.load_team_game_logs()
     player_logs = source.load_player_game_logs()
     status = source.load_player_game_status()
+    positions = (
+        source.load_player_positions()
+        if hasattr(source, "load_player_positions") else None
+    )
 
     if status is not None and len(status) > 0:
-        return universe_from_status(schedule, team_logs, player_logs, status)
-    return approximate_universe(schedule, team_logs, player_logs)
+        return universe_from_status(schedule, team_logs, player_logs, status, positions)
+    return approximate_universe(
+        schedule, team_logs, player_logs, positions=positions
+    )
 
 
 def coverage_report(universe: pd.DataFrame, player_logs: pd.DataFrame) -> dict[str, float]:
