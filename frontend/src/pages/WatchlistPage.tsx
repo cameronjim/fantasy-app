@@ -5,6 +5,7 @@ import { getWatchlist } from '../api/client';
 import { useCachedResource } from '../hooks/useCachedResource';
 import { formatStat, toStatNumber } from '../utils/stats';
 import { availabilityBadge } from '../utils/predictions';
+import { SegmentedFilter, type SegmentedOption } from '../components/SegmentedFilter';
 import type {
   DeviationStat,
   UpsideDriver,
@@ -112,14 +113,23 @@ function windowOption(days: number): { days: number; label: string; games: strin
 }
 
 /**
- * The position chips, split into the two vocabularies the server publishes.
- * Roster slots come first because that is the shape of the decision — a manager
- * has a hole at guard, not at shooting guard specifically — with the exact
- * positions after for the leagues that lock slots down.
+ * The position filter's primary row: the exact positions plus centre, in the
+ * same order and look as the Stats page's own position control (see
+ * StatsPage.tsx's `POSITIONS`) — 'All' | PG | SG | SF | PF | C. Centre has no
+ * finer split on either page, so it sits in this row rather than the roster
+ * bucket row below.
  */
-const POSITION_SLOTS: WatchlistPositionFilter[] = ['G', 'F', 'C'];
-const POSITION_EXACT: WatchlistPositionFilter[] = ['PG', 'SG', 'SF', 'PF'];
+const POSITION_PRIMARY: WatchlistPositionFilter[] = ['PG', 'SG', 'SF', 'PF', 'C'];
 
+/**
+ * Roster-slot buckets with no Stats-page equivalent. Kept as a second,
+ * visually smaller row instead of being folded into the primary six segments
+ * — a manager filling a hole "at guard" still gets that option, it just does
+ * not pretend to be one of the Stats page's six positions.
+ */
+const POSITION_SECONDARY: WatchlistPositionFilter[] = ['G', 'F'];
+
+/** Prose labels — used in sentences ("Showing centers only"), not on chips. */
 const POSITION_LABELS: Record<WatchlistPositionFilter, string> = {
   G: 'Guards',
   F: 'Forwards',
@@ -584,7 +594,11 @@ const RankingNote = ({ days }: { days: number }): JSX.Element => (
   </p>
 );
 
-/** The window picker. A segmented control, because there are four real answers. */
+/**
+ * The window picker. A segmented control, in the exact look of the Stats
+ * page's position/conference joins (see StatsPage.tsx's `SegmentedFilter`
+ * usage) — that page is the source of truth for this styling.
+ */
 const WindowPicker = ({
   days,
   onChange,
@@ -592,26 +606,22 @@ const WindowPicker = ({
   days: number;
   onChange: (days: number) => void;
 }): JSX.Element => (
-  <div className="join" role="group" aria-label="Time window">
-    {WINDOW_OPTIONS.map((option) => (
-      <button
-        key={option.days}
-        type="button"
-        className={
-          'btn btn-sm join-item ' + (option.days === days ? 'btn-primary' : 'btn-outline')
-        }
-        aria-pressed={option.days === days}
-        onClick={() => onChange(option.days)}
-      >
-        {option.label}
-      </button>
-    ))}
-  </div>
+  <SegmentedFilter
+    options={WINDOW_OPTIONS.map((option) => ({ value: option.days, label: option.label }))}
+    value={days}
+    onChange={onChange}
+    ariaLabel="Time window"
+  />
 );
 
 /**
- * The position filter. Chips rather than a select, so the current filter is
- * visible without opening anything — the same reason the reason codes are badges.
+ * The position filter, restyled to the Stats page's segmented control instead
+ * of the pill badges this page used to render. The primary row is exactly the
+ * Stats page's look — All | PG | SG | SF | PF | C — so the current filter is
+ * visible without opening anything, same as before, but the segments now
+ * match the rest of the app. The roster-slot buckets (Guards, Forwards) have
+ * no Stats-page equivalent, so they get a second, visually smaller row rather
+ * than cluttering the primary six segments.
  */
 const PositionPicker = ({
   value,
@@ -622,41 +632,30 @@ const PositionPicker = ({
   options: WatchlistPositionFilter[];
   onChange: (value: WatchlistPositionFilter | null) => void;
 }): JSX.Element => {
-  const chip = (
-    key: string,
-    label: string,
-    active: boolean,
-    next: WatchlistPositionFilter | null
-  ): JSX.Element => (
-    <button
-      key={key}
-      type="button"
-      className={'badge badge-md cursor-pointer ' + (active ? 'badge-primary' : 'badge-outline')}
-      aria-pressed={active}
-      onClick={() => onChange(next)}
-    >
-      {label}
-    </button>
-  );
-
   // only offer what the server said it honours, so a chip can never produce a 400
-  const slots = POSITION_SLOTS.filter((slot) => options.includes(slot));
-  const exact = POSITION_EXACT.filter((position) => options.includes(position));
+  const primary = POSITION_PRIMARY.filter((pos) => options.includes(pos));
+  const secondary = POSITION_SECONDARY.filter((pos) => options.includes(pos));
+
+  const primaryOptions: SegmentedOption<WatchlistPositionFilter | null>[] = [
+    { value: null, label: 'All' },
+    ...primary.map((pos) => ({ value: pos, label: pos })),
+  ];
+  const secondaryOptions: SegmentedOption<WatchlistPositionFilter | null>[] = secondary.map((pos) => ({
+    value: pos,
+    label: POSITION_LABELS[pos],
+  }));
 
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5" data-testid="position-filter">
       <span className="sr-only">Position filter</span>
-      <span className="flex flex-wrap items-center gap-1.5">
-        {chip('all', 'All positions', value === null, null)}
-        {slots.map((slot) => chip(slot, POSITION_LABELS[slot], value === slot, slot))}
-      </span>
-      {exact.length > 0 && (
-        <span className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] opacity-40">exactly</span>
-          {exact.map((position) =>
-            chip(position, POSITION_LABELS[position], value === position, position)
-          )}
-        </span>
+      <SegmentedFilter options={primaryOptions} value={value} onChange={onChange} ariaLabel="Position" />
+      {secondaryOptions.length > 0 && (
+        <SegmentedFilter
+          options={secondaryOptions}
+          value={value}
+          onChange={onChange}
+          ariaLabel="Roster slot"
+        />
       )}
     </div>
   );
@@ -686,6 +685,12 @@ export const WatchlistPage = (): JSX.Element => {
   const [date, setDate] = useState(todayInEastern);
   const [days, setDays] = useState(DEFAULT_WINDOW_DAYS);
   const [position, setPosition] = useState<WatchlistPositionFilter | null>(null);
+  // client-side only, unlike `position`: the watchlist never returns more than
+  // a couple dozen rows, so filtering by team in the browser is simple and
+  // effectively free, and there is no need to round-trip to the server for it
+  // the way the Stats page's own team select does not either — that one also
+  // filters the already-fetched player list client-side.
+  const [teamFilter, setTeamFilter] = useState('');
 
   const { data, loading, error, reload } = useCachedResource<WatchlistResponse>(
     `watchlist:${date}:${days}:${position ?? 'any'}`,
@@ -702,8 +707,12 @@ export const WatchlistPage = (): JSX.Element => {
   const from = data?.window.from ?? date;
   const to = data?.window.to ?? date;
   const shownDays = data?.window.days ?? days;
-  const positionOptions = data?.position_options ?? POSITION_SLOTS.concat(POSITION_EXACT);
+  const positionOptions = data?.position_options ?? POSITION_PRIMARY.concat(POSITION_SECONDARY);
   const unplaced = data?.position_coverage.unknown ?? 0;
+
+  const players = data?.players ?? [];
+  const teamAbbrs = [...new Set(players.map((p) => p.team_abbr).filter((t): t is string => t !== null))].sort();
+  const visiblePlayers = teamFilter ? players.filter((p) => p.team_abbr === teamFilter) : players;
 
   return (
     <div className="max-w-[900px] mx-auto px-4 py-6 pb-20">
@@ -743,7 +752,23 @@ export const WatchlistPage = (): JSX.Element => {
             {shownDays > 1 && <span className="opacity-50">· {shownDays} days</span>}
           </span>
         </div>
-        <PositionPicker value={position} options={positionOptions} onChange={setPosition} />
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          {/* Same classes as the Stats page's team select — see StatsPage.tsx.
+              Client-side only: it filters the rows already on screen rather than
+              adding a team parameter to the request. */}
+          <select
+            value={teamFilter}
+            onChange={(e) => setTeamFilter(e.target.value)}
+            className="select select-bordered select-sm w-[160px]"
+            aria-label="Filter by team"
+          >
+            <option value="">All Teams</option>
+            {teamAbbrs.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+          <PositionPicker value={position} options={positionOptions} onChange={setPosition} />
+        </div>
       </section>
 
       {loading && !data ? (
@@ -767,7 +792,7 @@ export const WatchlistPage = (): JSX.Element => {
             </div>
           )}
 
-          {data.players.length === 0 && data.position !== null ? (
+          {players.length === 0 && data.position !== null ? (
             /* a position filter that emptied the list is its own state: the model
                has plenty to say, just not about this slot. */
             <div className="card bg-base-200 border border-base-300">
@@ -797,7 +822,7 @@ export const WatchlistPage = (): JSX.Element => {
                 </p>
               </div>
             </div>
-          ) : data.players.length === 0 ? (
+          ) : players.length === 0 ? (
             <div className="card bg-base-200 border border-base-300">
               <div className="card-body items-center text-center py-12 gap-1">
                 <p className="text-sm font-semibold">
@@ -814,6 +839,25 @@ export const WatchlistPage = (): JSX.Element => {
                 </p>
               </div>
             </div>
+          ) : visiblePlayers.length === 0 ? (
+            /* the team filter is client-side only, so an empty result here is
+               never the model's answer — it is this page's own filter, and the
+               escape hatch says so rather than reusing the model's empty states. */
+            <div className="card bg-base-200 border border-base-300">
+              <div className="card-body items-center text-center py-8 gap-1">
+                <p className="text-sm font-semibold">No {teamFilter} players in this window</p>
+                <p className="text-xs opacity-60">
+                  <button
+                    type="button"
+                    className="link link-primary"
+                    onClick={() => setTeamFilter('')}
+                  >
+                    Clear the team filter
+                  </button>{' '}
+                  to see every team.
+                </p>
+              </div>
+            </div>
           ) : (
             <>
               <RankingNote days={shownDays} />
@@ -826,7 +870,7 @@ export const WatchlistPage = (): JSX.Element => {
                 </p>
               )}
               <ul className="flex flex-col gap-2">
-                {data.players.map((player, index) => (
+                {visiblePlayers.map((player, index) => (
                   <CandidateRow
                     key={player.nba_player_id}
                     player={player}

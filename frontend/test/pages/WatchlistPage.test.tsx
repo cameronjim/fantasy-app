@@ -637,10 +637,10 @@ describe('WatchlistPage position filter', () => {
 
     // assert
     const filter = screen.getByTestId('position-filter');
-    for (const label of ['All positions', 'Guards', 'Forwards', 'Centers', 'PG', 'SG', 'SF', 'PF']) {
+    for (const label of ['All', 'PG', 'SG', 'SF', 'PF', 'C', 'Guards', 'Forwards']) {
       expect(within(filter).getByRole('button', { name: label })).toBeInTheDocument();
     }
-    expect(within(filter).getByRole('button', { name: 'All positions' })).toHaveAttribute(
+    expect(within(filter).getByRole('button', { name: 'All' })).toHaveAttribute(
       'aria-pressed',
       'true'
     );
@@ -690,7 +690,7 @@ describe('WatchlistPage position filter', () => {
     const user = userEvent.setup();
 
     // act
-    await user.click(screen.getByRole('button', { name: 'Centers' }));
+    await user.click(screen.getByRole('button', { name: 'C', exact: true }));
 
     // assert
     expect(await screen.findByText(/No centers clear the bar in this window/i)).toBeInTheDocument();
@@ -710,7 +710,7 @@ describe('WatchlistPage position filter', () => {
     await screen.findByText('Breakout Wing');
     const user = userEvent.setup();
     watchlistMock.mockResolvedValue(payload({ position: 'C', players: [] }));
-    await user.click(screen.getByRole('button', { name: 'Centers' }));
+    await user.click(screen.getByRole('button', { name: 'C', exact: true }));
     await screen.findByText(/No centers clear the bar/i);
     watchlistMock.mockResolvedValue(payload());
 
@@ -719,7 +719,7 @@ describe('WatchlistPage position filter', () => {
 
     // assert — the all-positions list is already cached, so it comes straight back
     expect(await screen.findByText('Breakout Wing')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'All positions' })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: 'All', exact: true })).toHaveAttribute(
       'aria-pressed',
       'true'
     );
@@ -732,5 +732,61 @@ describe('WatchlistPage position filter', () => {
 
     // assert
     expect(screen.getByText(/shows up under both Guards and PG/i)).toBeInTheDocument();
+  });
+});
+
+/**
+ * The team filter, unlike the window and position filters above, never
+ * touches the network: it filters the rows already on the page, the same way
+ * the Stats page's own team select filters its already-fetched player list.
+ */
+describe('WatchlistPage team filter', () => {
+  it('offers only the teams on the current page, alphabetically', async () => {
+    // arrange + act — breakout is OKC, returnee is LAL
+    renderPage();
+    await screen.findByText('Breakout Wing');
+
+    // assert
+    const select = screen.getByRole('combobox', { name: 'Filter by team' });
+    const optionLabels = within(select)
+      .getAllByRole('option')
+      .map((option) => option.textContent);
+    expect(optionLabels).toEqual(['All Teams', 'LAL', 'OKC']);
+  });
+
+  it('filters the visible rows client-side without refetching', async () => {
+    // arrange
+    renderPage();
+    await screen.findByText('Breakout Wing');
+    const callsBefore = watchlistMock.mock.calls.length;
+    const user = userEvent.setup();
+
+    // act
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by team' }), 'LAL');
+
+    // assert — no new request, just fewer rows on screen
+    expect(screen.queryByText('Breakout Wing')).not.toBeInTheDocument();
+    expect(screen.getByText('Returning Vet')).toBeInTheDocument();
+    expect(watchlistMock.mock.calls.length).toBe(callsBefore);
+  });
+
+  it('gives a stale team filter its own empty state, with an escape hatch', async () => {
+    // arrange — the filter is not part of the cache key, so it survives a
+    // window change even when the new payload has nobody on that team left
+    renderPage();
+    await screen.findByText('Breakout Wing');
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by team' }), 'OKC');
+    expect(screen.getByText('Breakout Wing')).toBeInTheDocument();
+
+    watchlistMock.mockResolvedValue(payload({ players: [returnee] })); // LAL only
+    await user.click(screen.getByRole('button', { name: 'Week' }));
+    await screen.findByText(/No OKC players in this window/i);
+
+    // act
+    await user.click(screen.getByRole('button', { name: 'Clear the team filter' }));
+
+    // assert — the LAL player that was hidden by the stale filter is back
+    expect(await screen.findByText('Returning Vet')).toBeInTheDocument();
   });
 });

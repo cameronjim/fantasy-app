@@ -109,7 +109,7 @@ test.describe('Watchlist window and position', () => {
     await watchlist.goto();
 
     // act
-    await watchlist.positionChip('Centers').click();
+    await watchlist.positionChip('C').click();
 
     // assert
     await expect(page.getByText('No centers clear the bar tonight')).toBeVisible();
@@ -134,5 +134,27 @@ test.describe('Watchlist window and position', () => {
     // assert — a combo player shows both, because he answers both filters
     await expect(watchlist.row('Windowed Guard')).toContainText('PG/SG');
     await expect(watchlist.row('Rested Forward')).toContainText('SF/PF');
+  });
+
+  test('the team select filters rows client-side, without a new request', async ({ page }) => {
+    // arrange — the guard is MEM, the forward is BOS
+    const requested: string[] = [];
+    await mockApi(page, {
+      watchlist: (params) => {
+        requested.push(params.get('days') ?? 'none');
+        return watchlistFixture(params);
+      },
+    });
+    const watchlist = new WatchlistPage(page);
+    await watchlist.goto();
+    await expect(watchlist.row('Windowed Guard')).toBeVisible();
+
+    // act
+    await watchlist.teamSelect.selectOption('BOS');
+
+    // assert — the request log has exactly the one initial fetch
+    await expect(watchlist.row('Windowed Guard')).toHaveCount(0);
+    await expect(watchlist.row('Rested Forward')).toBeVisible();
+    expect(requested).toEqual(['none']);
   });
 });
