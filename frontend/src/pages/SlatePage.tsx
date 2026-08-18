@@ -351,13 +351,25 @@ export const SlatePage = (): JSX.Element => {
           ) : (
             <>
               {data.run && (
-                <p className="text-[11px] opacity-60 flex items-center gap-1.5 flex-wrap">
-                  <Flame size={13} className="text-primary" />
-                  <span>
-                    Highlighted rows are the slate&apos;s standouts — the players projected to do
-                    the most tonight. An outlined score leads its own game.
+                <div
+                  className="text-[11px] opacity-70 flex items-center gap-x-4 gap-y-1 flex-wrap"
+                  data-testid="slate-legend"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span className="badge badge-primary badge-sm tabular-nums font-semibold">
+                      +11.2
+                    </span>
+                    <span>impact — projected all-9-category value vs tonight&apos;s slate, 0 = average night</span>
                   </span>
-                </p>
+                  <span className="flex items-center gap-1.5">
+                    <span className="badge badge-success badge-sm tabular-nums">87%</span>
+                    <span>chance he plays</span>
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <Flame size={13} className="text-primary" />
+                    <span>slate standout — an outlined impact score leads its own game</span>
+                  </span>
+                </div>
               )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {data.games.map((game) => (
