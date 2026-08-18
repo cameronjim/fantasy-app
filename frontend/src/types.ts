@@ -562,6 +562,19 @@ export interface SlatePool {
   sample_size: number;
 }
 
+/**
+ * What "usual" means, and the deviation worth showing, both stated by the server
+ * so no page hardcodes the definition or the threshold of a number it renders.
+ */
+export interface BaselineDescriptor {
+  window_games: number;
+  min_games: number;
+  /** Minutes of deviation a surface should bother showing a chip for. */
+  notable_min_delta: number;
+  label: string;
+  definition: string;
+}
+
 /** Unconditional per-category projections, for the compact line under a name. */
 export interface SlateProjectedCategories {
   reb: NumericLike | null;
@@ -588,6 +601,21 @@ export interface SlatePlayer {
   proj_pts: NumericLike | null;
   proj_min_p50: NumericLike | null;
   projected: SlateProjectedCategories;
+  /**
+   * His own recent per-appearance averages, and tonight's projection minus them.
+   * Null when he has too little history to have a usual — which is a different
+   * fact from "unchanged", so a rookie must not render as flat.
+   *
+   * `min_vs_usual` is the trustworthy one for "did his role change": both halves
+   * are per-appearance. `pts_vs_usual` compares an UNCONDITIONAL projection
+   * against a per-appearance average, so it carries availability too.
+   */
+  usual_min: NumericLike | null;
+  usual_pts: NumericLike | null;
+  min_vs_usual: NumericLike | null;
+  pts_vs_usual: NumericLike | null;
+  /** Played games the baseline rests on; 0 when there is no baseline. */
+  baseline_games: number;
   /**
    * Projected TOTAL fantasy impact: the sum of this player's z-scores across
    * the nine categories, against `SlateResponse.pool`. 0 is an average night on
@@ -618,13 +646,14 @@ export interface SlateResponse {
   /** Null until a model run has completed — the page shows its own notice. */
   run: PredictionRun | null;
   pool: SlatePool;
+  baseline: BaselineDescriptor;
   games: SlateGame[];
 }
 
 /**
- * Deterministic reasons a player landed on the watchlist. Computed from game
- * logs and injury status, never from the model — each one is checkable against
- * a box score.
+ * Deterministic reasons a player landed on the watchlist, each checkable against
+ * a box score plus the published projection. They EXPLAIN a row; they do not
+ * score it — the score is `upside x relevance` (see `WatchlistPlayer`).
  */
 export type WatchlistReason =
   | 'ROLE_INCREASE'
@@ -633,36 +662,80 @@ export type WatchlistReason =
   | 'HOT_STREAK'
   | 'TEAMMATE_ABSENCE';
 
+/** A projection against the player's own usual, with the difference. */
+export interface VsUsual {
+  usual: NumericLike | null;
+  projected: NumericLike | null;
+  delta: NumericLike | null;
+}
+
+/** Stats a deviation is measured for. Mirrors the server's DEVIATION_STATS. */
+export type DeviationStat = 'minutes' | 'pts' | 'reb' | 'ast' | 'stl' | 'blk' | 'fg3m';
+
+/**
+ * One deviation that points up. These exist so a row can explain a positive
+ * score whose minutes and points happen to be flat: the aggregate can be up
+ * because the peripheral categories are.
+ */
+export interface UpsideDriver {
+  stat: DeviationStat;
+  /** `projected - usual`, in the stat's own units. */
+  delta: NumericLike;
+  /** That delta in units of the pool's spread — its contribution to `upside`. */
+  scaled: NumericLike;
+}
+
 /** The numbers behind whichever reasons fired — only those keys are present. */
 export interface WatchlistEvidence {
-  min_r5?: NumericLike;
-  min_r15?: NumericLike;
-  min_delta?: NumericLike;
-  fga_r5?: NumericLike;
-  fga_r15?: NumericLike;
+  fga_usual?: NumericLike;
+  fga_projected?: NumericLike;
   fga_delta?: NumericLike;
-  gap_days?: NumericLike;
-  last_game_date?: string;
-  pts_r5?: NumericLike;
-  pts_season?: NumericLike;
-  pts_stddev?: NumericLike;
-  pts_delta?: NumericLike;
+  days_since_played?: NumericLike;
+  last_played_date?: string;
+  pts_recent?: NumericLike;
+  pts_sd?: NumericLike;
+  pts_recent_delta?: NumericLike;
   teammate_out?: string;
   teammate_out_minutes?: NumericLike;
+  teammate_out_prob_active?: NumericLike;
 }
 
 export interface WatchlistPlayer {
   nba_player_id: string;
   name: string;
+  /** True when `name` is a stand-in built from the NBA id (see `SlatePlayer`). */
+  name_is_placeholder: boolean;
   team_abbr: string | null;
-  /** Weighted reason count, scaled by availability when a run exists. */
+  opponent_team_abbr: string | null;
+  nba_game_id: string;
+  game_date: string;
+  /** `upside x relevance` — how far above his own usual, times whether it matters. */
   score: NumericLike;
+  /** The deviation term: projection-minus-usual, scaled and weight-averaged. */
+  upside: NumericLike;
+  /** Which deviations point up, biggest contribution first. */
+  drivers: UpsideDriver[];
+  /** The absolute floor term, 0-1. Exactly 0 below the impact percentile floor. */
+  relevance: NumericLike;
+  /** Tonight's absolute projected impact — the same number the slate shows. */
+  impact: NumericLike | null;
+  /** Where that impact sits in tonight's pool, 0-100. */
+  impact_percentile: NumericLike;
   prob_active: NumericLike | null;
+  minutes: VsUsual;
+  points: VsUsual;
+  /** Played games the baseline rests on. */
+  baseline_games: number;
   reasons: WatchlistReason[];
   evidence: WatchlistEvidence;
 }
 
 export interface WatchlistResponse {
   date: string;
+  /** Null until a model run has completed — without one there is nothing to rank. */
+  run: PredictionRun | null;
+  /** The pool the impact percentile is measured in — the slate's pool, verbatim. */
+  pool: SlatePool;
+  baseline: BaselineDescriptor;
   players: WatchlistPlayer[];
 }
