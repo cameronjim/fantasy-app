@@ -488,6 +488,68 @@ export interface PredictionRun {
   predicted_at: string | null;
 }
 
+/**
+ * The same run, with the provenance the per-player page shows and the slate
+ * does not. `forecast_cutoff_at` is the information boundary — the run could
+ * not see anything at or after it — which is a different fact from when it ran.
+ */
+export interface PredictionRunMeta extends PredictionRun {
+  id: number;
+  feature_version: string | null;
+  forecast_cutoff_at: string | null;
+  /** e.g. "gameday (T-6h)", read out of the run's notes. Often null. */
+  horizon: string | null;
+}
+
+/**
+ * One stat's numbers for one predicted game. `expected`/`p10`/`p50`/`p90` are
+ * all conditional — "given he plays". `unconditional` is the same estimate with
+ * the chance of sitting already priced in, so it is always the smaller one.
+ *
+ * Every field is nullable independently: a run that emits a mean but no
+ * quantiles is normal, and so is the reverse.
+ */
+export interface PredictionStatLine {
+  expected: NumericLike | null;
+  p10: NumericLike | null;
+  p50: NumericLike | null;
+  p90: NumericLike | null;
+  unconditional: NumericLike | null;
+}
+
+/** One scheduled game the run has a prediction for. */
+export interface UpcomingGamePrediction {
+  nba_game_id: string;
+  game_date: string;
+  /** Null when the schedule row is missing, or the player's team is on neither side. */
+  opponent_abbr: string | null;
+  is_home: boolean | null;
+  game_status: string | null;
+  /**
+   * P(he plays), 0-1. A MODEL PROBABILITY, never an official injury
+   * designation — the badge copy has to keep saying so.
+   */
+  prob_active: NumericLike | null;
+  /** The pre-override model probability, when the run stores one separately. */
+  prob_active_model: NumericLike | null;
+  /**
+   * Keyed by whatever stat names the run emitted. Deliberately an open record
+   * rather than a fixed union: the emission path is still growing, and a fixed
+   * list would silently hide every stat added to it.
+   */
+  stats: Record<string, PredictionStatLine>;
+}
+
+export interface PlayerPredictionsResponse {
+  player_id: number;
+  nba_player_id: string | null;
+  /** Null until a run has completed — the section shows its own empty state. */
+  run: PredictionRunMeta | null;
+  /** Every stat key present across `games`, in the order to render columns. */
+  stats: string[];
+  games: UpcomingGamePrediction[];
+}
+
 /** One projected player inside a slate game. */
 export interface SlatePlayer {
   nba_player_id: string;

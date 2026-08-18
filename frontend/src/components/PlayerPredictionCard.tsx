@@ -5,6 +5,12 @@ import { formatTimestamp, statLabel } from '../utils/analytics';
 
 interface PlayerPredictionCardProps {
   prediction: PlayerPrediction;
+  /**
+   * How many games the upcoming-games section below has. Optional so the card
+   * still renders standalone; the teaser link only appears when there is more
+   * than the one game this card already shows.
+   */
+  upcomingCount?: number;
 }
 
 const CONFIDENCE_CLASS = {
@@ -27,7 +33,10 @@ function isRange(value: ProjectedValue): value is ProjectedRange {
  * quantifies uncertainty on — a band renders as its median with the spread
  * underneath, never as a single falsely-precise number.
  */
-export const PlayerPredictionCard = ({ prediction }: PlayerPredictionCardProps): JSX.Element => {
+export const PlayerPredictionCard = ({
+  prediction,
+  upcomingCount = 0,
+}: PlayerPredictionCardProps): JSX.Element => {
   const projected = (
     Object.entries(prediction.projected ?? {}) as Array<[AnalyticsStat, ProjectedValue]>
   ).filter(([, value]) => value !== null && value !== undefined);
@@ -93,6 +102,15 @@ export const PlayerPredictionCard = ({ prediction }: PlayerPredictionCardProps):
             Schedule-adjusted points (counts the chance of sitting):{' '}
             <span className="font-semibold tabular-nums">{formatStat(unconditionalPts)}</span>
           </p>
+        )}
+
+        {upcomingCount > 1 && (
+          <a
+            href="#upcoming-games"
+            className="link link-primary text-xs w-fit no-underline hover:underline"
+          >
+            All {upcomingCount} games in this run ↓
+          </a>
         )}
 
         <p className="text-[10px] opacity-40">

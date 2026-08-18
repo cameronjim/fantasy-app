@@ -3,7 +3,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { PlayerPage } from '../../src/pages/PlayerPage';
-import type { PlayerAnalytics } from '../../src/types';
+import type { PlayerAnalytics, PlayerPredictionsResponse } from '../../src/types';
 
 // mock the api boundary — these tests exercise the page's branches, not http.
 vi.mock('../../src/api/client', async (importOriginal) => {
@@ -11,11 +11,19 @@ vi.mock('../../src/api/client', async (importOriginal) => {
   return {
     ...actual,
     getPlayerAnalytics: vi.fn(),
+    getPlayerPredictions: vi.fn(),
   };
 });
 
-const { getPlayerAnalytics } = await import('../../src/api/client');
+const { getPlayerAnalytics, getPlayerPredictions } = await import('../../src/api/client');
 const analyticsMock = vi.mocked(getPlayerAnalytics);
+const predictionsMock = vi.mocked(getPlayerPredictions);
+
+function predictionsPayload(
+  overrides: Partial<PlayerPredictionsResponse> = {}
+): PlayerPredictionsResponse {
+  return { player_id: 1, nba_player_id: '2544', run: null, stats: [], games: [], ...overrides };
+}
 
 function fullPayload(overrides: Partial<PlayerAnalytics> = {}): PlayerAnalytics {
   return {
@@ -130,6 +138,7 @@ function renderPage(playerId = '1') {
 beforeEach(() => {
   vi.clearAllMocks();
   analyticsMock.mockResolvedValue(fullPayload());
+  predictionsMock.mockResolvedValue(predictionsPayload());
 });
 
 describe('PlayerPage', () => {
@@ -302,6 +311,100 @@ describe('PlayerPage', () => {
     expect(screen.getByText(/Schedule-adjusted points/i)).toBeInTheDocument();
     expect(screen.getByText('20.5')).toBeInTheDocument();
     expect(screen.getByText(/stat lines assume he plays/i)).toBeInTheDocument();
+  });
+
+  it('asks for the upcoming games without a date filter', async () => {
+    // arrange + act — the only published run is a January backtest, so a
+    // "today onwards" default would render an empty section on a working page
+    renderPage();
+    await screen.findByRole('heading', { name: 'Test Allstar' });
+
+    // assert
+    expect(predictionsMock).toHaveBeenCalledWith(1);
+  });
+
+  it('renders the upcoming-games section and links to it from the projection card', async () => {
+    // arrange
+    predictionsMock.mockResolvedValue(
+      predictionsPayload({
+        run: {
+          id: 1,
+          model_version: 'bt20260115',
+          feature_version: 'v3',
+          predicted_at: '2026-08-17T22:08:18.285Z',
+          forecast_cutoff_at: '2026-01-15T00:00:00.000Z',
+          horizon: 'gameday (T-6h)',
+        },
+        stats: ['minutes', 'pts'],
+        games: [
+          {
+            nba_game_id: '0022500586',
+            game_date: '2026-01-15',
+            opponent_abbr: 'CHA',
+            is_home: true,
+            game_status: 'Final',
+            prob_active: 0.91,
+            prob_active_model: 0.91,
+            stats: {
+              minutes: { expected: 36.3, p10: 28.5, p50: 36.2, p90: 43.5, unconditional: 33.2 },
+              pts: { expected: 32.3, p10: 25.8, p50: 31.7, p90: 39.9, unconditional: 29.6 },
+            },
+          },
+          {
+            nba_game_id: '0022500601',
+            game_date: '2026-01-17',
+            opponent_abbr: 'POR',
+            is_home: false,
+            game_status: 'Final',
+            prob_active: 0.12,
+            prob_active_model: 0.12,
+            stats: {
+              minutes: { expected: 30, p10: 22, p50: 30, p90: 38, unconditional: 3.6 },
+              pts: { expected: 27, p10: 19, p50: 27, p90: 35, unconditional: 3.2 },
+            },
+          },
+        ],
+      })
+    );
+    analyticsMock.mockResolvedValue(
+      fullPayload({
+        prediction: { summary: 'Full go tonight.', projected: { pts: 32.3 }, game_date: '2026-01-15' },
+      })
+    );
+
+    // act
+    renderPage();
+
+    // assert — the section renders both games, availability included
+    expect(await screen.findByTestId('upcoming-games-section')).toBeInTheDocument();
+    expect(screen.getAllByTestId('upcoming-game-row')).toHaveLength(2);
+    expect(screen.getByText('Likely')).toBeInTheDocument();
+    expect(screen.getByText('OUT-ish')).toBeInTheDocument();
+
+    // assert — the next-game card points at it
+    const teaser = screen.getByRole('link', { name: /All 2 games in this run/i });
+    expect(teaser).toHaveAttribute('href', '#upcoming-games');
+  });
+
+  it('shows the no-run empty state rather than hiding the section', async () => {
+    // arrange + act
+    renderPage();
+
+    // assert
+    expect(await screen.findByText('No prediction run published yet')).toBeInTheDocument();
+  });
+
+  it('leaves the page intact when the predictions call fails', async () => {
+    // arrange
+    predictionsMock.mockRejectedValue(new Error('predictions down'));
+
+    // act
+    renderPage();
+
+    // assert — the optional section disappears, everything else still renders
+    expect(await screen.findByRole('heading', { name: 'Test Allstar' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Category Percentiles/i })).toBeInTheDocument();
+    expect(screen.queryByTestId('upcoming-games-section')).not.toBeInTheDocument();
   });
 
   it('shows an error state with a retry button when the analytics call fails', async () => {

@@ -51,7 +51,7 @@ function payload(overrides: Partial<SlateResponse> = {}): SlateResponse {
 
 function renderPage() {
   return render(
-    <MemoryRouter initialEntries={['/slate']}>
+    <MemoryRouter initialEntries={['/projections']}>
       <SlatePage />
     </MemoryRouter>
   );

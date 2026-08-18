@@ -5,11 +5,12 @@ import { StatDistributionSection } from '../components/StatDistributionSection';
 import { PlayerTrendsSection } from '../components/PlayerTrendsSection';
 import { RecentGamesTable } from '../components/RecentGamesTable';
 import { PlayerPredictionCard } from '../components/PlayerPredictionCard';
-import { getPlayerAnalytics } from '../api/client';
+import { PlayerUpcomingGames } from '../components/PlayerUpcomingGames';
+import { getPlayerAnalytics, getPlayerPredictions } from '../api/client';
 import { useCachedResource } from '../hooks/useCachedResource';
-import { playerAnalyticsKey } from '../api/resourceCache';
+import { playerAnalyticsKey, playerPredictionsKey } from '../api/resourceCache';
 import { formatTimestamp } from '../utils/analytics';
-import type { PlayerAnalytics } from '../types';
+import type { PlayerAnalytics, PlayerPredictionsResponse } from '../types';
 
 const injuryAlertClass = (status: string): string => {
   if (['Day-To-Day', 'Day_To_Day', 'Questionable'].includes(status)) return 'alert-warning';
@@ -39,6 +40,20 @@ export const PlayerPage = (): JSX.Element => {
     playerAnalyticsKey(playerId),
     () => getPlayerAnalytics(playerId),
     { enabled: valid, errorMessage: 'Failed to load player analytics' }
+  );
+
+  // a separate request on purpose: the analytics payload is heavy and cached
+  // per player, while the prediction run turns over on its own schedule. A
+  // failure here leaves the rest of the page intact — the section renders
+  // nothing rather than taking the page down with it.
+  //
+  // `from` is deliberately not passed. The server then applies no date filter,
+  // which is what makes the section non-empty while the only published run is a
+  // backtest of a week in January.
+  const { data: predictions } = useCachedResource<PlayerPredictionsResponse>(
+    playerPredictionsKey(playerId),
+    () => getPlayerPredictions(playerId),
+    { enabled: valid, errorMessage: 'Failed to load upcoming predictions' }
   );
 
   if (!valid) {
@@ -125,7 +140,14 @@ export const PlayerPage = (): JSX.Element => {
         </header>
 
         <div className="flex flex-col gap-5">
-          {prediction && <PlayerPredictionCard prediction={prediction} />}
+          {prediction && (
+            <PlayerPredictionCard
+              prediction={prediction}
+              upcomingCount={predictions?.games.length ?? 0}
+            />
+          )}
+
+          <PlayerUpcomingGames data={predictions} />
 
           <PercentilePanel percentiles={percentiles} pool={pool} />
 
