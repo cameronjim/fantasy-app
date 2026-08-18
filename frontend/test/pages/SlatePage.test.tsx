@@ -152,14 +152,20 @@ describe('SlatePage', () => {
     expect(screen.getByText('+2.1')).toBeInTheDocument();
   });
 
-  it('marks the slate standouts and explains the highlight', async () => {
+  it('marks the slate standouts and explains every badge in the legend', async () => {
     // arrange + act
     renderPage();
     await screen.findByText('Stephen Curry');
 
     // assert — one of the two is a slate-wide standout, the other is not
     expect(screen.getByLabelText('Top projected impact on the slate')).toBeInTheDocument();
-    expect(screen.getByText(/slate.s standouts/i)).toBeInTheDocument();
+    // the legend must explain all three symbols inline, where they are visible
+    // without hovering — the tooltip-only version confused a real user
+    const legend = screen.getByTestId('slate-legend');
+    expect(legend).toHaveTextContent(/impact/i);
+    expect(legend).toHaveTextContent(/0 = average night/i);
+    expect(legend).toHaveTextContent(/chance he plays/i);
+    expect(legend).toHaveTextContent(/slate standout/i);
   });
 
   it('renders an em dash when availability was not modelled', async () => {
