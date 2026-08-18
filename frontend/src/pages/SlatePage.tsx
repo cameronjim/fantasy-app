@@ -4,7 +4,7 @@ import { ArrowDownRight, ArrowUpRight, CalendarDays, Flame } from 'lucide-react'
 import { getSlate } from '../api/client';
 import { useCachedResource } from '../hooks/useCachedResource';
 import { formatTimestamp } from '../utils/analytics';
-import { formatStat, toStatNumber } from '../utils/stats';
+import { formatStat, toStatNumber, STAT_PLACEHOLDER } from '../utils/stats';
 import type { SlateGame, SlatePlayer, SlateResponse } from '../types';
 
 /**
@@ -38,7 +38,7 @@ const AvailabilityBadge = ({ value }: { value: SlatePlayer['prob_active'] }): JS
   if (probability === null) {
     return (
       <span className="badge badge-ghost badge-sm tabular-nums" title="Availability not modelled">
-        —
+        {STAT_PLACEHOLDER}
       </span>
     );
   }
@@ -63,9 +63,9 @@ const ImpactBadge = ({ player }: { player: SlatePlayer }): JSX.Element => {
     return (
       <span
         className="badge badge-ghost badge-sm tabular-nums"
-        title="The run did not project every category for this player"
+        title="No impact score for this player"
       >
-        —
+        {STAT_PLACEHOLDER}
       </span>
     );
   }
@@ -79,7 +79,7 @@ const ImpactBadge = ({ player }: { player: SlatePlayer }): JSX.Element => {
   return (
     <span
       className={`badge badge-sm tabular-nums font-semibold ${tone}`}
-      title="Projected total fantasy impact across all nine categories, against tonight's slate. 0 is an average night."
+      title="Projected impact tonight. 0 is an average night."
     >
       {impact > 0 ? '+' : ''}
       {impact.toFixed(1)}
@@ -140,7 +140,7 @@ const VsUsualChip = ({
   const ptsPart =
     ptsDelta === null
       ? ''
-      : ` Projected points are ${ptsDelta > 0 ? '+' : ''}${ptsDelta.toFixed(1)} against the same window, availability included.`;
+      : ` Points ${ptsDelta > 0 ? '+' : ''}${ptsDelta.toFixed(1)} vs usual.`;
 
   return (
     <span
@@ -148,7 +148,7 @@ const VsUsualChip = ({
         'badge badge-xs tabular-nums gap-0.5 ' +
         (up ? 'badge-success badge-outline' : 'badge-warning badge-outline')
       }
-      title={`He averages ${usual.toFixed(1)} minutes over his recent games played; tonight projects ${formatStat(player.proj_min_p50)}.${ptsPart}`}
+      title={`Usually ${usual.toFixed(1)} min, tonight ${formatStat(player.proj_min_p50)}.${ptsPart}`}
     >
       {up ? <ArrowUpRight size={10} /> : <ArrowDownRight size={10} />}
       {up ? '+' : ''}
@@ -190,7 +190,7 @@ const PlayerRow = ({
           }
           title={
             player.name_is_placeholder
-              ? 'This player has predictions but no roster row yet, so only his NBA id is known'
+              ? 'Not on a roster yet, so this is his NBA id'
               : undefined
           }
         >
@@ -257,7 +257,7 @@ const GameCard = ({
   </section>
 );
 
-const NO_RUN_NOTICE = 'No prediction run yet — check back after the next model run.';
+const NO_RUN_NOTICE = 'No prediction run yet. Check back after the next model run.';
 
 /**
  * The day's games with each game's top projected players. Every part of the
@@ -275,7 +275,6 @@ export const SlatePage = (): JSX.Element => {
   );
 
   const predictedAt = formatTimestamp(data?.run?.predicted_at ?? null);
-  const pool = data?.pool ?? null;
   const baseline = data?.baseline ?? null;
   // 0 disables the chips, which is what an older server (or one caught
   // mid-deploy) that sends no baseline descriptor should produce.
@@ -339,12 +338,12 @@ export const SlatePage = (): JSX.Element => {
               <div className="card-body items-center text-center py-12 gap-1">
                 <p className="text-sm font-semibold">No games scheduled</p>
                 <p className="text-xs opacity-60 max-w-md">
-                  Nothing is on the NBA schedule for {formatSlateDate(data.date)}. Pick another
-                  date, or see{' '}
+                  Nothing on the schedule for {formatSlateDate(data.date)}. Pick another date, or
+                  check{' '}
                   <Link to="/watchlist" className="link link-primary">
                     the watchlist
-                  </Link>{' '}
-                  for players worth tracking regardless of tonight&apos;s games.
+                  </Link>
+                  .
                 </p>
               </div>
             </div>
@@ -359,7 +358,7 @@ export const SlatePage = (): JSX.Element => {
                     <span className="badge badge-primary badge-sm tabular-nums font-semibold">
                       +11.2
                     </span>
-                    <span>impact — projected all-9-category value vs tonight&apos;s slate, 0 = average night</span>
+                    <span>projected impact, 0 = average night</span>
                   </span>
                   <span className="flex items-center gap-1.5">
                     <span className="badge badge-success badge-sm tabular-nums">87%</span>
@@ -367,7 +366,7 @@ export const SlatePage = (): JSX.Element => {
                   </span>
                   <span className="flex items-center gap-1.5">
                     <Flame size={13} className="text-primary" />
-                    <span>slate standout — an outlined impact score leads its own game</span>
+                    <span>slate standout</span>
                   </span>
                 </div>
               )}
@@ -387,34 +386,10 @@ export const SlatePage = (): JSX.Element => {
 
       <footer className="text-[11px] opacity-40 mt-6 pt-3 border-t border-base-300 flex flex-col gap-1">
         <span>
-          Players and games are ordered by projected TOTAL impact: each of the nine fantasy
-          categories is z-scored against the rest of the slate and the scores are summed, with
-          turnovers counting against and shooting scored by volume rather than by percentage. 0 is
-          an average night.
-          {/* the pool is described by the server, so this page never states a
-              definition the numbers were not actually computed against. */}
-          {pool && pool.definition && (
-            <>
-              {' '}
-              Compared against {pool.label.toLowerCase()}: {pool.definition}
-              {pool.sample_size > 0 && ` (${pool.sample_size} players)`}.
-            </>
-          )}
+          Players and games are ordered by projected impact across all nine categories. 0 is an
+          average night.
         </span>
-        <span>
-          Every projection is unconditional — the chance of playing is already priced in, so a
-          game-time decision projects lower than the same player would if he were certain to suit
-          up.
-        </span>
-        {/* the window and the threshold are the server's, so this note and the
-            Watchlist's role-increase badge can never describe different bars. */}
-        {notableMinDelta > 0 && baseline && (
-          <span>
-            A &ldquo;vs usual&rdquo; chip appears when tonight&apos;s minutes projection is at least{' '}
-            {notableMinDelta} away from {baseline.label} — {baseline.definition}. The Watchlist
-            ranks by that gap; this page ranks by tonight&apos;s absolute impact.
-          </span>
-        )}
+        <span>Every projection already accounts for the chance he sits.</span>
       </footer>
     </div>
   );

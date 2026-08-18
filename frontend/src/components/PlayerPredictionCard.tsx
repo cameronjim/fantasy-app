@@ -5,12 +5,6 @@ import { formatTimestamp, statLabel } from '../utils/analytics';
 
 interface PlayerPredictionCardProps {
   prediction: PlayerPrediction;
-  /**
-   * How many games the upcoming-games section below has. Optional so the card
-   * still renders standalone; the teaser link only appears when there is more
-   * than the one game this card already shows.
-   */
-  upcomingCount?: number;
 }
 
 const CONFIDENCE_CLASS = {
@@ -35,7 +29,6 @@ function isRange(value: ProjectedValue): value is ProjectedRange {
  */
 export const PlayerPredictionCard = ({
   prediction,
-  upcomingCount = 0,
 }: PlayerPredictionCardProps): JSX.Element => {
   const projected = (
     Object.entries(prediction.projected ?? {}) as Array<[AnalyticsStat, ProjectedValue]>
@@ -83,7 +76,7 @@ export const PlayerPredictionCard = ({
                   <>
                     <p className="text-sm font-semibold tabular-nums">{formatStat(value.p50)}</p>
                     <p className="text-[10px] tabular-nums opacity-60">
-                      {formatStat(value.p10)}–{formatStat(value.p90)}
+                      {formatStat(value.p10)}-{formatStat(value.p90)}
                     </p>
                   </>
                 ) : (
@@ -99,18 +92,9 @@ export const PlayerPredictionCard = ({
 
         {unconditionalPts !== null && (
           <p className="text-xs opacity-60">
-            Schedule-adjusted points (counts the chance of sitting):{' '}
+            Points, counting the chance he sits:{' '}
             <span className="font-semibold tabular-nums">{formatStat(unconditionalPts)}</span>
           </p>
-        )}
-
-        {upcomingCount > 1 && (
-          <a
-            href="#upcoming-games"
-            className="link link-primary text-xs w-fit no-underline hover:underline"
-          >
-            All {upcomingCount} games in this run ↓
-          </a>
         )}
 
         <p className="text-[10px] opacity-40">

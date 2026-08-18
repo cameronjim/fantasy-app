@@ -431,7 +431,7 @@ export function watchlistPool(sampleSize: number, days: number): SlatePool {
     ...pool,
     label: "Each night's slate",
     definition:
-      "every player the run projects for a date, across all of that date's games — " +
+      "every player the run projects for a date, across all of that date's games; " +
       'each night in the window is scored against its own slate',
   };
 }

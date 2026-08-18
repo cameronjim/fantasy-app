@@ -42,7 +42,7 @@ export function availabilityBadge(prob: NumericLike | null | undefined): Availab
       label: 'No estimate',
       className: 'badge-ghost',
       percentText: null,
-      hint: 'This run did not model availability for this game.',
+      hint: 'No availability estimate for this game.',
     };
   }
 
@@ -73,7 +73,7 @@ export interface StatCellDisplay {
   primary: string;
   /** Which of the two `primary` came from — the tooltip has to be honest. */
   primarySource: 'p50' | 'expected' | 'none';
-  /** "26.0–41.0", or null when the run has no complete band for this stat. */
+  /** "26.0-41.0", or null when the run has no complete band for this stat. */
   band: string | null;
   /** The schedule-level number, shown secondary. Null when the run omits it. */
   unconditional: string | null;
@@ -99,16 +99,15 @@ export function statCellDisplay(
 
   const headline = p50 ?? expected;
   const primarySource = p50 !== null ? 'p50' : expected !== null ? 'expected' : 'none';
-  const band = p10 !== null && p90 !== null ? `${p10.toFixed(1)}–${p90.toFixed(1)}` : null;
+  const band = p10 !== null && p90 !== null ? `${p10.toFixed(1)}-${p90.toFixed(1)}` : null;
 
   const parts: string[] = [];
   if (headline !== null) {
-    const kind = primarySource === 'p50' ? 'median' : 'average';
-    parts.push(`${label} if he plays: ${headline.toFixed(1)} (${kind})`);
+    parts.push(`${label} if he plays: ${headline.toFixed(1)}`);
   }
-  if (band) parts.push(`10th–90th percentile ${band}`);
+  if (band) parts.push(`Likely range ${band}`);
   if (uncond !== null) {
-    parts.push(`Over the schedule, chance of sitting included: ${uncond.toFixed(1)}`);
+    parts.push(`Counting the chance he sits: ${uncond.toFixed(1)}`);
   }
 
   return {
@@ -147,7 +146,7 @@ export function formatPredictionDate(iso: string): PredictionDateParts {
   };
 }
 
-/** "vs CHA" / "@ POR" / "—" when the schedule row could not be matched. */
+/** "vs CHA" / "@ POR" / a placeholder when the schedule row could not be matched. */
 export function opponentLabel(opponent: string | null, isHome: boolean | null): string {
   if (!opponent || isHome === null) return STAT_PLACEHOLDER;
   return `${isHome ? 'vs' : '@'} ${opponent}`;

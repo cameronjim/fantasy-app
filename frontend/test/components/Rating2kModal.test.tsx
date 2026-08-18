@@ -116,12 +116,10 @@ describe('Rating2kModal', () => {
     detailMock.mockReturnValue(new Promise(() => {}));
 
     // act
-    const { container } = render(
-      <Rating2kModal slug="nikola-jokic" summary={summary} onClose={() => {}} />
-    );
+    render(<Rating2kModal slug="nikola-jokic" summary={summary} onClose={() => {}} />);
 
     // assert
-    expect(container.querySelector('.loading-spinner')).not.toBeNull();
+    expect(document.body.querySelector('.loading-spinner')).not.toBeNull();
     expect(screen.getByRole('heading', { name: 'Nikola Jokic' })).toBeInTheDocument();
   });
 
@@ -170,14 +168,12 @@ describe('Rating2kModal', () => {
   it('closes on the close button, the backdrop, and the escape key', async () => {
     // arrange
     const onClose = vi.fn();
-    const { container } = render(
-      <Rating2kModal slug="nikola-jokic" summary={summary} onClose={onClose} />
-    );
+    render(<Rating2kModal slug="nikola-jokic" summary={summary} onClose={onClose} />);
     const user = userEvent.setup();
 
     // act
     await user.click(screen.getByRole('button', { name: /Close 2K ratings/i }));
-    const backdrop = container.querySelector('.modal-backdrop');
+    const backdrop = document.body.querySelector('.modal-backdrop');
     if (backdrop) await user.click(backdrop);
     await user.keyboard('{Escape}');
 
@@ -195,10 +191,10 @@ describe('Rating2kModal', () => {
     );
 
     // act
-    const { container } = render(<Rating2kModal slug="nikola-jokic" onClose={() => {}} />);
+    render(<Rating2kModal slug="nikola-jokic" onClose={() => {}} />);
     await screen.findByText('Steal');
 
     // assert
-    expect(container.textContent).not.toMatch(/NaN|null|undefined/);
+    expect(document.body.textContent).not.toMatch(/NaN|null|undefined/);
   });
 });

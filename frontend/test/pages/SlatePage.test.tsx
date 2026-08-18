@@ -168,7 +168,7 @@ describe('SlatePage', () => {
     expect(legend).toHaveTextContent(/slate standout/i);
   });
 
-  it('renders an em dash when availability was not modelled', async () => {
+  it('renders a placeholder when availability was not modelled', async () => {
     // arrange
     slateMock.mockResolvedValue(
       payload({
@@ -186,10 +186,10 @@ describe('SlatePage', () => {
 
     // assert
     expect(await screen.findByText('Stephen Curry')).toBeInTheDocument();
-    expect(screen.getByTitle('Availability not modelled')).toHaveTextContent('—');
+    expect(screen.getByTitle('Availability not modelled')).toHaveTextContent('-');
   });
 
-  it('renders an em dash when the run projected no impact for a player', async () => {
+  it('renders a placeholder when the run projected no impact for a player', async () => {
     // arrange
     slateMock.mockResolvedValue(
       payload({
@@ -209,8 +209,8 @@ describe('SlatePage', () => {
     // assert
     expect(await screen.findByText('Stephen Curry')).toBeInTheDocument();
     expect(
-      screen.getByTitle('The run did not project every category for this player')
-    ).toHaveTextContent('—');
+      screen.getByTitle('No impact score for this player')
+    ).toHaveTextContent('-');
   });
 
   it('labels a player with no roster row by id instead of showing a blank name', async () => {
@@ -239,17 +239,20 @@ describe('SlatePage', () => {
     // assert
     expect(await screen.findByText('NBA #1642850 (new roster)')).toBeInTheDocument();
     expect(
-      screen.getByTitle(/no roster row yet, so only his NBA id is known/i)
+      screen.getByTitle(/Not on a roster yet, so this is his NBA id/i)
     ).toBeInTheDocument();
   });
 
-  it('describes the pool the impact scores were measured against', async () => {
-    // arrange + act — the page must never state a definition of its own
+  it('says what the impact number means without explaining how it is computed', async () => {
+    // arrange + act
     renderPage();
     await screen.findByText('Stephen Curry');
 
-    // assert
-    expect(screen.getByText(/every player the run projects for this date/i)).toBeInTheDocument();
+    // assert — what it means, not the pool or the z-scoring behind it
+    expect(screen.getByText(/ordered by projected impact/i)).toBeInTheDocument();
+    expect(screen.getByText(/0 is an average night/i)).toBeInTheDocument();
+    expect(screen.queryByText(/z-score/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/every player the run projects for this date/i)).toBeNull();
   });
 
   it('explains that no model run has completed yet, while still listing the games', async () => {
@@ -321,14 +324,16 @@ describe('SlatePage', () => {
     expect(screen.queryByText(/\+0\.7 min vs usual/)).not.toBeInTheDocument();
   });
 
-  it('explains the chip against the window the server published', async () => {
-    // arrange + act — the page must never state a threshold of its own
+  it('keeps the chip meaning in its tooltip rather than restating the threshold', async () => {
+    // arrange + act
     renderPage();
     await screen.findByText('Stephen Curry');
 
-    // assert
-    expect(screen.getByText(/at least 4 away from his own recent form/i)).toBeInTheDocument();
-    expect(screen.getByText(/last 15 games played before this date/i)).toBeInTheDocument();
+    // assert — the chip says what changed; the footer no longer explains the bar
+    expect(
+      screen.getByTitle('Usually 24.3 min, tonight 30.5. Points -5.5 vs usual.')
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/last 15 games played before this date/i)).toBeNull();
   });
 
   it('chips a minutes drop too, in a different tone', async () => {

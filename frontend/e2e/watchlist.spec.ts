@@ -26,7 +26,7 @@ test.describe('Watchlist window and position', () => {
 
     // assert — a single day shows one date, not a range of one
     await expect(watchlist.windowButton('Tonight')).toHaveAttribute('aria-pressed', 'true');
-    await expect(watchlist.range).not.toContainText('–');
+    await expect(watchlist.range).not.toContainText(' to ');
     await expect(watchlist.rankingNote).toContainText('where tonight projects');
   });
 
@@ -46,7 +46,7 @@ test.describe('Watchlist window and position', () => {
     await watchlist.windowButton('Week').click();
 
     // assert
-    await expect(watchlist.range).toContainText('–');
+    await expect(watchlist.range).toContainText(' to ');
     await expect(watchlist.windowButton('Week')).toHaveAttribute('aria-pressed', 'true');
     // the default request omits `days` entirely; the week request carries it
     expect(requested).toEqual(['none', '7']);
@@ -113,7 +113,7 @@ test.describe('Watchlist window and position', () => {
 
     // assert
     await expect(page.getByText('No centers clear the bar tonight')).toBeVisible();
-    await expect(page.getByText(/2 projected players could not be considered/)).toBeVisible();
+    await expect(page.getByText(/2 projected players have no position on record/)).toBeVisible();
     await expect(
       page.getByText('Nobody is projected above their own usual tonight')
     ).toHaveCount(0);

@@ -304,11 +304,11 @@ describe('PlayerPage', () => {
     // assert — bands show median + spread, nulls are skipped, context is visible
     expect(await screen.findByRole('heading', { name: /Projection/i })).toBeInTheDocument();
     expect(screen.getByText('34.5')).toBeInTheDocument();
-    expect(screen.getByText('26.0–41.0')).toBeInTheDocument();
+    expect(screen.getByText('26.0-41.0')).toBeInTheDocument();
     expect(screen.getByText('24.5')).toBeInTheDocument();
-    expect(screen.getByText('14.0–37.0')).toBeInTheDocument();
+    expect(screen.getByText('14.0-37.0')).toBeInTheDocument();
     expect(screen.getByText('82% to play')).toBeInTheDocument();
-    expect(screen.getByText(/Schedule-adjusted points/i)).toBeInTheDocument();
+    expect(screen.getByText(/Points, counting the chance he sits/i)).toBeInTheDocument();
     expect(screen.getByText('20.5')).toBeInTheDocument();
     expect(screen.getByText(/stat lines assume he plays/i)).toBeInTheDocument();
   });
@@ -323,7 +323,7 @@ describe('PlayerPage', () => {
     expect(predictionsMock).toHaveBeenCalledWith(1);
   });
 
-  it('renders the upcoming-games section and links to it from the projection card', async () => {
+  it('renders the upcoming-games section under the projection card', async () => {
     // arrange
     predictionsMock.mockResolvedValue(
       predictionsPayload({
@@ -381,9 +381,8 @@ describe('PlayerPage', () => {
     expect(screen.getByText('Likely')).toBeInTheDocument();
     expect(screen.getByText('OUT-ish')).toBeInTheDocument();
 
-    // assert — the next-game card points at it
-    const teaser = screen.getByRole('link', { name: /All 2 games in this run/i });
-    expect(teaser).toHaveAttribute('href', '#upcoming-games');
+    // assert — no teaser link: the section is already directly below the card
+    expect(screen.queryByRole('link', { name: /games in this run/i })).toBeNull();
   });
 
   it('shows the no-run empty state rather than hiding the section', async () => {
