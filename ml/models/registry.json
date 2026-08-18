@@ -1293,6 +1293,30 @@
           "bytes": 1164395,
           "sha256": "2fd13615d64ba1d62e33bc903cfa4851ff63b602f2a2dec4e96af9343f28115a"
         }
+      ],
+      "prediction_runs": [
+        {
+          "run_id": 2,
+          "predicted_at": "2026-08-18T02:28:43+00:00",
+          "forecast_cutoff_at": "2026-10-20 00:00:00",
+          "horizon": "early (T-24h)",
+          "horizon_facts": {
+            "horizon_requested": "early (T-24h)",
+            "horizon_measured": "outside every window",
+            "hours_to_tip_min": 1528.521,
+            "hours_to_tip_median": 1627.521,
+            "hours_to_tip_max": 1704.521,
+            "tip_source": "nba_schedule.scheduled_at",
+            "latest_report_at": null,
+            "report_age_hours": null,
+            "report_count": 0,
+            "first_deadline_passed": false
+          },
+          "rows": 122636,
+          "player_games": 1978,
+          "status_overrides": 0,
+          "override_policy": null
+        }
       ]
     }
   ]

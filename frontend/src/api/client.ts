@@ -230,6 +230,10 @@ export async function getSlate(date?: string): Promise<SlateResponse> {
   return {
     date: data.date,
     run: data.run ?? null,
+    // the pool descriptor is what explains the impact numbers, so a response
+    // that predates it (a Lambda caught mid-deploy) degrades to an empty
+    // definition rather than to a page that throws while rendering a footnote.
+    pool: data.pool ?? { key: '', label: '', definition: '', sample_size: 0 },
     games: (data.games ?? []).map((game) => ({ ...game, players: game.players ?? [] })),
   };
 }
