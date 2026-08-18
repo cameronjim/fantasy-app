@@ -27,24 +27,34 @@ import pytest
 
 from run_scraper import (
     GAME_LOG_CORRECTION_WINDOW_DAYS,
+    PLAYER_LOG_DATE_INDEX,
+    ROSTER_SNAPSHOT_SOURCE,
+    SEASON,
+    TEAM_LOG_DATE_INDEX,
     V2_INACTIVE_UNRELIABLE_FROM,
+    _parse_args,
     box_score_violations,
     v2_inactive_is_unreliable,
     build_player_game_log_row,
     build_team_game_log_row,
     derive_game_status_rows,
     game_log_fetch_from,
+    in_season,
     is_write_statement,
     normalize_inactive_rows,
     normalize_injury_status,
     parse_game_date,
     parse_matchup,
     parse_minutes,
+    plan_roster_snapshot,
     plan_stint_change,
     schedule_rows_from_league_schedule,
     schedule_rows_from_team_logs,
+    season_end_date,
     season_start_date,
     season_type_from_game_id,
+    split_rows_on_season_boundary,
+    supplement_player_log_rows,
 )
 
 
@@ -215,6 +225,8 @@ class TestParseGameDate:
             ("2024-10-22T00:00:00", date(2024, 10, 22)),
             ("OCT 22, 2024", date(2024, 10, 22)),
             ("10/22/2024", date(2024, 10, 22)),
+            # scheduleleaguev2 gameDate for the 2026-27 season
+            ("10/22/2026 00:00:00", date(2026, 10, 22)),
             (date(2024, 10, 22), date(2024, 10, 22)),
         ],
     )
@@ -581,6 +593,48 @@ class TestBuildPlayerGameLogRow:
         # act + assert
         assert build_player_game_log_row(raw, "2024-25", None) is None
 
+    def test_a_leaguegamelog_row_maps_with_its_own_source_tag(self):
+        # arrange: leaguegamelog's player mode has no SEASON_YEAR and reports
+        # whole minutes, but shares every other column this builder reads
+        raw = dict(PLAYER_GAME_LOG_ROW, MIN=34)
+        del raw["SEASON_YEAR"]
+
+        # act
+        row = build_player_game_log_row(raw, "2024-25", 7, source="leaguegamelog")
+
+        # assert
+        assert row[2] == "2024-25"  # season fell back to the argument
+        assert row[10] == pytest.approx(34.0)
+        assert row[25] == "leaguegamelog"
+
+
+class TestSupplementPlayerLogRows:
+    def test_only_missing_keys_are_taken_from_the_league_log(self):
+        # arrange: playergamelogs returned Tatum; leaguegamelog returned Tatum
+        # (whole minutes) plus a zero-minute appearance it alone reports —
+        # modelled on Dennis Schröder's 0-minute game in 0022200140
+        primary = [build_player_game_log_row(PLAYER_GAME_LOG_ROW, "2024-25", 7)]
+        zero_minute = dict(
+            PLAYER_GAME_LOG_ROW, PLAYER_ID=203471, PLAYER_NAME="Dennis Schröder",
+            MIN=0, PTS=0, FGM=0, FGA=0,
+        )
+        league = [dict(PLAYER_GAME_LOG_ROW, MIN=34), zero_minute]
+
+        # act
+        supplements = supplement_player_log_rows(primary, league, "2024-25", 7)
+
+        # assert: Tatum's league-log copy is NOT taken (playergamelogs wins on
+        # precision), the zero-minute appearance is
+        assert len(supplements) == 1
+        assert supplements[0][0] == "203471"
+        assert supplements[0][10] == pytest.approx(0.0)
+        assert supplements[0][25] == "leaguegamelog"
+
+    def test_duplicate_league_rows_are_taken_once(self):
+        row = dict(PLAYER_GAME_LOG_ROW, MIN=0)
+        supplements = supplement_player_log_rows([], [row, dict(row)], "2024-25", None)
+        assert len(supplements) == 1
+
 
 class TestBuildTeamGameLogRow:
     def test_maps_the_away_side(self):
@@ -630,6 +684,44 @@ class TestScheduleFromTeamLogs:
         assert rows[0]["away_team_id"] == "1610612752"
         assert rows[0]["home_team_id"] is None
         assert rows[0]["home_team_abbr"] == "BOS"
+
+    def test_a_neutral_site_game_keeps_both_teams(self):
+        # arrange: neutral-site games (NBA Cup semifinals, Mexico City, Paris)
+        # report an "@" matchup for BOTH teams — modelled on the real rows for
+        # 0022400147, where the second away claim used to overwrite the first
+        # and the losing side vanished from the schedule row entirely
+        neutral = [
+            dict(TEAM_GAME_LOG_ROWS[0], GAME_ID="0022400147", MATCHUP="MIA @ WAS",
+                 TEAM_ID=1610612748, TEAM_ABBREVIATION="MIA", GAME_DATE="2024-11-02"),
+            dict(TEAM_GAME_LOG_ROWS[1], GAME_ID="0022400147", MATCHUP="WAS @ MIA",
+                 TEAM_ID=1610612764, TEAM_ABBREVIATION="WAS", GAME_DATE="2024-11-02"),
+        ]
+
+        # act
+        rows = schedule_rows_from_team_logs(neutral, "2024-25")
+
+        # assert: which slot is which is arbitrary here, but BOTH teams must be
+        # present — a missing side means every join on (game, team) drops it
+        assert len(rows) == 1
+        game = rows[0]
+        assert {game["home_team_id"], game["away_team_id"]} == {
+            "1610612748", "1610612764",
+        }
+        assert {game["home_team_abbr"], game["away_team_abbr"]} == {"MIA", "WAS"}
+
+    def test_a_double_home_claim_also_keeps_both_teams(self):
+        # the mirror-image defect: both rows claiming "vs." must not collide
+        both_home = [
+            dict(TEAM_GAME_LOG_ROWS[0], MATCHUP="BOS vs. NYK"),
+            dict(TEAM_GAME_LOG_ROWS[1], MATCHUP="NYK vs. BOS"),
+        ]
+
+        rows = schedule_rows_from_team_logs(both_home, "2024-25")
+
+        game = rows[0]
+        assert {game["home_team_id"], game["away_team_id"]} == {
+            "1610612738", "1610612752",
+        }
 
 
 class TestScheduleFromLeagueSchedule:
@@ -722,3 +814,246 @@ class TestV2InactiveReliability:
 
     def test_old_seasons_still_use_v2_freely(self):
         assert v2_inactive_is_unreliable(date(2023, 3, 1)) is False
+
+
+# --- season boundary --------------------------------------------------------
+
+
+class TestSeasonWindow:
+    """The July 1 - June 30 window that decides which season a game belongs to.
+
+    The two bounds have to partition the calendar with no gap and no overlap, or
+    a game on the seam belongs to two seasons or to none.
+    """
+
+    def test_start_is_july_first_of_the_first_year(self):
+        assert season_start_date("2026-27") == date(2026, 7, 1)
+
+    def test_end_is_june_thirtieth_of_the_second_year(self):
+        assert season_end_date("2026-27") == date(2027, 6, 30)
+
+    def test_consecutive_seasons_tile_the_calendar_without_a_gap(self):
+        # the day after one season ends is the day the next one starts
+        assert season_end_date("2025-26") + timedelta(days=1) == season_start_date("2026-27")
+
+    def test_a_game_inside_the_window_is_in_season(self):
+        assert in_season(date(2026, 10, 20), "2026-27") is True
+        assert in_season(date(2027, 4, 11), "2026-27") is True
+
+    def test_a_game_from_the_previous_season_is_not(self):
+        # the exact confusion the guard exists to catch: an April 2026 game
+        # returned by a 2026-27 request
+        assert in_season(date(2026, 4, 12), "2026-27") is False
+
+    def test_a_game_from_the_next_season_is_not(self):
+        assert in_season(date(2027, 10, 20), "2026-27") is False
+
+    def test_an_unknown_date_is_never_in_season(self):
+        # a row we cannot place must not be labelled with whichever season was
+        # asked for; that is the mislabelling the guard exists to prevent
+        assert in_season(None, "2026-27") is False
+
+
+class TestSeasonBoundaryGuard:
+    """No row dated inside season X-1 may be written by a season-X sync.
+
+    build_player_game_log_row stamps the REQUESTED season onto any row whose own
+    SEASON_YEAR is missing, so an out-of-range row is not merely wrong: it is
+    stored under a season it was never played in, and the truth layer then holds
+    the same game twice.
+    """
+
+    @staticmethod
+    def _player_row(game_date):
+        row = list(build_player_game_log_row(PLAYER_GAME_LOG_ROW, "2026-27", None))
+        row[PLAYER_LOG_DATE_INDEX] = game_date
+        return tuple(row)
+
+    def test_rows_inside_the_season_are_kept(self):
+        rows = [self._player_row(date(2026, 10, 20)), self._player_row(date(2027, 3, 1))]
+
+        inside, outside = split_rows_on_season_boundary(
+            rows, "2026-27", PLAYER_LOG_DATE_INDEX
+        )
+
+        assert inside == rows
+        assert outside == []
+
+    def test_a_previous_season_row_is_split_out_not_written(self):
+        keep = self._player_row(date(2026, 10, 20))
+        stray = self._player_row(date(2026, 4, 12))  # a 2025-26 game
+
+        inside, outside = split_rows_on_season_boundary(
+            [keep, stray], "2026-27", PLAYER_LOG_DATE_INDEX
+        )
+
+        assert inside == [keep]
+        assert outside == [stray]
+
+    def test_a_next_season_row_is_split_out_too(self):
+        stray = self._player_row(date(2027, 10, 21))
+
+        inside, outside = split_rows_on_season_boundary(
+            [stray], "2026-27", PLAYER_LOG_DATE_INDEX
+        )
+
+        assert inside == []
+        assert outside == [stray]
+
+    def test_the_team_log_date_index_finds_the_date_column(self):
+        row = build_team_game_log_row(TEAM_GAME_LOG_ROWS[0], "2024-25", None)
+
+        assert isinstance(row[TEAM_LOG_DATE_INDEX], date)
+
+        inside, outside = split_rows_on_season_boundary(
+            [row], "2024-25", TEAM_LOG_DATE_INDEX
+        )
+        assert inside == [row]
+        assert outside == []
+
+    def test_an_empty_season_partitions_to_two_empty_lists(self):
+        # the preseason case: nothing fetched, nothing kept, nothing refused
+        assert split_rows_on_season_boundary(
+            [], "2026-27", PLAYER_LOG_DATE_INDEX
+        ) == ([], [])
+
+
+# --- roster snapshot --------------------------------------------------------
+
+
+SNAPSHOT_DAY = date(2026, 9, 15)
+LAL = "1610612747"
+BOS = "1610612738"
+GSW = "1610612744"
+
+
+class TestPlanRosterSnapshot:
+    """The offseason patch for a stint table that can only learn from game logs.
+
+    A trade in July is invisible to the game-log planner until the player has
+    APPEARED for his new team, which is October at the earliest. Everything below
+    pins what a roster page is and is not allowed to assert.
+    """
+
+    def test_a_player_already_on_the_right_team_is_no_change(self):
+        changes = plan_roster_snapshot(
+            {"201939": GSW}, {"201939": (GSW, date(2025, 10, 21))}, SNAPSHOT_DAY
+        )
+
+        assert changes == []
+
+    def test_a_moved_player_opens_a_new_stint_on_the_snapshot_date(self):
+        changes = plan_roster_snapshot(
+            {"201939": LAL}, {"201939": (GSW, date(2025, 10, 21))}, SNAPSHOT_DAY
+        )
+
+        assert len(changes) == 1
+        assert changes[0]["player_id"] == "201939"
+        assert changes[0]["open_team_id"] == LAL
+        assert changes[0]["open_valid_from"] == SNAPSHOT_DAY
+
+    def test_the_old_stint_closes_the_day_before_the_snapshot(self):
+        # NOT on his last game with the old team: we observed that he is on the
+        # new roster today and never observed when he left the old one. Closing
+        # at the last game would assert a transaction date nobody saw.
+        changes = plan_roster_snapshot(
+            {"201939": LAL}, {"201939": (GSW, date(2025, 10, 21))}, SNAPSHOT_DAY
+        )
+
+        assert changes[0]["close_team_id"] == GSW
+        assert changes[0]["close_valid_from"] == date(2025, 10, 21)
+        assert changes[0]["close_valid_to"] == SNAPSHOT_DAY - timedelta(days=1)
+
+    def test_a_stint_never_closes_before_it_opened(self):
+        # a snapshot taken the same day a stint opened yields a zero-length
+        # stint, not a negative one
+        changes = plan_roster_snapshot(
+            {"201939": LAL}, {"201939": (GSW, SNAPSHOT_DAY)}, SNAPSHOT_DAY
+        )
+
+        assert changes[0]["close_valid_to"] == SNAPSHOT_DAY
+        assert changes[0]["close_valid_to"] >= changes[0]["close_valid_from"]
+
+    def test_a_player_with_no_open_stint_only_opens_one(self):
+        # a rookie, or any player the game-log-derived table has never seen
+        changes = plan_roster_snapshot({"1642268": BOS}, {}, SNAPSHOT_DAY)
+
+        assert len(changes) == 1
+        assert changes[0]["close_team_id"] is None
+        assert changes[0]["close_valid_from"] is None
+        assert changes[0]["close_valid_to"] is None
+        assert changes[0]["open_team_id"] == BOS
+
+    def test_a_player_missing_from_every_roster_is_left_open(self):
+        # absence has two indistinguishable causes - unsigned, or one team's
+        # fetch failed - so closing on absence would turn one HTTP error into a
+        # whole roster of wrongly-ended stints
+        changes = plan_roster_snapshot(
+            {}, {"201939": (GSW, date(2025, 10, 21))}, SNAPSHOT_DAY
+        )
+
+        assert changes == []
+
+    def test_several_players_are_planned_independently(self):
+        changes = plan_roster_snapshot(
+            {"1": LAL, "2": BOS, "3": GSW},
+            {"1": (GSW, date(2025, 11, 1)), "2": (BOS, date(2025, 11, 1))},
+            SNAPSHOT_DAY,
+        )
+
+        moved = {c["player_id"]: c for c in changes}
+        assert set(moved) == {"1", "3"}   # 2 was already on BOS
+        assert moved["1"]["close_team_id"] == GSW
+        assert moved["3"]["close_team_id"] is None
+
+    def test_the_plan_is_idempotent_once_applied(self):
+        first = plan_roster_snapshot(
+            {"201939": LAL}, {"201939": (GSW, date(2025, 10, 21))}, SNAPSHOT_DAY
+        )
+        applied = {"201939": (first[0]["open_team_id"], first[0]["open_valid_from"])}
+
+        assert plan_roster_snapshot({"201939": LAL}, applied, SNAPSHOT_DAY) == []
+
+    def test_the_source_label_is_distinct_from_the_game_log_one(self):
+        # a game-log stint is an observation, a snapshot stint is a declaration;
+        # a query that cannot tell them apart cannot say which it has
+        assert ROSTER_SNAPSHOT_SOURCE == "roster_snapshot"
+        assert ROSTER_SNAPSHOT_SOURCE != "playergamelogs"
+
+
+# --- season as a CLI concern ------------------------------------------------
+
+
+class TestSeasonCli:
+    """--season replaces editing the SEASON constant to roll the season over."""
+
+    def test_season_defaults_to_the_module_constant(self):
+        assert _parse_args([]).season == SEASON
+
+    def test_season_can_be_overridden(self):
+        assert _parse_args(["--season", "2026-27"]).season == "2026-27"
+
+    def test_sync_truth_and_roster_snapshot_are_off_by_default(self):
+        args = _parse_args([])
+        assert args.sync_truth is False
+        assert args.roster_snapshot is False
+
+    def test_the_opening_week_command_parses(self):
+        args = _parse_args(["--dev", "--sync-truth", "--season", "2026-27"])
+
+        assert args.target == "dev"
+        assert args.sync_truth is True
+        assert args.season == "2026-27"
+
+    def test_the_roster_snapshot_command_parses_with_dry_run(self):
+        args = _parse_args(
+            ["--dev", "--roster-snapshot", "--season", "2026-27", "--dry-run"]
+        )
+
+        assert args.roster_snapshot is True
+        assert args.season == "2026-27"
+        assert args.dry_run is True
+
+    def test_the_backfill_to_season_default_is_unchanged(self):
+        # --season must not have quietly become --to; they are different bounds
+        assert _parse_args(["--season", "2026-27"]).to_season == SEASON
