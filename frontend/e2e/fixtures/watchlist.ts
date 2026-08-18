@@ -146,7 +146,7 @@ export function watchlistFixture(params: URLSearchParams): WatchlistResponse {
           key: 'slate',
           label: "Each night's slate",
           definition:
-            "every player the run projects for a date, across all of that date's games — each night in the window is scored against its own slate",
+            "every player the run projects for a date, across all of that date's games; each night in the window is scored against its own slate",
           sample_size: 1838,
         }
       : {

@@ -163,7 +163,7 @@ const MyProfilePanel = () => {
             maxLength={50}
             autoComplete="username"
           />
-          <p className="text-xs opacity-40 mt-1">3–50 characters. Must be unique.</p>
+          <p className="text-xs opacity-40 mt-1">3-50 characters. Must be unique.</p>
         </div>
 
         <div>

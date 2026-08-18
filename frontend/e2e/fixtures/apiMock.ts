@@ -159,6 +159,19 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<void>
     route.fulfill({ json: opts.waiverSuggestions ?? fallback });
   });
 
+  // historical seasons default to "not imported yet", the same as production
+  // before the manual backfill: the season list is empty (the History page
+  // shows its own empty state) and a career lookup 404s, which is exactly what
+  // `PlayerCareerSection` treats as "render nothing". One handler rather than
+  // two routes so this never depends on Playwright's route precedence.
+  await page.route('**/api/history/**', (route) => {
+    if (new URL(route.request().url()).pathname.endsWith('/history/seasons')) {
+      route.fulfill({ json: { seasons: [] } });
+      return;
+    }
+    route.fulfill({ status: 404, json: { error: 'Not found' } });
+  });
+
   // 2K ratings surfaces default to "not imported yet": the ratings page shows
   // its empty state and the player modal's 2K badge stays hidden.
   await page.route('**/api/ratings2k/by-player-name*', (route) =>

@@ -98,7 +98,7 @@ export const PlayerModal = ({ player, onClose }: PlayerModalProps) => {
           <div className={`${injuryAlertClass(player.injury_status)} mb-4 py-2`}>
             <span className="text-xs font-bold uppercase">{player.injury_status.replace(/_/g, ' ')}</span>
             {player.injury_detail && (
-              <span className="text-xs ml-2 opacity-80">— {player.injury_detail}</span>
+              <span className="text-xs ml-2 opacity-80">· {player.injury_detail}</span>
             )}
           </div>
         )}

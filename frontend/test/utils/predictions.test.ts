@@ -68,10 +68,10 @@ describe('statCellDisplay', () => {
     // assert
     expect(cell.primary).toBe('36.2');
     expect(cell.primarySource).toBe('p50');
-    expect(cell.band).toBe('28.5–43.5');
+    expect(cell.band).toBe('28.5-43.5');
     expect(cell.unconditional).toBe('33.2');
     expect(cell.hint).toMatch(/if he plays/i);
-    expect(cell.hint).toMatch(/chance of sitting/i);
+    expect(cell.hint).toMatch(/chance he sits/i);
   });
 
   it('falls back to the expected value when the run stores no quantiles', () => {
@@ -88,7 +88,7 @@ describe('statCellDisplay', () => {
     expect(cell.primary).toBe('9.1');
     expect(cell.primarySource).toBe('expected');
     expect(cell.band).toBeNull();
-    expect(cell.hint).toMatch(/average/);
+    expect(cell.hint).toMatch(/AST if he plays: 9\.1/);
   });
 
   it('drops a half-populated band rather than rendering a one-sided interval', () => {

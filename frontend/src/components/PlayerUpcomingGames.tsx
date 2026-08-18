@@ -60,9 +60,9 @@ export const PlayerUpcomingGames = ({ data }: PlayerUpcomingGamesProps): JSX.Ele
             )}
           </div>
           <p className="text-xs opacity-50 mt-0.5">
-            Every game the latest model run covers, earliest first. Stat lines are what he&apos;d
-            produce <span className="font-semibold">if he plays</span>; the availability badge is a
-            model probability, not an official injury designation.
+            Every projected game, earliest first. Stat lines assume{' '}
+            <span className="font-semibold">he plays</span>; the badge is a model estimate, not an
+            official injury designation.
           </p>
         </div>
 
@@ -70,16 +70,14 @@ export const PlayerUpcomingGames = ({ data }: PlayerUpcomingGamesProps): JSX.Ele
           <div className="py-8 text-center">
             <p className="text-sm font-semibold">No prediction run published yet</p>
             <p className="text-xs opacity-60 mt-1 max-w-md mx-auto">
-              This section fills in once a model run completes. Nothing else on the page depends
-              on it.
+              Fills in once a model run completes.
             </p>
           </div>
         ) : games.length === 0 ? (
           <div className="py-8 text-center">
             <p className="text-sm font-semibold">No upcoming games for this player in the current run</p>
             <p className="text-xs opacity-60 mt-1 max-w-md mx-auto">
-              The run below completed, but it has no scheduled games for him — he may not have been
-              on a roster inside the window it scored.
+              The run completed, but has no scheduled games for him.
             </p>
           </div>
         ) : (
@@ -135,9 +133,9 @@ export const PlayerUpcomingGames = ({ data }: PlayerUpcomingGamesProps): JSX.Ele
             </div>
 
             <p className="text-[10px] opacity-50">
-              Each cell: the median if he plays, the 10th–90th percentile band under it, and{' '}
-              <span className="font-semibold">sched</span> — the same number with the chance of
-              sitting already priced in.
+              Each cell: the median if he plays, its likely range under it, and{' '}
+              <span className="font-semibold">sched</span>, the same number counting the chance he
+              sits.
             </p>
 
             <p className="text-[10px] opacity-40">
@@ -147,9 +145,8 @@ export const PlayerUpcomingGames = ({ data }: PlayerUpcomingGamesProps): JSX.Ele
                   ? `projected ${formatTimestamp(run.predicted_at)}`
                   : null,
                 formatTimestamp(run.forecast_cutoff_at)
-                  ? `knew nothing after ${formatTimestamp(run.forecast_cutoff_at)}`
+                  ? `data through ${formatTimestamp(run.forecast_cutoff_at)}`
                   : null,
-                run.horizon ? `horizon ${run.horizon}` : null,
               ]
                 .filter(Boolean)
                 .join(' · ')}
