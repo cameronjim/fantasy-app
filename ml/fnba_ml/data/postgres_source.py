@@ -36,6 +36,7 @@ from .schema import (
     STAT_COLS,
     STATUS_COLS,
     TEAM_LOG_COLS,
+    TEAM_LOG_OPTIONAL_COLS,
     normalise_dates,
     normalise_ids,
     require_columns,
@@ -78,23 +79,38 @@ ORDER BY pgl.nba_player_id, pgl.game_date
 # tgl.minutes is the team's TOTAL minutes for the game - 240 in regulation, more
 # in overtime - which is why the usage formula divides it by 5 rather than
 # hard-coding 48.
+#
+# FG3A joined for the P2 matchup family (2026-08-19): the "weak against threes"
+# signal is the opponent's three-point ATTEMPTS per 100 possessions, and attempts
+# rather than makes is the whole point - makes conflate the opponent's shooting luck
+# with this team's willingness to concede the shot. Optional downstream
+# (``data.schema.TEAM_LOG_OPTIONAL_COLS``); required here, because postgres has it.
+#
+# THE JOIN TO nba_schedule WAS REMOVED at the same time, and it is a robustness fix
+# rather than a behaviour change on a complete database. ``team_game_logs`` carries
+# its own ``season``, ``season_type`` and ``game_date``, so the join was reading two
+# tables to get one table's own columns - and where ``nba_schedule`` is
+# incompletely backfilled (the dev database holds 2024-25 onward only) an INNER join
+# silently dropped every team-game of the earlier seasons. On a database where both
+# tables are complete the two forms return identical rows; where they are not, only
+# this form returns the rows that exist. The cutoff filter moves with it, from
+# ``s.game_date`` to ``tgl.game_date``.
 TEAM_LOGS_SQL = """
 SELECT
     tgl.team_id            AS "TEAM_ID",
     tgl.nba_game_id        AS "GAME_ID",
-    s.season               AS "SEASON",
-    s.game_date            AS "GAME_DATE",
+    tgl.season             AS "SEASON",
+    tgl.game_date          AS "GAME_DATE",
     tgl.pts                AS "PTS",
     tgl.minutes            AS "MIN",
     tgl.fga                AS "FGA",
     tgl.fta                AS "FTA",
-    tgl.tov                AS "TOV"
+    tgl.tov                AS "TOV",
+    tgl.fg3a               AS "FG3A"
 FROM team_game_logs tgl
-JOIN nba_schedule s
-  ON s.nba_game_id = tgl.nba_game_id
-WHERE s.season = ANY(%(seasons)s)
-  AND s.season_type = ANY(%(season_types)s)
-ORDER BY tgl.team_id, s.game_date
+WHERE tgl.season = ANY(%(seasons)s)
+  AND tgl.season_type = ANY(%(season_types)s)
+ORDER BY tgl.team_id, tgl.game_date
 """
 
 # reference data, not a per-game fact: one row per player, the comma-joined
@@ -285,9 +301,10 @@ class PostgresSource:
         return df.reset_index(drop=True)
 
     def load_team_game_logs(self) -> pd.DataFrame:
-        df = normalise_ids(normalise_dates(self._read(self._sql(TEAM_LOGS_SQL, "s.game_date"))))
-        for col in ("PTS", "MIN", "FGA", "FTA", "TOV"):
-            df[col] = pd.to_numeric(df[col], errors="coerce").astype(float)
+        df = normalise_ids(normalise_dates(self._read(self._sql(TEAM_LOGS_SQL, "tgl.game_date"))))
+        for col in ("PTS", "MIN", "FGA", "FTA", "TOV", *TEAM_LOG_OPTIONAL_COLS):
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").astype(float)
         require_columns(df, TEAM_LOG_COLS, "canonical team log")
         return df.reset_index(drop=True)
 

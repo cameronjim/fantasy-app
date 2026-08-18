@@ -89,6 +89,7 @@ import numpy as np
 import pandas as pd
 
 from .config import (
+    CANDIDATE_FEATURE_SET,
     CHAMPIONS,
     COHERENCE_CONSTRAINTS,
     COMPOSITION_PARITY_TOLERANCE,
@@ -111,6 +112,8 @@ from .config import (
     TEAMMATE_FEATURE_COLS,
     TEAMMATE_ORACLE_COLS,
     TIER_ORDER,
+    V4_DESCRIPTIVE_COHORTS,
+    V4_DESCRIPTIVE_COHORT_ORDER,
 )
 from .features import available_features, feature_set_columns
 from .models import (
@@ -228,17 +231,55 @@ def cohort_masks(valid: pd.DataFrame) -> list[tuple[str, np.ndarray]]:
     a row whose cohort column is null belongs to no event cohort. It is not
     silently swept into the control - "we do not know whether anyone was out" and
     "nobody was out" are different facts.
+
+    P2 ADDS TWO DESCRIPTIVE COHORTS (``config.V4_DESCRIPTIVE_COHORTS``) and they are
+    APPENDED, not merged into ``EVENT_COHORTS``, which is frozen by
+    ``tests/test_prospective_freeze.py::test_cohort_definitions_have_not_drifted``.
+    They appear only when their column is on the frame, so a v3 dataset produces
+    byte-identical cohort output to before P2 existed.
+
+    ONE OF THEM IS A QUANTILE CUT, which is a different kind of threshold from the
+    other seven and worth stating. "blowout_prob top decile" has to mean the same
+    SHARE of rows in every origin, and a fixed probability threshold would not - the
+    classifier's output distribution shifts with the league's own blowout rate, which
+    drifted from 27% to 37% across the four seasons. The quantile is taken WITHIN the
+    validation frame it is describing, so the cohort is 10% of every origin's rows by
+    construction.
     """
     out: list[tuple[str, np.ndarray]] = []
     if "MIN_TIER" in valid.columns:
         tiers = valid["MIN_TIER"].to_numpy()
         out.extend((tier, tiers == tier) for tier in TIER_ORDER)
-    for label, column, comparison, threshold in EVENT_COHORTS:
+    for label, column, comparison, threshold in (
+        *EVENT_COHORTS, *V4_DESCRIPTIVE_COHORTS
+    ):
         if column not in valid.columns:
             continue
         values = pd.to_numeric(valid[column], errors="coerce").to_numpy(dtype=float)
         known = np.isfinite(values)
-        mask = (values >= threshold) if comparison == ">=" else (values < threshold)
+        if comparison == "quantile>=":
+            if not known.any():
+                continue
+            cut = float(np.quantile(values[known], threshold))
+            mask = values >= cut
+            # A DEGENERATE QUANTILE IS NOT A COHORT. If the column is constant -
+            # which ``blowout_prob`` is whenever every cross-fit block fell back to
+            # ``BLOWOUT_PRIOR``, as happens on a small fixture set - then ``>= q90``
+            # selects every row and the "top decile" table would silently be a second
+            # copy of the ALL row. Skipping with a warning is the honest outcome: the
+            # cohort is UNDEFINED on this frame, which is a different fact from empty.
+            share = float((mask & known).sum()) / float(known.sum())
+            if share > 0.5:
+                log.warning(
+                    "cohort %r would cover %.0f%% of rows because %s is (near-)"
+                    "constant on this frame; SKIPPED rather than reported as a "
+                    "duplicate of ALL", label, 100.0 * share, column,
+                )
+                continue
+        elif comparison == ">=":
+            mask = values >= threshold
+        else:
+            mask = values < threshold
         out.append((label, mask & known))
     return out
 
@@ -1433,7 +1474,8 @@ def feature_set_comparison(
         wide["delta_pct"] = wide["delta"] / wide["before"]
         wide = wide[["n", "before", "after", "delta", "delta_pct"]]
 
-    order = ["ALL", *TIER_ORDER, *EVENT_COHORT_ORDER]
+    order = ["ALL", *TIER_ORDER, *EVENT_COHORT_ORDER,
+             *V4_DESCRIPTIVE_COHORT_ORDER]
     rank = {label: i for i, label in enumerate(order)}
     wide = wide.reset_index()
     wide["_order"] = wide["segment"].map(rank).fillna(len(order))
@@ -1534,10 +1576,23 @@ def feature_set_bracket(
         wide["survived"] = np.where(
             oracle_delta.abs() > 1e-9, honest_delta / oracle_delta, np.nan
         )
-        wide = wide[["n", reference, honest, oracle,
-                     "honest_pct", "oracle_pct", "survived"]]
+        columns = ["n", reference, honest, oracle,
+                   "honest_pct", "oracle_pct", "survived"]
+        # P2's candidate, if this bracket ran it. Reported RELATIVE TO THE SERVED SET
+        # rather than to v1, and that is the whole point of the extra column: v4's
+        # question is not "is teammate context worth anything" - v1 is the reference
+        # for that - but "does the game-context family buy anything ON TOP OF the
+        # contract that ships". A v4-vs-v1 number would flatter the candidate by
+        # crediting it with the v3 gain it inherits for free.
+        if CANDIDATE_FEATURE_SET in wide.columns:
+            wide["candidate_pct_vs_served"] = (
+                wide[CANDIDATE_FEATURE_SET] / wide[honest] - 1.0
+            )
+            columns.extend([CANDIDATE_FEATURE_SET, "candidate_pct_vs_served"])
+        wide = wide[columns]
 
-    order = ["ALL", *TIER_ORDER, *EVENT_COHORT_ORDER]
+    order = ["ALL", *TIER_ORDER, *EVENT_COHORT_ORDER,
+             *V4_DESCRIPTIVE_COHORT_ORDER]
     rank = {label: i for i, label in enumerate(order)}
     wide = wide.reset_index()
     wide["_order"] = wide["segment"].map(rank).fillna(len(order))

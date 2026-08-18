@@ -61,6 +61,407 @@ OPP_FORM_WINDOW: int = 10
 OPP_FORM_MIN_PERIODS: int = 3
 UNCOND_STATS: tuple[str, ...] = ("PTS", "MIN", "AST")
 
+# ---------------------------------------------------------------------------
+# P2: the v4 CANDIDATE family - matchup, blowout, season stakes
+# ---------------------------------------------------------------------------
+# NOTHING BELOW IS SERVED. The frozen configuration is `prospective_2026_27_v1`
+# (FEATURE_VERSION v3, 51 columns, artifact 20260818), and MODEL.md 13.2 item 6
+# makes any FEATURE_COLS change a re-freeze trigger. So this block defines a
+# CANDIDATE feature contract that lives alongside the frozen one: it adds names,
+# it adds one entry to FEATURE_SETS, and it does not touch FEATURE_COLS,
+# FEATURE_VERSION or any PROSPECTIVE_* constant. `tests/test_prospective_freeze.py`
+# stays green by construction, which is the property that lets the candidate be
+# developed and measured without ending the v1 prospective test.
+#
+# THE ONE-LINE SUMMARY OF WHAT THESE FEATURES ARE FOR. v3 describes the PLAYER and
+# (through the teammate family) his ROSTER. It says almost nothing about the GAME:
+# how fast it will be played, whether it will be competitive, and whether either
+# team still has anything to win. Those three are exactly the situations where the
+# minutes model is most wrong - a starter's 34 minutes become 24 in a 25-point
+# blowout, and a high-minute veteran on a team that is 14 games under .500 in April
+# is a rest candidate whose availability the model rates at 0.9.
+
+# ---- A. matchup / possession environment ----
+# the rolling window for every team-level rate. 15 team-games is roughly six
+# weeks: long enough that a single overtime game or one 140-point night does not
+# define a team's pace, short enough to move when a rotation or a coach changes.
+# HAND-SET on the same reasoning as OPP_FORM_WINDOW (10) rather than tuned - the
+# hyperparameter budget in this phase went to the blowout model, and a pace window
+# selected on validation rows would be selecting on the thing being reported.
+PACE_WINDOW: int = 15
+
+# a team-level rate needs a few games behind it before it is a measurement rather
+# than a rounding of one box score. 5 rather than OPP_FORM_MIN_PERIODS' 3 because a
+# rating is a RATIO of two noisy totals and its variance at n = 3 is worse than a
+# points-allowed mean's.
+PACE_MIN_PERIODS: int = 5
+
+# THE POSSESSION ESTIMATE, and the documented deviation from the textbook formula.
+# The standard box-score approximation is
+#
+#     poss ~= FGA + 0.44 * FTA - OREB + TOV
+#
+# and `team_game_logs` HAS NO `oreb` COLUMN (verified against the dev schema
+# 2026-08-19: the table carries `reb` only, with no offensive/defensive split, and
+# no other table in the truth layer carries team OREB either). So this package uses
+# the standard OREB-free fallback
+#
+#     poss ~= FGA + 0.44 * FTA + TOV
+#
+# which is the same formula the v2 usage feature already uses
+# (FT_POSSESSION_WEIGHT's comment states it), so the two are consistent rather than
+# two different notions of a possession. WHAT IT COSTS, stated rather than waved
+# past: offensive rebounds extend a possession, so the fallback OVERCOUNTS
+# possessions by roughly the team's OREB count - about 10 per game, ~10% of the
+# total. That is a level shift, and a level shift is almost harmless here because
+# every consumer of the number is a RELATIVE comparison between teams (pace
+# percentiles, a defensive rating denominator shared by both sides). It becomes a
+# real error only where teams differ a lot in OREB rate, which is a second-order
+# spread on top of a first-order one. Flagged as a **[GAP]**: an upstream OREB/DREB
+# split would let this use the textbook form, and the fix belongs in the scraper.
+POSSESSION_USES_OREB: bool = False
+
+# ---- B. the pregame blowout model ----
+# a blowout is a game whose final margin is at least this many points. 15 is the
+# conventional line and the data says it is also the useful one. MEASURED over all
+# 9,840 team-games of the four-season truth layer (mean |margin| 12.45, median 10):
+#
+#     |margin| >=  5   80.1%      >= 15   32.6%
+#     |margin| >= 10   53.0%      >= 20   19.7%
+#     |margin| >= 12   44.0%      >= 25   11.2%
+#
+# 10 is a coin flip and therefore names nothing; 20 leaves 1,900 positives to fit a
+# classifier on and stops describing the games where a starter loses six minutes
+# rather than sixteen. 15 keeps a third of the rows positive and is far enough out
+# that the minutes truncation the label stands in for has actually happened. The
+# other rates are recorded here and in MODEL.md section 15 so the choice can be
+# argued with rather than taken on faith.
+#
+# NOTE the trend across seasons - 26.8% / 32.4% / 34.2% / 37.2% - which is a real
+# league-level drift and one more reason the classifier is cross-fitted forward in
+# time rather than fitted once on the pooled four seasons.
+BLOWOUT_MARGIN: float = 15.0
+
+# a blowout is SYMMETRIC. Both team-games of a game carry the same label, because
+# both benches empty: the losing starters sit because it is lost and the winning
+# starters sit because it is won. Modelling "will my team win by 15" instead would
+# be modelling a different quantity and would need a signed target.
+BLOWOUT_TARGET = "blowout"
+BLOWOUT_MARGIN_COL = "team_margin"
+
+# the cross-fit that keeps the blowout probability out of fold. SAME SCHEME as
+# models.cross_fit_base_probabilities - consecutive calendar-month blocks, each
+# fitted strictly before its own start - and deliberately the same, because a
+# second cross-fit convention in one package is a second thing to get wrong.
+# The row count is what differs: 9,840 team-games against 147,413 player-games, so
+# CROSS_FIT_MIN_TRAIN_ROWS' 5,000 would leave the first ~2.5 seasons on the
+# fallback. One month of team-games is ~430 rows; 400 gates out the genuinely
+# unfittable opening block and nothing else.
+BLOWOUT_CROSS_FIT_MIN_TRAIN_ROWS: int = 400
+
+# the fallback probability for blocks too thin to fit. HAND-SET at roughly the
+# league-wide blowout rate (measured 0.3264 over four seasons, rounded to two
+# figures), and a CONSTANT for exactly the reason CONTEXT_P_PRIOR is one: a mean
+# over the evaluation window would put a little of every future game into every past
+# row. It applies to the opening month only - ~430 of 9,840 team-games.
+BLOWOUT_PRIOR: float = 0.33
+
+# the blowout model's own feature list. pregame-knowable only: the two rolling net
+# ratings and their absolute gap, the two season-to-date win percentages summarised
+# the same way, the pace environment, rest on both sides, home/away. No box-score
+# quantity from the target game appears, which is the property
+# tests/test_matchup_v4.py pins with a peeked negative control.
+#
+# WHY BOTH A GAP AND A SUM of every strength measure. The target is SYMMETRIC
+# (|margin| >= 15 is the same label for both team-games of a game), so a raw own /
+# opponent pair is close to useless on its own: pooled over the dataset every game
+# appears twice with the roles swapped, which forces corr(own, y) == corr(opp, y)
+# exactly. The GAP is the mismatch - the thing that makes a blowout likely - and the
+# SUM is the quality level, which is a different question (two 55-win teams and two
+# 25-win teams have the same gap and do not play the same kind of game). The raw pair
+# is kept anyway because dropping it would be a modelling assumption where the two
+# summaries are a modelling convenience.
+BLOWOUT_MODEL_FEATURES: tuple[str, ...] = (
+    "bo_own_net_rating",
+    "bo_opp_net_rating",
+    "bo_net_rating_gap",
+    "bo_win_pct_gap",
+    "bo_win_pct_sum",
+    "bo_pace_mean",
+    "bo_own_rest_days",
+    "bo_own_is_b2b",
+    "bo_opp_rest_days",
+    "bo_opp_is_b2b",
+    "bo_is_home",
+)
+BLOWOUT_PROB = "blowout_prob"
+BLOWOUT_PROB_CUTOFF = "BLOWOUT_PROB_CUTOFF"
+
+# WHICH ESTIMATOR PRODUCES P(blowout), and this is the one hyperparameter decision
+# in P2 that was actually made on evidence rather than hand-set.
+#
+# SELECTED ON INNER FOLDS ONLY: a time-ordered 70/30 split of every team-game
+# STRICTLY BEFORE 2024-12-01 - the first development origin's validation start - so
+# the selection never touched any origin's validation rows. 3,854 inner-train
+# team-games, 1,652 inner-validation, base rate 0.328. Scored on BRIER, because the
+# column is consumed as a probability and multiplied by minutes_share; a
+# well-ranked but badly calibrated probability would poison the interaction.
+#
+# THE INNER-FOLD TABLE, and it is not a flattering one (Brier skill vs the constant
+# base rate; positive is better):
+#
+#     constant base rate                        0.2223    0.0000
+#     logistic, 11 features                    0.2224   -0.0005
+#     LightGBM 150/7/150                        0.2268   -0.0205
+#     LightGBM 200/15/100                       0.2331   -0.0490
+#     LightGBM 400/31/50 (LGBM_PARAMS default)  0.2707   -0.2180
+#
+# TWO THINGS THIS SAYS AND ONE IT DOES NOT.
+#
+#  1. **The package's default LightGBM configuration is catastrophically wrong for
+#     this problem**, and by a factor nobody would guess: 400 estimators and 31
+#     leaves over 3,854 rows scores 22% WORSE than a constant. LGBM_PARAMS was tuned
+#     for a 147,413-row player-game frame; a team-game frame is fifteen times
+#     smaller and the same settings memorise it. Reusing a package default across a
+#     fifteen-fold change in sample size is the error, and it is recorded because it
+#     would have shipped silently - the first backfill run produced a blowout_prob
+#     with Brier skill -0.122 and AUC 0.515 and nothing would have failed.
+#  2. **The winner is the regularised logistic**, at parity with a constant
+#     (-0.0005). So the honest statement is that this feature set predicts blowouts
+#     essentially not at all in Brier terms, with a small but real ranking signal:
+#     AUC 0.52 on the inner folds and 0.54 on a four-season in-time split, and the
+#     top decile of |as-of margin gap| contains 41.5% blowouts against 27.1% in the
+#     bottom decile.
+#  3. It does NOT say the feature is worthless in the bracket, and pre-registering
+#     that it is would be deciding the question before measuring it. A weakly
+#     informative probability multiplied by minutes_share can still separate a
+#     starter's downside from a bench player's upside. What it DOES say is that the
+#     ceiling is low, and MODEL.md section 15 records that expectation before the
+#     bracket ran.
+BLOWOUT_MODEL_KIND = "logistic"
+BLOWOUT_MODEL_CHALLENGERS: tuple[str, ...] = ("lightgbm_classifier",)
+
+# the inner-fold selection window and split, as constants so
+# ``matchup.select_blowout_estimator`` reruns exactly the pass that chose the
+# champion above rather than approximately it.
+BLOWOUT_SELECTION_CUTOFF = "2024-12-01"
+BLOWOUT_SELECTION_TRAIN_SHARE: float = 0.70
+
+# ---- C. season stakes ----
+# every team plays 82 regular-season games. A CONSTANT rather than a count off
+# `nba_schedule`, and the reason is a data fact rather than laziness: the dev
+# schedule table holds 2024-25 onward only, while `team_game_logs` holds all four
+# seasons, so a games-remaining feature derived from the schedule would be null on
+# half the dataset. 82 is also exactly right - 2,460 team-game rows per season /
+# 30 teams = 82.0 in every one of the four seasons - and a season that ever ships a
+# different number (a lockout) is a change this constant makes visible.
+REGULAR_SEASON_GAMES: int = 82
+
+# "late season" for the load-management interaction. 15 games remaining is roughly
+# the last five weeks, which is when the reporting on rest decisions starts and when
+# a team's playoff position stops being reachable. HAND-SET; the alternative was a
+# calendar date, which breaks across the four seasons' different start dates.
+LATE_SEASON_GAMES_REMAINING: int = 15
+
+# the CLINCH PROXY, and it is a proxy rather than seed math. True seed math needs
+# the full standings of a team's own conference on every date, which is derivable
+# from team logs but costs a per-date 30-team sort and buys a number that is still
+# not "clinched" without tiebreak rules. Instead:
+#
+#     lockedness = 1(late season) * min(1, |games over .500| / games remaining)
+#
+# reads as "how far from .500 this team is, in units of the games it has left to
+# change it". At 1.0 the remaining schedule cannot move the team back to .500 -
+# which is the honest, tiebreak-free version of "this team's season is decided".
+# It is continuous on purpose: a hard clinched/eliminated flag would throw away the
+# ordering inside the band where the effect is strongest.
+STAKES_LOCKED_RATIO: float = 0.5
+
+# ---- D. start rate, and why it is a proxy ----
+# `player_game_status.started` and `player_game_logs.started` are BOTH unusable, and
+# it is worth writing down which kind of unusable: measured on the dev truth layer
+# 2026-08-19, `player_game_logs.started` is NULL on all 105,253 rows across all four
+# seasons, and `player_game_status.started` is NULL on 52,957 of 74,870 rows and
+# FALSE on the other 21,913 - with ZERO `true` values league-wide. So it is not
+# sparse, it is structurally absent: the league-log source writes None and the
+# box-score path only ever writes the negative case. A rolling mean of that column
+# would be a rolling mean of zero.
+#
+# The proxy: the share of the player's last START_RATE_WINDOW SCHEDULED team-games
+# in which he was among his team's top START_RATE_TOP_N by minutes played. Five is
+# the number of players on the floor at tip, so "top 5 in minutes" is the
+# outcome a start usually produces; it is not the same thing (a sixth man can
+# out-minute a starter) and the column is named for what it measures rather than
+# for what it stands in for. Non-appearances count as 0, exactly as avail_rate_10
+# counts them, because "did not play" is not "started".
+START_RATE_WINDOW: int = 10
+START_RATE_TOP_N: int = 5
+
+# ---- the v4 candidate feature columns, by family ----
+MATCHUP_FEATURE_COLS: list[str] = [
+    # possession environment. own and opponent pace, then the two summaries of the
+    # GAME's total possession count that the task of predicting minutes actually
+    # wants: a fast team hosting a fast team is a different night from either team's
+    # own pace.
+    "own_pace",
+    "opp_pace",
+    "game_pace_mean",
+    "game_pace_product",
+    # strength. the net ratings are here as features in their own right as well as
+    # being the blowout model's inputs - a booster given P(blowout) and nothing else
+    # cannot express "this is a mismatch but a fast one".
+    "own_net_rating",
+    "opp_net_rating",
+    # the REFINEMENT of OPP_DEF_FORM. the v3 column is raw points allowed per game,
+    # which conflates "good defence" with "slow pace". This is per 100 possessions,
+    # which is the thing the phrase means. The old column STAYS in the contract:
+    # removing it would make this a two-variable change and there would be no way to
+    # tell a refinement from a removal.
+    "opp_def_rating",
+    # style. "weak against threes" and "fouls a lot" as two separate rates, both
+    # normalised per 100 possessions so they are not pace in disguise.
+    "opp_fg3a_allowed_per100",
+    "opp_fta_allowed_per100",
+]
+
+# the player's share of a lineup slot's minutes, and the reason it is its own
+# column rather than only an interaction term: it is the quantity BOTH new
+# interactions multiply, and a booster handed only the products cannot recover it.
+# roll10_MIN / (rolling team minutes / 5), so the denominator is ~48 in regulation
+# and larger after overtimes, and the ratio is ~0.7 for a heavy-minutes starter.
+SHARE_FEATURE_COLS: list[str] = ["minutes_share"]
+
+BLOWOUT_FEATURE_COLS: list[str] = [
+    BLOWOUT_PROB,
+    # THE INTERACTION THE OBSERVATION DEMANDS, and the reason it is handed over
+    # rather than left to be discovered. A blowout does not shift minutes in one
+    # direction: starters lose minutes and deep bench players gain them, so the
+    # marginal effect of blowout_prob changes SIGN with minutes_share. A tree can
+    # represent that with a deep enough interaction, and with 400 estimators over 72
+    # features it very often does not. Supplying the product means the model can
+    # learn one coefficient per segment instead of rediscovering the crossing point.
+    "blowout_x_minutes_share",
+]
+
+STAKES_FEATURE_COLS: list[str] = [
+    "team_games_remaining",
+    "team_win_pct",
+    "team_games_over_500",
+    "late_season",
+    # signed: "locked GOOD" (a 1-seed resting stars) and "locked BAD" (a lottery
+    # team shutting a veteran down) are both load management and the model should be
+    # able to tell them apart, because they hit different players.
+    "stakes_late_x_over500",
+    "stakes_lockedness",
+    # the two player-level interactions. a rest candidate is not "a player on a
+    # locked team", it is a HIGH-MINUTE VETERAN on a locked team, and neither factor
+    # alone identifies him.
+    "stakes_x_minutes_share",
+    "stakes_x_veteran",
+]
+
+START_RATE_FEATURE_COLS: list[str] = ["top5_min_share_10"]
+
+V4_FEATURE_COLS: list[str] = (
+    MATCHUP_FEATURE_COLS
+    + SHARE_FEATURE_COLS
+    + BLOWOUT_FEATURE_COLS
+    + STAKES_FEATURE_COLS
+    + START_RATE_FEATURE_COLS
+)
+
+# ---- the candidate contract ----
+# FEATURE_COLS (v3, 51 columns) is UNTOUCHED and remains what the frozen artifact
+# was fitted against. FEATURE_COLS_V4 is defined next to FEATURE_COLS further down
+# this file, because it is `FEATURE_COLS + V4_FEATURE_COLS` and a forward reference
+# would be a second place for the v3 contract to be spelled out.
+#
+# the v4 feature version tag, held as a constant rather than assigned to
+# FEATURE_VERSION. Promoting the candidate means setting FEATURE_VERSION to this
+# value, which is a MODEL.md 13.2 re-freeze trigger and must not happen as a side
+# effect of building the candidate.
+CANDIDATE_FEATURE_VERSION = "v4"
+
+# ---- P2's pre-registered promotion rule ----
+# WRITTEN DOWN BEFORE THE BRACKET RAN. The numbers this block names are the bar; the
+# report states them in its header and then reports whether they were met.
+#
+# THE BAR: a paired 7-day moving-block bootstrap over game dates (the frozen
+# convention from ml/experiments/production_tournament/bootstrap.py, reused rather
+# than reimplemented), 95% CI excluding zero, AND at least P2_PROMOTION_FLOOR pooled
+# relative improvement on EITHER minutes MAE or availability Brier, AND no reported
+# cohort regressing by more than P2_COHORT_REGRESSION_TOLERANCE.
+#
+# WHY 1% AND NOT 2%. The package's standing noise line is ~2% and it is the right
+# bar for promoting a new ESTIMATOR (models.CHAMPIONS) - a different model class in
+# the serving path is a large change and should have to pay for itself largely.
+# This is a FEATURE-SET change to an existing champion: same estimator, same
+# composition, same artifact shape, more columns. The precedent is section 11's v3
+# adoption, which shipped on -1.98% availability Brier and -0.81% minutes MAE and
+# was accepted because it was a construction correctness change measured on
+# identical rows with the same estimator. 1% is that precedent's bar made explicit,
+# and it is stated here rather than chosen after the numbers were seen.
+P2_PROMOTION_FLOOR: float = 0.01
+
+# the endpoints the floor may be cleared on. Exactly two, and they are the two the
+# new features AIM at: minutes (pace, blowout truncation, rest) and availability
+# (load management). Unconditional PTS is REPORTED and is not a promotion gate,
+# because it is downstream of both and would let a minutes win be laundered into a
+# third significant result.
+P2_PROMOTION_ENDPOINTS: tuple[str, ...] = ("minutes_mae", "availability_brier")
+
+# a candidate that wins on average by hurting a segment has not won. the tolerance
+# is one-sided and applies to every cohort in the report, the two new descriptive
+# ones included.
+P2_COHORT_REGRESSION_TOLERANCE: float = 0.01
+
+# ---- the two NEW descriptive cohorts ----
+# EVENT_COHORTS is frozen (MODEL.md 13.3, pinned by test_prospective_freeze) and is
+# not touched. These are additional REPORTING cohorts for the P2 bracket, and they
+# are where the new features have to earn their keep: the games the blowout model
+# says are most likely to be decided early, and the games where a team has nothing
+# left to play for.
+#
+# `blowout_prob` is an as-of, out-of-fold model output, so the top-decile cut is
+# computable at the forecast cutoff - unlike EVENT_COHORTS, which cut on an oracle
+# column deliberately. The threshold is a QUANTILE over the validation frame rather
+# than a constant, so "top decile" means the same share of rows in every origin.
+V4_DESCRIPTIVE_COHORTS: tuple[tuple[str, str, str, float], ...] = (
+    ("v4: blowout_prob top decile", BLOWOUT_PROB, "quantile>=", 0.90),
+    ("v4: stakes-flagged (locked, late)", "stakes_lockedness", ">=", STAKES_LOCKED_RATIO),
+)
+V4_DESCRIPTIVE_COHORT_ORDER: tuple[str, ...] = tuple(
+    label for label, *_ in V4_DESCRIPTIVE_COHORTS
+)
+
+# ---- the DEVELOPMENT origin set for P2 ----
+# ORIGINS is left at five entries, untouched, because `tests/test_teammates_v3.py`
+# pins `len(ORIGINS) == 5` and because every champion in this package was chosen on
+# exactly those five. The sixth origin lives here instead, and the P2 bracket runs
+# on DEV_ORIGINS.
+#
+# THE SIXTH ORIGIN EXISTS TO MEASURE ONE THING: the load-management effect. Every
+# one of the five development origins validates on December, January or February,
+# and the season-stakes features are null-by-construction useful only in the last
+# five weeks. A feature family aimed at March that is evaluated only on January
+# would be evaluated where it cannot help, and its pooled number would be a
+# dilution rather than a measurement - which is why the late-season origin is
+# reported SEPARATELY as well as pooled.
+#
+# WHY 2025 AND NOT 2026, which is the choice that matters. Mar 15 - Apr 12 **2026**
+# is inside the SELECTION HOLDOUT (MODEL.md section 6: Feb-2026 -> Apr-2026, "never
+# used for model selection"). Using it as a development origin would consume the
+# holdout for selection, which is precisely the thing that section says has not
+# happened. Mar 15 - Apr 12 **2025** is in 2024-25, is not the holdout, and carries
+# comparable volume (~3,900 scheduled rows against ~3,800). The 2026 window would
+# have been the more recent data and it is not available for this purpose.
+LATE_SEASON_ORIGIN: tuple[str, str, str] = (
+    "O6 valid=2025-03-15..04-12", "2025-03-15", "2025-04-12",
+)
+# DEV_ORIGINS itself is assembled next to ORIGINS further down, so the two lists sit
+# together and nobody has to grep to find out whether the sixth origin was ADDED or
+# whether one of the five was edited.
+
 # ---- per-minute production rates (the minutes-propagating composition) ----
 # stats served as P(play) x E[minutes | play] x rate. the rate is an EWMA of the
 # per-game ratio stat/minutes over APPEARANCE games with minutes > 0, so a
@@ -485,6 +886,20 @@ BASE_FEATURE_COLS: list[str] = (
 
 FEATURE_COLS: list[str] = BASE_FEATURE_COLS + TEAMMATE_FEATURE_COLS
 
+# ---- the P2 CANDIDATE contract (feature_version v4), not served ----
+# v3 plus the matchup / blowout / stakes / start-rate families, in that order, with
+# the v3 columns kept in their existing positions. Appending rather than
+# interleaving is deliberate: `sha256("\n".join(FEATURE_COLS))` is the frozen
+# contract digest, and a candidate built by reordering the v3 list would make the
+# diff between the two contracts unreadable.
+#
+# THIS LIST IS NOT `FEATURE_COLS`. Nothing in the serving path reads it, no artifact
+# is fitted against it, and `FEATURE_VERSION` is still "v3". Promoting it means
+# assigning it to FEATURE_COLS, bumping FEATURE_VERSION to
+# CANDIDATE_FEATURE_VERSION, retraining, and executing the MODEL.md 13.2 re-freeze -
+# four steps, none of which happen by importing this module.
+FEATURE_COLS_V4: list[str] = FEATURE_COLS + V4_FEATURE_COLS
+
 # ---- the evaluation bracket: three feature sets over identical rows ----
 # the round-2 review's finding, made measurable. v1 is the no-teammate-context
 # floor; v2-oracle is what perfect pre-tipoff lineup information buys (and is a
@@ -502,9 +917,14 @@ FEATURE_SETS: dict[str, list[str]] = {
     "v1": list(BASE_FEATURE_COLS),
     "v3-honest": list(FEATURE_COLS),
     "v2-oracle": BASE_FEATURE_COLS + ["usg_ewma"] + TEAMMATE_ORACLE_COLS,
+    # P2's candidate. ADDED, so `FEATURE_SETS["v1"]` and `FEATURE_SETS["v3-honest"]`
+    # are byte-identical to what the freeze test checks, and the P2 bracket is
+    # `v3-honest` vs `v4` over identical rows with one difference.
+    "v4": list(FEATURE_COLS_V4),
 }
 SERVED_FEATURE_SET = "v3-honest"
 ORACLE_FEATURE_SET = "v2-oracle"
+CANDIDATE_FEATURE_SET = "v4"
 
 # ---- stage 1/2 of the two-stage pipeline: the base availability model ----
 # THE LEAKAGE-SAFE CONSTRUCTION, and the reason it needs two stages at all.
@@ -565,10 +985,17 @@ P_CONTEXT_CUTOFF = "P_CONTEXT_CUTOFF"
 #
 # the TEAM_* game totals are outcomes too: they are the target game's team
 # box score, used only as the historical denominator of a shifted usage EWMA.
+#
+# P2 adds two: the target game's final margin and the blowout label derived from
+# it. They are on the dataset because the blowout classifier has to be TRAINED on
+# them and because the descriptive cohorts want to be checkable against realized
+# blowouts - and they are declared outcomes here so that the same test that pins
+# "no target column is a feature" covers the candidate contract too.
 TARGET_COLS: frozenset[str] = frozenset(
     {"PLAYED", "MIN", "PTS", "AST", "REB", "FGA", "FGM", "FTA", "STL", "BLK", "TOV",
      "FG3M", "FTM", "TEAM_PTS", "TEAM_PTS_ALLOWED", "LISTED_INACTIVE",
-     "TEAM_MIN", "TEAM_FGA", "TEAM_FTA", "TEAM_TOV"}
+     "TEAM_MIN", "TEAM_FGA", "TEAM_FTA", "TEAM_TOV",
+     BLOWOUT_TARGET, BLOWOUT_MARGIN_COL}
 )
 
 AVAILABILITY_TARGET = "PLAYED"
@@ -767,6 +1194,15 @@ ORIGINS: list[tuple[str, str, str]] = [
     ("O4 valid=2025-12", "2025-12-01", "2025-12-31"),
     ("O5 valid=2026-01", "2026-01-01", "2026-01-31"),
 ]
+
+# ---- the P2 DEVELOPMENT origin set: the five above PLUS a late-season sixth ----
+# ORIGINS IS NOT MODIFIED. `tests/test_teammates_v3.py` pins `len(ORIGINS) == 5` and
+# every champion decision in sections 5, 11 and 12 was made on exactly those five,
+# so a sixth entry in that list would silently redefine what "the five origins" in
+# every published table means. DEV_ORIGINS is the superset the P2 bracket runs on;
+# see LATE_SEASON_ORIGIN above for why the sixth window is March-April **2025** and
+# not 2026.
+DEV_ORIGINS: list[tuple[str, str, str]] = [*ORIGINS, LATE_SEASON_ORIGIN]
 
 RANDOM_STATE = 17
 
