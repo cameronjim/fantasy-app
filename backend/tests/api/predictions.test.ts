@@ -4,7 +4,8 @@ import { pgResult } from '../helpers/mockDb.js';
 
 const { app } = await import('../../src/app.js');
 const { query } = await import('../../src/db.js');
-const { REASON_WEIGHTS } = await import('../../src/services/watchlist.js');
+const { IMPACT_PERCENTILE_FLOOR } = await import('../../src/services/watchlist.js');
+const { baselineDescriptor, BASELINE_STATS } = await import('../../src/services/baselines.js');
 const { IMPACT_POOL_KEY, IMPACT_POOL_LABEL, IMPACT_POOL_DEFINITION, POINTS_UNCOND_STAT } =
   await import('../../src/services/slate.js');
 const queryMock = vi.mocked(query);
@@ -19,17 +20,56 @@ function poolOf(size: number): Record<string, unknown> {
   };
 }
 
+/** The baseline descriptor both responses echo, verbatim from the service. */
+const baseline = baselineDescriptor();
+
+/**
+ * The baseline that exactly matches `watchRow`'s projected line, so a candidate
+ * deviates from his usual only in the stats a test explicitly moves. A helper
+ * that set every stat to one number instead would hand every player a large
+ * negative deviation in the peripheral categories and quietly drop him.
+ */
+const FLAT_BASELINE: Record<string, number> = {
+  minutes: 31,
+  pts: 8,
+  reb: 3,
+  ast: 2,
+  stl: 0.5,
+  blk: 0.3,
+  fg3m: 1,
+  fga: 7,
+};
+
+/** One row of `baselines.ts::fetchBaselines`. */
+function baselineRow(
+  nbaPlayerId: string,
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  const row: Record<string, unknown> = {
+    nba_player_id: nbaPlayerId,
+    games: 15,
+    pts_recent: FLAT_BASELINE.pts,
+    pts_sd: 4,
+    last_played_date: '2026-02-02',
+  };
+  for (const stat of BASELINE_STATS) row[stat] = FLAT_BASELINE[stat] ?? 0;
+  return { ...row, ...overrides };
+}
+
 // the slate route issues its queries in a fixed order:
 //   1. the day's schedule
 //   2. the latest complete prediction run
 //   3. team_id -> abbreviation
 //   4. the run's per-player predictions (skipped when there is no run)
+//   5. the vs-usual baselines (skipped when the run projected nobody)
 //
 // the watchlist route:
-//   1. player rows (names, teams, injury status, season averages)
-//   2. the rolling game-log aggregates
-//   3. the latest complete prediction run
-//   4. prob_active for the date (skipped when there is no run)
+//   1. the latest complete prediction run
+//   2. the run's per-player predictions, conditional AND unconditional
+//   3. the vs-usual baselines
+//   4. the schedule's team abbreviations, for naming the opponent
+// each of 2-4 is skipped once an earlier one has established there is nothing
+// to rank.
 
 /** pg's "relation does not exist" — what an unapplied migration looks like. */
 function undefinedTable(relation: string): Error & { code: string } {
@@ -109,7 +149,8 @@ describe('GET /api/predictions/slate', () => {
             proj_min_p50: 33.1,
           }),
         ])
-      );
+      )
+      .mockResolvedValueOnce(pgResult([baselineRow('201939', { minutes: 30, pts: 30 }), baselineRow('2544', { minutes: 30, pts: 30 })]));
 
     // act
     const res = await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
@@ -142,11 +183,17 @@ describe('GET /api/predictions/slate', () => {
       proj_pts: 28.4,
       proj_min_p50: 33.1,
       projected: { reb: 7.4, ast: 8.1, stl: 1.1, blk: 0.6, tov: 3.2, fg3m: 2 },
+      usual_min: 30,
+      usual_pts: 30,
+      min_vs_usual: 3.1,
+      pts_vs_usual: -1.6,
+      baseline_games: 15,
       impact: 1,
       spotlight: true,
       slate_spotlight: true,
     });
     expect(res.body.games[0].top_impact).toBe(1);
+    expect(res.body.baseline).toEqual(baseline);
   });
 
   it('reads the unconditional stat names, not `conditional = false` on the bare ones', async () => {
@@ -157,7 +204,8 @@ describe('GET /api/predictions/slate', () => {
       .mockResolvedValueOnce(pgResult(scheduleRows))
       .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(pgResult(teamRows))
-      .mockResolvedValueOnce(pgResult([predictionRow()]));
+      .mockResolvedValueOnce(pgResult([predictionRow()]))
+      .mockResolvedValueOnce(pgResult([]));
 
     // act
     await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
@@ -178,7 +226,8 @@ describe('GET /api/predictions/slate', () => {
       .mockResolvedValueOnce(pgResult(scheduleRows))
       .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(pgResult(teamRows))
-      .mockResolvedValueOnce(pgResult(many));
+      .mockResolvedValueOnce(pgResult(many))
+      .mockResolvedValueOnce(pgResult([]));
 
     // act
     const res = await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
@@ -201,7 +250,8 @@ describe('GET /api/predictions/slate', () => {
           predictionRow({ nba_player_id: '1642850', name: null, team_abbr: null, pts: 4.1 }),
           predictionRow({ nba_player_id: '201939', name: 'Stephen Curry', pts: 28.4 }),
         ])
-      );
+      )
+      .mockResolvedValueOnce(pgResult([]));
 
     // act
     const res = await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
@@ -226,7 +276,8 @@ describe('GET /api/predictions/slate', () => {
             predictionRow({ nba_player_id: `p${i}`, name: `Player ${i}`, pts })
           )
         )
-      );
+      )
+      .mockResolvedValueOnce(pgResult([]));
 
     // act
     const res = await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
@@ -262,7 +313,8 @@ describe('GET /api/predictions/slate', () => {
           predictionRow({ nba_game_id: '0022500111', nba_player_id: 'a', pts: 9.5 }),
           predictionRow({ nba_game_id: '0022500999', nba_player_id: 'b', pts: 31.5 }),
         ])
-      );
+      )
+      .mockResolvedValueOnce(pgResult([]));
 
     // act
     const res = await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
@@ -307,6 +359,7 @@ describe('GET /api/predictions/slate', () => {
       date: '2026-07-04',
       run: { model_version: 'v1-decomposed', predicted_at: '2026-02-04T11:00:00.000Z' },
       pool: poolOf(0),
+      baseline,
       games: [],
     });
   });
@@ -320,7 +373,13 @@ describe('GET /api/predictions/slate', () => {
 
     // assert
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ date: '2026-02-04', run: null, pool: poolOf(0), games: [] });
+    expect(res.body).toEqual({
+      date: '2026-02-04',
+      run: null,
+      pool: poolOf(0),
+      baseline,
+      games: [],
+    });
   });
 
   it('keeps the games when only the prediction tables are missing', async () => {
@@ -388,58 +447,76 @@ describe('GET /api/predictions/slate', () => {
   });
 });
 
-const playerMetaRows = [
-  {
-    nba_id: '1630559',
-    name: 'Breakout Wing',
-    team: 'OKC',
-    injury_status: null,
-    minutes_per_game: 24.1,
-    points_per_game: 11.2,
-  },
-  {
-    nba_id: '203507',
-    name: 'Franchise Player',
-    team: 'OKC',
-    injury_status: 'Out',
-    minutes_per_game: 34.6,
-    points_per_game: 29.8,
-  },
-  {
-    nba_id: '2544',
-    name: 'Steady Vet',
-    team: 'LAL',
-    injury_status: null,
-    minutes_per_game: 30.0,
-    points_per_game: 15.5,
-  },
-];
-
-function aggregateRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
+/**
+ * One pivoted watchlist prediction row. Unlike the slate's pivot this one
+ * carries BOTH series: `u_*` are the unconditional expectations the impact score
+ * is built from, `c_*` the conditional ("given he plays") ones the deviations
+ * are. See the two-pivot block in services/watchlist.ts.
+ */
+function watchRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const row: Record<string, unknown> = {
+    nba_game_id: '0022500555',
     nba_player_id: '1630559',
-    min_r5: 30.2,
-    min_r15: 22.0,
-    fga_r5: 12.4,
-    fga_r15: 9.1,
-    pts_r5: 18.6,
-    pts_season: 11.2,
-    pts_stddev: 4.0,
-    last_game_date: '2026-02-03',
-    prev_game_date: '2026-02-01',
-    last_game_minutes: 33,
-    ...overrides,
+    name: 'Breakout Wing',
+    team_abbr: 'OKC',
+    prob_active: 0.88,
+    proj_min_p50: 31,
   };
+  // an unremarkable line, so a test only has to state what it changes.
+  const uncond: Record<string, number> = {
+    pts: 8,
+    reb: 3,
+    ast: 2,
+    stl: 0.5,
+    blk: 0.3,
+    tov: 1,
+    fg3m: 1,
+    fgm: 3,
+    fga: 7,
+    ftm: 1,
+    fta: 1.4,
+  };
+  for (const [stat, value] of Object.entries(uncond)) row[`u_${stat}`] = value;
+  for (const stat of ['pts', 'reb', 'ast', 'stl', 'blk', 'fg3m', 'fga']) {
+    row[`c_${stat}`] = uncond[stat];
+  }
+  return { ...row, ...overrides };
 }
 
+/**
+ * Bench filler so the impact percentiles have a realistic pool: a run projects
+ * every rostered player, and `IMPACT_PERCENTILE_FLOOR` is a percentile of THAT.
+ * None of these deviate from their own baseline.
+ */
+function benchPool(count: number): Record<string, unknown>[] {
+  return Array.from({ length: count }, (_, i) =>
+    watchRow({
+      nba_player_id: `f${i}`,
+      name: `Bench ${i}`,
+      team_abbr: 'OKC',
+      proj_min_p50: 10,
+      u_pts: i * 0.1,
+      c_pts: i * 0.1,
+    })
+  );
+}
+
+function benchBaselines(count: number): Record<string, unknown>[] {
+  return Array.from({ length: count }, (_, i) => baselineRow(`f${i}`, { minutes: 10, pts: i * 0.1 }));
+}
+
+const gameTeamRows = [{ nba_game_id: '0022500555', home_team_abbr: 'OKC', away_team_abbr: 'LAL' }];
+
 describe('GET /api/watchlist', () => {
-  it('ranks candidates with their reason codes and evidence', async () => {
-    // arrange
+  it('ranks a role increase with its deltas, both score factors and its reasons', async () => {
+    // arrange — a 22-minute player projected 31, inside a pool of bench filler
     queryMock
-      .mockResolvedValueOnce(pgResult(playerMetaRows))
-      .mockResolvedValueOnce(pgResult([aggregateRow()]))
       .mockResolvedValueOnce(pgResult([runRow]))
-      .mockResolvedValueOnce(pgResult([{ nba_player_id: '1630559', prob_active: 0.88 }]));
+      .mockResolvedValueOnce(pgResult([watchRow({ u_pts: 20, c_pts: 20 }), ...benchPool(60)]))
+      .mockResolvedValueOnce(
+        pgResult([baselineRow('1630559', { minutes: 22, pts: 11 }), ...benchBaselines(60)])
+      )
+      .mockResolvedValueOnce(pgResult(gameTeamRows));
 
     // act
     const res = await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
@@ -447,101 +524,161 @@ describe('GET /api/watchlist', () => {
     // assert
     expect(res.status).toBe(200);
     expect(res.body.date).toBe('2026-02-04');
-    expect(res.body.players).toHaveLength(1);
+    expect(res.body.run).toEqual({
+      model_version: 'v1-decomposed',
+      predicted_at: '2026-02-04T11:00:00.000Z',
+    });
+    expect(res.body.pool).toEqual(poolOf(61));
+    expect(res.body.baseline).toEqual(baseline);
 
     const candidate = res.body.players[0];
     expect(candidate.nba_player_id).toBe('1630559');
     expect(candidate.name).toBe('Breakout Wing');
     expect(candidate.team_abbr).toBe('OKC');
+    expect(candidate.opponent_team_abbr).toBe('LAL');
+    expect(candidate.game_date).toBe('2026-02-04');
     expect(candidate.prob_active).toBe(0.88);
-    expect(candidate.reasons).toEqual([
-      'ROLE_INCREASE',
-      'SHOT_VOLUME_SURGE',
-      'HOT_STREAK',
-      'TEAMMATE_ABSENCE',
-    ]);
-    expect(candidate.evidence).toMatchObject({
-      min_r5: 30.2,
-      min_r15: 22,
-      min_delta: 8.2,
-      fga_delta: 3.3,
-      pts_delta: 7.4,
-      teammate_out: 'Franchise Player',
-      teammate_out_minutes: 34.6,
-    });
-
-    const weight =
-      REASON_WEIGHTS.ROLE_INCREASE +
-      REASON_WEIGHTS.SHOT_VOLUME_SURGE +
-      REASON_WEIGHTS.HOT_STREAK +
-      REASON_WEIGHTS.TEAMMATE_ABSENCE;
-    expect(candidate.score).toBeCloseTo(weight * 0.88, 3);
+    expect(candidate.minutes).toEqual({ usual: 22, projected: 31, delta: 9 });
+    expect(candidate.points).toEqual({ usual: 11, projected: 20, delta: 9 });
+    expect(candidate.baseline_games).toBe(15);
+    expect(candidate.reasons).toContain('ROLE_INCREASE');
+    // the score is the pre-registered product, and the payload shows both halves
+    expect(candidate.score).toBeCloseTo(candidate.upside * candidate.relevance, 3);
+    expect(candidate.relevance).toBeGreaterThan(0);
+    expect(candidate.impact_percentile).toBeGreaterThan(IMPACT_PERCENTILE_FLOOR);
+    expect(candidate.drivers.length).toBeGreaterThan(0);
   });
 
-  it('scores on the rules alone when no prediction run exists', async () => {
-    // arrange
+  it('keeps a bench jump off the list however large the jump is', async () => {
+    // arrange — 5 minutes to 15 is a bigger relative jump than any starter's,
+    // and still nothing worth a lineup slot. This is the binding constraint.
     queryMock
-      .mockResolvedValueOnce(pgResult(playerMetaRows))
-      .mockResolvedValueOnce(pgResult([aggregateRow()]))
-      .mockResolvedValueOnce(pgResult([]));
+      .mockResolvedValueOnce(pgResult([runRow]))
+      .mockResolvedValueOnce(
+        pgResult([
+          watchRow({
+            nba_player_id: 'scrub',
+            name: 'Deep Bench',
+            proj_min_p50: 15,
+            u_pts: 4,
+            c_pts: 4,
+          }),
+          ...benchPool(60),
+        ])
+      )
+      .mockResolvedValueOnce(pgResult([baselineRow('scrub', { minutes: 5, pts: 2 }), ...benchBaselines(60)]))
+      .mockResolvedValueOnce(pgResult(gameTeamRows));
 
     // act
     const res = await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
 
     // assert
     expect(res.status).toBe(200);
-    const candidate = res.body.players[0];
-    expect(candidate.prob_active).toBeNull();
-    expect(candidate.score).toBeCloseTo(
-      REASON_WEIGHTS.ROLE_INCREASE +
-        REASON_WEIGHTS.SHOT_VOLUME_SURGE +
-        REASON_WEIGHTS.HOT_STREAK +
-        REASON_WEIGHTS.TEAMMATE_ABSENCE,
-      3
+    expect(res.body.players.map((p: { nba_player_id: string }) => p.nba_player_id)).not.toContain(
+      'scrub'
     );
-    // the prob_active query is never issued without a run to read
-    expect(queryMock).toHaveBeenCalledTimes(3);
   });
 
-  it('flags a player returning from a long absence', async () => {
-    // arrange — nine days between the last two appearances, and he played
+  it('flags a teammate the run does not expect to play, with the minutes it frees', async () => {
+    // arrange — the star on the same team in the same game is a 0.05 to play
     queryMock
-      .mockResolvedValueOnce(pgResult(playerMetaRows))
+      .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(
         pgResult([
-          aggregateRow({
-            nba_player_id: '2544',
-            min_r5: 24,
-            min_r15: 24,
-            fga_r5: 9,
-            fga_r15: 9,
-            pts_r5: 15,
-            pts_season: 15,
-            pts_stddev: 3,
-            last_game_date: '2026-02-03',
-            prev_game_date: '2026-01-25',
+          watchRow({ u_pts: 20, c_pts: 20 }),
+          watchRow({
+            nba_player_id: '203507',
+            name: 'Franchise Player',
+            prob_active: 0.05,
+            proj_min_p50: 2,
           }),
+          ...benchPool(60),
         ])
       )
-      .mockResolvedValueOnce(pgResult([]));
+      .mockResolvedValueOnce(
+        pgResult([
+          baselineRow('1630559', { minutes: 22, pts: 11 }),
+          baselineRow('203507', { minutes: 34.6 }),
+          ...benchBaselines(60),
+        ])
+      )
+      .mockResolvedValueOnce(pgResult(gameTeamRows));
 
     // act
     const res = await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
 
     // assert
-    expect(res.body.players[0].reasons).toEqual(['RETURNING_FROM_ABSENCE']);
-    expect(res.body.players[0].evidence).toEqual({
-      gap_days: 9,
-      last_game_date: '2026-02-03',
-    });
+    const candidate = res.body.players.find(
+      (p: { nba_player_id: string }) => p.nba_player_id === '1630559'
+    );
+    expect(candidate.reasons).toContain('TEAMMATE_ABSENCE');
+    expect(candidate.evidence.teammate_out).toBe('Franchise Player');
+    expect(candidate.evidence.teammate_out_minutes).toBe(34.6);
+    expect(candidate.evidence.teammate_out_prob_active).toBe(0.05);
   });
 
-  it('excludes established scorers from the discovery list', async () => {
-    // arrange — the 29.8 ppg star has every rule firing
+  it('does not count a player as his own absent teammate', async () => {
+    // arrange — the only unavailable OKC player would be the candidate himself
     queryMock
-      .mockResolvedValueOnce(pgResult(playerMetaRows))
-      .mockResolvedValueOnce(pgResult([aggregateRow({ nba_player_id: '203507' })]))
-      .mockResolvedValueOnce(pgResult([]));
+      .mockResolvedValueOnce(pgResult([runRow]))
+      .mockResolvedValueOnce(
+        pgResult([watchRow({ prob_active: 0.05, u_pts: 20, c_pts: 20 }), ...benchPool(60)])
+      )
+      .mockResolvedValueOnce(
+        pgResult([baselineRow('1630559', { minutes: 22, pts: 11 }), ...benchBaselines(60)])
+      )
+      .mockResolvedValueOnce(pgResult(gameTeamRows));
+
+    // act
+    const res = await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
+
+    // assert
+    expect(res.body.players[0].reasons).not.toContain('TEAMMATE_ABSENCE');
+  });
+
+  it('drops a player with too little history to have a usual', async () => {
+    // arrange — a rookie: projections, and four games of NBA baseline
+    queryMock
+      .mockResolvedValueOnce(pgResult([runRow]))
+      .mockResolvedValueOnce(pgResult([watchRow({ u_pts: 20, c_pts: 20 }), ...benchPool(60)]))
+      .mockResolvedValueOnce(
+        pgResult([baselineRow('1630559', { minutes: 22, pts: 11, games: 4 }), ...benchBaselines(60)])
+      )
+      .mockResolvedValueOnce(pgResult(gameTeamRows));
+
+    // act
+    const res = await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
+
+    // assert
+    expect(res.body.players.map((p: { nba_player_id: string }) => p.nba_player_id)).not.toContain(
+      '1630559'
+    );
+  });
+
+  it('answers with an empty list when no run has completed', async () => {
+    // arrange — production before the first model run. Unlike the old rules-only
+    // ranking, projection-minus-baseline has nothing to say without projections.
+    queryMock.mockResolvedValueOnce(pgResult([]));
+
+    // act
+    const res = await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
+
+    // assert
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      date: '2026-02-04',
+      run: null,
+      pool: poolOf(0),
+      baseline,
+      players: [],
+    });
+    // no run means the remaining round trips are never issued
+    expect(queryMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers with an empty list when the run projected nothing for the date', async () => {
+    // arrange
+    queryMock.mockResolvedValueOnce(pgResult([runRow])).mockResolvedValueOnce(pgResult([]));
 
     // act
     const res = await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
@@ -549,47 +686,28 @@ describe('GET /api/watchlist', () => {
     // assert
     expect(res.status).toBe(200);
     expect(res.body.players).toEqual([]);
+    expect(res.body.run).not.toBeNull();
+    expect(queryMock).toHaveBeenCalledTimes(2);
   });
 
-  it('does not count a player as their own absent teammate', async () => {
-    // arrange — the only Out player on LAL would be the candidate himself
-    const lakersOnly = [
-      {
-        nba_id: '2544',
-        name: 'Steady Vet',
-        team: 'LAL',
-        injury_status: 'Out',
-        minutes_per_game: 33,
-        points_per_game: 15.5,
-      },
-    ];
-    queryMock
-      .mockResolvedValueOnce(pgResult(lakersOnly))
-      .mockResolvedValueOnce(
-        pgResult([
-          aggregateRow({
-            nba_player_id: '2544',
-            fga_r5: 9,
-            fga_r15: 9,
-            pts_r5: 15,
-            pts_season: 15,
-            prev_game_date: '2026-02-01',
-          }),
-        ])
-      )
-      .mockResolvedValueOnce(pgResult([]));
+  it('degrades to an empty list when the prediction tables do not exist yet', async () => {
+    // arrange — deployed ahead of migration 014
+    queryMock.mockRejectedValue(undefinedTable('prediction_runs'));
 
     // act
     const res = await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
 
     // assert
-    expect(res.body.players[0].reasons).toEqual(['ROLE_INCREASE']);
+    expect(res.status).toBe(200);
+    expect(res.body.players).toEqual([]);
+    expect(res.body.run).toBeNull();
   });
 
-  it('degrades to an empty list when the game-log tables do not exist yet', async () => {
-    // arrange
+  it('degrades to an empty list when the game logs do not exist yet', async () => {
+    // arrange — 014 applied, 013 not: projections with nothing to compare against
     queryMock
-      .mockResolvedValueOnce(pgResult(playerMetaRows))
+      .mockResolvedValueOnce(pgResult([runRow]))
+      .mockResolvedValueOnce(pgResult([watchRow()]))
       .mockRejectedValueOnce(undefinedTable('player_game_logs'))
       .mockResolvedValueOnce(pgResult([]));
 
@@ -598,7 +716,7 @@ describe('GET /api/watchlist', () => {
 
     // assert
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ date: '2026-02-04', players: [] });
+    expect(res.body.players).toEqual([]);
   });
 
   it('returns 400 for a malformed date without touching the database', async () => {
@@ -623,10 +741,11 @@ describe('GET /api/watchlist', () => {
     expect(res.body.error).toBe('Failed to fetch watchlist');
   });
 
-  it('reads only games strictly before the requested date', async () => {
+  it('reads baselines only from games strictly before the requested date', async () => {
     // arrange
     queryMock
-      .mockResolvedValueOnce(pgResult([]))
+      .mockResolvedValueOnce(pgResult([runRow]))
+      .mockResolvedValueOnce(pgResult([watchRow()]))
       .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult([]));
 
@@ -634,8 +753,25 @@ describe('GET /api/watchlist', () => {
     await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
 
     // assert — the cutoff is what keeps this a forecast rather than hindsight
-    const [sql, params] = queryMock.mock.calls[1];
+    const [sql, params] = queryMock.mock.calls[2];
     expect(sql).toContain('g.game_date < $1');
-    expect(params).toEqual(['2026-02-04']);
+    expect(params?.[0]).toBe('2026-02-04');
+  });
+
+  it('binds the run and the date as parameters rather than interpolating them', async () => {
+    // arrange
+    queryMock
+      .mockResolvedValueOnce(pgResult([runRow]))
+      .mockResolvedValueOnce(pgResult([watchRow()]))
+      .mockResolvedValueOnce(pgResult([]))
+      .mockResolvedValueOnce(pgResult([]));
+
+    // act
+    await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
+
+    // assert
+    const [sql, params] = queryMock.mock.calls[1];
+    expect(params?.slice(0, 2)).toEqual([42, '2026-02-04']);
+    expect(sql).toContain('$1');
   });
 });

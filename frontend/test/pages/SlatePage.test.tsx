@@ -23,6 +23,11 @@ function slatePlayer(overrides: Partial<SlatePlayer> = {}): SlatePlayer {
     proj_pts: 28.4,
     proj_min_p50: 33.1,
     projected: { reb: 4.6, ast: 6.1, stl: 1.2, blk: 0.3, tov: 2.8, fg3m: 4.4 },
+    usual_min: 32.4,
+    usual_pts: 26.9,
+    min_vs_usual: 0.7,
+    pts_vs_usual: 1.5,
+    baseline_games: 15,
     impact: 6.2,
     spotlight: true,
     slate_spotlight: true,
@@ -39,6 +44,13 @@ function payload(overrides: Partial<SlateResponse> = {}): SlateResponse {
       label: "Tonight's slate",
       definition: "every player the run projects for this date, across all of the date's games",
       sample_size: 2,
+    },
+    baseline: {
+      window_games: 15,
+      min_games: 5,
+      notable_min_delta: 4,
+      label: 'his own recent form',
+      definition: 'per-game averages over his last 15 games played before this date',
     },
     games: [
       {
@@ -59,6 +71,11 @@ function payload(overrides: Partial<SlateResponse> = {}): SlateResponse {
             proj_pts: 18.6,
             proj_min_p50: 30.5,
             projected: { reb: 7.2, ast: 8.4, stl: 0.9, blk: 0.5, tov: 3.4, fg3m: 1.6 },
+            usual_min: 24.3,
+            usual_pts: 24.1,
+            min_vs_usual: 6.2,
+            pts_vs_usual: -5.5,
+            baseline_games: 15,
             impact: 2.1,
             spotlight: true,
             slate_spotlight: false,
@@ -286,6 +303,98 @@ describe('SlatePage', () => {
     // assert
     expect(await screen.findByText(/Failed to load the slate/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Try Again/i })).toBeInTheDocument();
+  });
+
+  it('chips a player whose minutes depart from his own usual, and leaves the rest alone', async () => {
+    // arrange + act — LeBron is +6.2 over his recent average, Curry +0.7
+    renderPage();
+    await screen.findByText('Stephen Curry');
+
+    // assert
+    expect(screen.getByText(/\+6\.2 min vs usual/)).toBeInTheDocument();
+    expect(screen.queryByText(/\+0\.7 min vs usual/)).not.toBeInTheDocument();
+  });
+
+  it('explains the chip against the window the server published', async () => {
+    // arrange + act — the page must never state a threshold of its own
+    renderPage();
+    await screen.findByText('Stephen Curry');
+
+    // assert
+    expect(screen.getByText(/at least 4 away from his own recent form/i)).toBeInTheDocument();
+    expect(screen.getByText(/last 15 games played before this date/i)).toBeInTheDocument();
+  });
+
+  it('chips a minutes drop too, in a different tone', async () => {
+    // arrange
+    slateMock.mockResolvedValue(
+      payload({
+        games: [
+          {
+            ...payload().games[0],
+            players: [slatePlayer({ usual_min: 34, min_vs_usual: -5.1 })],
+          },
+        ],
+      })
+    );
+
+    // act
+    renderPage();
+    await screen.findByText('Stephen Curry');
+
+    // assert — a fall is as much a lineup decision as a jump
+    expect(screen.getByText(/-5\.1 min vs usual/)).toBeInTheDocument();
+  });
+
+  it('shows no chip for a player with too little history to have a usual', async () => {
+    // arrange — a rookie is not "unchanged", he is unknown
+    slateMock.mockResolvedValue(
+      payload({
+        games: [
+          {
+            ...payload().games[0],
+            players: [
+              slatePlayer({
+                usual_min: null,
+                usual_pts: null,
+                min_vs_usual: null,
+                pts_vs_usual: null,
+                baseline_games: 0,
+              }),
+            ],
+          },
+        ],
+      })
+    );
+
+    // act
+    renderPage();
+
+    // assert
+    expect(await screen.findByText('Stephen Curry')).toBeInTheDocument();
+    expect(screen.queryByText(/min vs usual/)).not.toBeInTheDocument();
+  });
+
+  it('shows no chips at all when the server sent no baseline descriptor', async () => {
+    // arrange — a Lambda caught mid-deploy: the client fills in an empty one
+    slateMock.mockResolvedValue(
+      payload({
+        baseline: {
+          window_games: 0,
+          min_games: 0,
+          notable_min_delta: 0,
+          label: '',
+          definition: '',
+        },
+      })
+    );
+
+    // act
+    renderPage();
+    await screen.findByText('Stephen Curry');
+
+    // assert
+    expect(screen.queryByText(/min vs usual/)).not.toBeInTheDocument();
   });
 
   it('orders the players as the server ranked them', async () => {

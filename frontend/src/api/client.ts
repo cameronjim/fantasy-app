@@ -234,20 +234,43 @@ export async function getSlate(date?: string): Promise<SlateResponse> {
     // that predates it (a Lambda caught mid-deploy) degrades to an empty
     // definition rather than to a page that throws while rendering a footnote.
     pool: data.pool ?? { key: '', label: '', definition: '', sample_size: 0 },
+    baseline: data.baseline ?? EMPTY_BASELINE,
     games: (data.games ?? []).map((game) => ({ ...game, players: game.players ?? [] })),
   };
 }
 
-/** Ranked waiver-discovery candidates with the rule codes that flagged them. */
+/**
+ * The baseline descriptor a response that predates it degrades to — a Lambda
+ * caught mid-deploy. `notable_min_delta: 0` is deliberately NOT a threshold of
+ * zero in disguise: the pages treat a descriptor with an empty `definition` as
+ * "no baseline information", and simply omit the vs-usual chips rather than
+ * claiming a deviation against a window nobody described.
+ */
+const EMPTY_BASELINE = {
+  window_games: 0,
+  min_games: 0,
+  notable_min_delta: 0,
+  label: '',
+  definition: '',
+};
+
+/**
+ * Ranked big-night candidates: players projected above their OWN usual by enough
+ * to matter tonight, with the deltas and the rule codes that explain each row.
+ */
 export async function getWatchlist(date?: string): Promise<WatchlistResponse> {
   const { data } = await api.get<WatchlistResponse>('/watchlist', {
     params: date ? { date } : {},
   });
   return {
     date: data.date,
+    run: data.run ?? null,
+    pool: data.pool ?? { key: '', label: '', definition: '', sample_size: 0 },
+    baseline: data.baseline ?? EMPTY_BASELINE,
     players: (data.players ?? []).map((player) => ({
       ...player,
       reasons: player.reasons ?? [],
+      drivers: player.drivers ?? [],
       evidence: player.evidence ?? {},
     })),
   };
