@@ -12,7 +12,7 @@ interface NavbarProps {
 
 const tabs = [
   { to: '/', label: 'Stats', icon: BarChart3 },
-  { to: '/slate', label: 'Slate', icon: CalendarDays },
+  { to: '/projections', label: 'Projections', icon: CalendarDays },
   { to: '/watchlist', label: 'Watchlist', icon: Eye },
   { to: '/history', label: 'History', icon: History },
   { to: '/ratings', label: '2K Ratings', icon: Gamepad2 },
