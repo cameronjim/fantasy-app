@@ -700,42 +700,111 @@ export interface WatchlistEvidence {
   teammate_out_prob_active?: NumericLike;
 }
 
+/**
+ * Values `?position=` accepts. The first three are roster slots; the rest are
+ * exact positions. `C` appears once because the slot and the position are the
+ * same set — a player is in slot C exactly when one of his positions is C.
+ */
+export type WatchlistPositionFilter = 'G' | 'F' | 'C' | 'PG' | 'SG' | 'SF' | 'PF';
+
+/** One of a candidate's games inside the window, for the row's breakdown. */
+export interface WatchlistGame {
+  game_date: string;
+  nba_game_id: string;
+  opponent_team_abbr: string | null;
+  /** Conditional P50 minutes — the same line the Projections tab prints. */
+  minutes_p50: NumericLike | null;
+  /** Unconditional projected points for this game. */
+  proj_pts: NumericLike | null;
+  /** This game's absolute projected impact, against its own night's slate. */
+  impact: NumericLike | null;
+  /** This game's contribution to the window total. 0 for a flat night. */
+  score: NumericLike;
+}
+
 export interface WatchlistPlayer {
   nba_player_id: string;
   name: string;
   /** True when `name` is a stand-in built from the NBA id (see `SlatePlayer`). */
   name_is_placeholder: boolean;
   team_abbr: string | null;
-  opponent_team_abbr: string | null;
-  nba_game_id: string;
+  /**
+   * His positions as one printable string — "PG/SG". Null when the run projects
+   * him but the roster table has no row for him, which is "unknown" rather than
+   * "none" and is why a specific position filter excludes him.
+   */
+  position: string | null;
+  /**
+   * The window's BEST-SCORING game, and so are `nba_game_id`,
+   * `opponent_team_abbr`, `reasons`, `evidence` and `drivers` — one game's worth
+   * of explanation that agrees with itself.
+   */
   game_date: string;
-  /** `upside x relevance` — how far above his own usual, times whether it matters. */
+  nba_game_id: string;
+  opponent_team_abbr: string | null;
+  /** Games the run projects for him inside the window. */
+  games_count: number;
+  /** Every one of those games, earliest first. */
+  games: WatchlistGame[];
+  /**
+   * The window TOTAL: the sum over `games` of `upside x relevance`. For a
+   * one-day window that is the single game's product; over a longer window it is
+   * deliberately NOT `upside x relevance`, because the number of games is the
+   * point — five ordinary games can out-earn two good ones.
+   */
   score: NumericLike;
-  /** The deviation term: projection-minus-usual, scaled and weight-averaged. */
+  /** `score / games_count`, so a row reads as a rate as well as a total. */
+  score_per_game: NumericLike;
+  /** The deviation term, averaged over his games in the window. */
   upside: NumericLike;
-  /** Which deviations point up, biggest contribution first. */
+  /** Which deviations point up in his best game, biggest contribution first. */
   drivers: UpsideDriver[];
-  /** The absolute floor term, 0-1. Exactly 0 below the impact percentile floor. */
+  /** The absolute floor term, 0-1, averaged over his games in the window. */
   relevance: NumericLike;
-  /** Tonight's absolute projected impact — the same number the slate shows. */
+  /** Absolute projected impact SUMMED over the window — total, not per game. */
   impact: NumericLike | null;
-  /** Where that impact sits in tonight's pool, 0-100. */
+  /** Mean over his games of where that night's impact sat in that night's pool. */
   impact_percentile: NumericLike;
+  /** Mean availability — the share of these games he is expected to appear in. */
   prob_active: NumericLike | null;
+  /** Usual is the one baseline; projected and delta are means over the window. */
   minutes: VsUsual;
   points: VsUsual;
+  /** Unconditional projections summed over the window, keyed by stat name. */
+  totals: Partial<Record<string, NumericLike>>;
   /** Played games the baseline rests on. */
   baseline_games: number;
   reasons: WatchlistReason[];
   evidence: WatchlistEvidence;
 }
 
+/** The days a response covers, so the page never computes its own range. */
+export interface WatchlistWindow {
+  from: string;
+  /** Inclusive. Equal to `from` for a one-day window. */
+  to: string;
+  days: number;
+}
+
+/** Candidates with and without a position, counted BEFORE the filter. */
+export interface WatchlistPositionCoverage {
+  known: number;
+  unknown: number;
+}
+
 export interface WatchlistResponse {
+  /** The window's first date. */
   date: string;
+  window: WatchlistWindow;
   /** Null until a model run has completed — without one there is nothing to rank. */
   run: PredictionRun | null;
-  /** The pool the impact percentile is measured in — the slate's pool, verbatim. */
+  /** The pool the impact percentile is measured in — the slate's pool, per night. */
   pool: SlatePool;
   baseline: BaselineDescriptor;
+  /** The filter the server applied, or null for every position. */
+  position: WatchlistPositionFilter | null;
+  /** Every filter the server honours, so the page never offers one it will not. */
+  position_options: WatchlistPositionFilter[];
+  position_coverage: WatchlistPositionCoverage;
   players: WatchlistPlayer[];
 }
