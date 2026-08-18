@@ -14,8 +14,18 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from fnba_ml.config import FEATURE_COLS, TARGET_COLS
-from fnba_ml.features import MIN_APPEARANCES_FOR_HISTORY
+from fnba_ml.config import (
+    EWMA_HALFLIFE,
+    FEATURE_COLS,
+    RATE_MINUTES_FLOOR,
+    RATE_TARGETS,
+    TARGET_COLS,
+)
+from fnba_ml.features import (
+    MIN_APPEARANCES_FOR_HISTORY,
+    attach_per_minute_rates,
+    rate_column,
+)
 
 RNG = np.random.default_rng(7)
 
@@ -27,6 +37,14 @@ CAREER_COLS = [
     "roll3_MIN", "roll5_MIN", "roll10_MIN", "roll3_PTS", "roll5_PTS", "roll10_PTS",
     "ewma_MIN", "ewma_PTS", "n_appearances", "days_since_last_app",
     "avail_rate_10", "avail_rate_20", "games_since_last_app",
+    # the per-minute rates ride a THIRD as-of join (a narrower row set: appearances
+    # with minutes > 0), so they need their own coverage in the leakage tests -
+    # they are now a multiplier on every production projection.
+    "ewma_PTS_per_min", "ewma_AST_per_min",
+    # and usage rides a FOURTH (same row set, separate join because unlike the
+    # rates it IS a model feature). it is also the magnitude vacated_usg sums over
+    # every absent teammate, so a leak here would spread across a whole team-game.
+    "usg_ewma",
 ]
 
 SEASON_SCOPED_COLS = [
@@ -332,3 +350,68 @@ def test_schedule_features_present(feats, column):
     # act + assert
     assert column in feats.columns
     assert feats[column].notna().mean() > 0.5, f"{column} is mostly null"
+
+
+# ---- 8. per-minute rates and the backfill path ----
+def test_per_minute_rate_is_the_ewma_of_prior_ratios(feats, raw_logs):
+    """spot-check the rate against a hand-computed EWMA of prior per-game ratios.
+
+    the denominator floor is part of the definition, not a post-hoc clamp: the
+    manual computation below has to apply it too or it will not match.
+    """
+    # arrange
+    player = _busiest_player(raw_logs)
+    rows = feats[(feats["PLAYER_ID"] == player) & feats["ewma_PTS_per_min"].notna()]
+    assert len(rows) > 10
+    target = rows.sort_values("GAME_DATE").iloc[-1]
+
+    logs = raw_logs[
+        (raw_logs["PLAYER_ID"] == player)
+        & (raw_logs["GAME_DATE"] < target["GAME_DATE"])
+        & (raw_logs["MIN"] > 0)
+    ].sort_values("GAME_DATE")
+
+    # act
+    ratios = logs["PTS"] / logs["MIN"].clip(lower=RATE_MINUTES_FLOOR)
+    expected = ratios.ewm(halflife=EWMA_HALFLIFE, adjust=True).mean().iloc[-1]
+
+    # assert
+    assert target["ewma_PTS_per_min"] == pytest.approx(expected, rel=1e-6)
+
+
+def test_the_backfill_reproduces_the_built_in_rate_columns(feats):
+    """datasets written before the rate columns existed are backfilled rather than
+    rebuilt (rebuilding needs the database). the two paths must agree exactly, or
+    the composition means something different offline than it does live.
+    """
+    # arrange
+    columns = [rate_column(t) for t in RATE_TARGETS]
+    stripped = feats.drop(columns=columns)
+
+    # act
+    restored = attach_per_minute_rates(stripped)
+
+    # assert
+    for column in columns:
+        pd.testing.assert_series_equal(
+            restored[column].reset_index(drop=True),
+            feats[column].reset_index(drop=True),
+            check_names=True,
+        )
+    # row order is preserved: callers hold arrays positionally aligned to the frame
+    assert restored["PLAYER_ID"].tolist() == feats["PLAYER_ID"].tolist()
+    assert restored["GAME_ID"].tolist() == feats["GAME_ID"].tolist()
+
+
+def test_the_backfill_is_a_noop_when_the_columns_are_already_there(feats):
+    # act + assert
+    assert attach_per_minute_rates(feats) is feats
+
+
+def test_the_rate_columns_are_not_model_features():
+    """they are composition inputs, not predictors. keeping them out of the feature
+    contract is what let them be added without bumping FEATURE_VERSION and
+    invalidating every existing artifact.
+    """
+    # act + assert
+    assert not {rate_column(t) for t in RATE_TARGETS} & set(FEATURE_COLS)

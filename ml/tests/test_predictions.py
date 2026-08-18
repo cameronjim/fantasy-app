@@ -32,9 +32,19 @@ from fnba_ml.intervals import (
     fit_residual_quantiles,
     quantile_columns,
 )
+from fnba_ml.config import HORIZONS
 from fnba_ml.models import P_PLAY, P_PLAY_CUTOFF
+from fnba_ml.overrides import (
+    OVERRIDE_REASON,
+    OVERRIDE_REASON_CODES,
+    P_PLAY_MODEL,
+    STATUS_CAPTURED_AT,
+)
 from fnba_ml.store import (
     PROB_ACTIVE,
+    PROB_ACTIVE_MODEL,
+    STATUS_CAPTURED_AT_STAT,
+    STATUS_OVERRIDE,
     UNCOND_SUFFIX,
     build_prediction_rows,
     build_run_record,
@@ -290,6 +300,95 @@ def test_a_frame_without_quantile_columns_still_writes_expected_values():
     assert len(rows) == 2 * 7
 
 
+# ---- the injury-override rows ----
+def overridden_frame() -> pd.DataFrame:
+    """the same two player-games, after the override layer ran on the first one."""
+    frame = prediction_frame(**{P_PLAY: [0.02, 0.35]})
+    frame[P_PLAY_MODEL] = [0.93, 0.35]
+    frame[OVERRIDE_REASON] = ["status_out", None]
+    frame[STATUS_CAPTURED_AT] = pd.to_datetime(
+        ["2026-03-01T12:34:00", None]
+    )
+    return frame
+
+
+def test_both_probabilities_are_stored_so_the_layer_stays_measurable():
+    """the override constants are hand-set; replacing them with learned ones needs
+    the model's own series on the record next to the served one."""
+    # act
+    rows = build_prediction_rows(overridden_frame(), TARGETS)
+
+    # assert
+    served = rows_for(rows, PROB_ACTIVE)
+    model = rows_for(rows, PROB_ACTIVE_MODEL)
+    assert [r["value"] for r in served] == [0.02, 0.35]
+    assert [r["value"] for r in model] == [0.93, 0.35]
+    assert all(r["conditional"] is False for r in served + model)
+    assert all(r["quantile"] is None for r in served + model)
+
+
+def test_the_override_reason_is_stored_as_a_code_and_the_timestamp_as_epoch_seconds():
+    """value is NUMERIC NOT NULL and migration 014's schema is not being widened,
+    so a text reason becomes a code from an append-only mapping."""
+    # act
+    rows = build_prediction_rows(overridden_frame(), TARGETS)
+
+    # assert
+    reason = rows_for(rows, STATUS_OVERRIDE)
+    assert [r["value"] for r in reason] == [float(OVERRIDE_REASON_CODES["status_out"])]
+    assert [r["nba_player_id"] for r in reason] == ["2544"]
+
+    captured = rows_for(rows, STATUS_CAPTURED_AT_STAT)
+    assert len(captured) == 1
+    assert pd.Timestamp(captured[0]["value"], unit="s") == pd.Timestamp("2026-03-01T12:34:00")
+
+
+def test_rows_without_an_override_carry_no_override_rows():
+    """absence is the honest record of "the model's probability stands"; a sentinel
+    value would need every later query to know to exclude it."""
+    # act
+    rows = build_prediction_rows(overridden_frame(), TARGETS)
+
+    # assert - only the overridden player gets the two extra rows
+    extra = [r for r in rows if r["stat"] in (STATUS_OVERRIDE, STATUS_CAPTURED_AT_STAT)]
+    assert {r["nba_player_id"] for r in extra} == {"2544"}
+    # 2 x 13 base + 2 prob_active_model + 1 reason + 1 captured_at
+    assert len(rows) == 2 * 13 + 2 + 1 + 1
+
+
+def test_a_frame_that_never_saw_the_override_layer_still_builds():
+    """the layer is applied in predict.py; the row builder must not require it."""
+    # act
+    rows = build_prediction_rows(prediction_frame(), TARGETS)
+
+    # assert
+    assert rows_for(rows, PROB_ACTIVE_MODEL) == []
+    assert rows_for(rows, STATUS_OVERRIDE) == []
+    assert len(rows) == 2 * 13
+
+
+def test_an_unknown_override_reason_is_not_written_as_a_guess():
+    # arrange
+    frame = overridden_frame()
+    frame[OVERRIDE_REASON] = ["status_invented", None]
+
+    # act
+    rows = build_prediction_rows(frame, TARGETS)
+
+    # assert - no code exists for it, so no code is invented
+    assert rows_for(rows, STATUS_OVERRIDE) == []
+    # the timestamp still travels: it is a fact about the report, not the reason
+    assert len(rows_for(rows, STATUS_CAPTURED_AT_STAT)) == 1
+
+
+def test_override_reason_codes_are_unique():
+    """the mapping is append-only and stored numerically, so a reused code would
+    silently relabel every historical row that carried it."""
+    # act + assert
+    codes = list(OVERRIDE_REASON_CODES.values())
+    assert len(set(codes)) == len(codes)
+
+
 # ---- the interval machinery itself ----
 def test_residual_quantiles_recover_a_known_distribution():
     # arrange - residuals ~ N(0, 4), so P10/P90 sit near -+1.2816 * 4
@@ -435,6 +534,66 @@ def test_the_run_record_falls_back_to_the_training_commit():
     assert record["code_sha"] == "abc123"
     assert record["feature_version"] == "unknown"
     assert record["trained_through"] is None
+
+
+def test_the_run_record_stamps_the_forecast_horizon_into_notes():
+    """migration 014 has no horizon column and does not need one: notes is free text
+    on an append-only row, so the label is as immutable as a column would be."""
+    # act
+    record = build_run_record(
+        {"model_version": "20260817b"},
+        pd.Timestamp("2026-03-01T18:00:00Z").to_pydatetime(),
+        pd.Timestamp("2026-03-01T00:00:00Z").to_pydatetime(),
+        notes="slate of 6 games",
+        horizon="gameday",
+    )
+
+    # assert
+    assert record["notes"] == "horizon=gameday (T-6h); slate of 6 games"
+
+
+def test_the_horizon_label_is_recorded_even_with_no_other_notes():
+    # act
+    record = build_run_record(
+        {"model_version": "v"},
+        pd.Timestamp("2026-03-01T18:00:00Z").to_pydatetime(),
+        pd.Timestamp("2026-03-01T00:00:00Z").to_pydatetime(),
+        horizon="lock",
+    )
+
+    # assert
+    assert record["notes"] == "horizon=lock (T-60m)"
+
+
+def test_a_run_without_a_horizon_says_nothing_rather_than_guessing():
+    """a run whose timing was not recorded should be visible as such."""
+    # act
+    record = build_run_record(
+        {"model_version": "v"},
+        pd.Timestamp("2026-03-01T18:00:00Z").to_pydatetime(),
+        pd.Timestamp("2026-03-01T00:00:00Z").to_pydatetime(),
+        notes="backfill",
+    )
+
+    # assert
+    assert record["notes"] == "backfill"
+
+
+def test_an_unknown_horizon_is_refused():
+    # act + assert
+    with pytest.raises(ValueError, match="unknown forecast horizon"):
+        build_run_record(
+            {"model_version": "v"},
+            pd.Timestamp("2026-03-01T18:00:00Z").to_pydatetime(),
+            pd.Timestamp("2026-03-01T00:00:00Z").to_pydatetime(),
+            horizon="whenever",
+        )
+
+
+def test_the_three_horizons_are_named_and_ordered_toward_tipoff():
+    # act + assert
+    assert list(HORIZONS) == ["early", "gameday", "lock"]
+    assert HORIZONS == {"early": "T-24h", "gameday": "T-6h", "lock": "T-60m"}
 
 
 def test_writing_an_empty_run_is_refused_before_it_can_connect():

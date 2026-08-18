@@ -13,8 +13,23 @@ from ..config import ID_COLS
 
 # stats carried from the game log onto the universe row. a scheduled row where
 # the player did not appear gets 0.0 for all of them.
+#
+# FTA joined the list for feature_version v2: the standard box-score usage
+# approximation needs a player's free-throw ATTEMPTS (0.44 x FTA is the
+# possession-cost term), and FTM cannot stand in for it - a player who shoots 8
+# free throws and makes 4 used eight possessions' worth of trips to the line.
+#
+# FGM joined for the 9-category extension (2026-08-18). It is the ONLY box column
+# the four-season build was missing, and it is missing in the way that matters
+# most: FG% is derived by consumers as FGM/FGA, so without FGM the whole
+# shooting-efficiency half of a 9-cat league is unservable. It cannot be
+# reconstructed from what was already here either - PTS = 2*FGM + FG3M + FTM is an
+# identity only when no free throw was an and-one technical and no line was
+# scrubbed, and inverting it would manufacture a makes column out of rounding
+# error. player_game_logs.fgm (migration 013) has carried it all along.
 STAT_COLS: tuple[str, ...] = (
-    "MIN", "PTS", "AST", "FGA", "REB", "FG3M", "FTM", "TOV", "STL", "BLK",
+    "MIN", "PTS", "AST", "FGA", "FTA", "REB", "FG3M", "FGM", "FTM", "TOV",
+    "STL", "BLK",
 )
 
 PLAYER_LOG_COLS: tuple[str, ...] = (
@@ -22,9 +37,18 @@ PLAYER_LOG_COLS: tuple[str, ...] = (
     "TEAM_ID", "TEAM_ABBREVIATION", "STARTED", "DNP_REASON", "PLUS_MINUS",
 ) + STAT_COLS
 
+# team-game totals. MIN/FGA/FTA/TOV joined PTS for v2: they are the DENOMINATOR
+# of the usage-rate feature (a player's share of his team's possessions), which
+# cannot be computed from player rows alone. every source in the repo already
+# carries them - postgres in team_game_logs, the nba_api parquet exports natively.
 TEAM_LOG_COLS: tuple[str, ...] = (
-    "TEAM_ID", "GAME_ID", "SEASON", "GAME_DATE", "PTS",
+    "TEAM_ID", "GAME_ID", "SEASON", "GAME_DATE", "PTS", "MIN", "FGA", "FTA", "TOV",
 )
+
+# per-player position strings, the one piece of reference data that is not a
+# per-game fact. optional: a source that has no positions returns None and the
+# positional half of the teammate-context features is null rather than wrong.
+POSITION_COLS: tuple[str, ...] = ("PLAYER_ID", "POSITION")
 
 SCHEDULE_COLS: tuple[str, ...] = (
     "GAME_ID", "SEASON", "SEASON_TYPE", "GAME_DATE", "SCHEDULED_AT",

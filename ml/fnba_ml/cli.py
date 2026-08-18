@@ -63,8 +63,18 @@ def version_dir(model_version: str, models_dir: Path | None = None) -> Path:
 
 
 def load_dataset(path: Path) -> pd.DataFrame:
+    """read a built dataset, backfilling anything a newer composition needs.
+
+    the per-minute rate columns landed after the four-season dataset was built and
+    rebuilding it requires the database, so :func:`attach_per_minute_rates`
+    recomputes them from the frame's own appearance history through the same
+    as-of-safe code path. it is a no-op for a dataset built by the current
+    pipeline.
+    """
     if not path.exists():
         raise SystemExit(f"dataset not found: {path}. run build_dataset.py first.")
+    from .features import attach_per_minute_rates
+
     df = pd.read_parquet(path)
     df["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"])
-    return df
+    return attach_per_minute_rates(df)

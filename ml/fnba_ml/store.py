@@ -38,8 +38,15 @@ from datetime import date, datetime, timezone
 import numpy as np
 import pandas as pd
 
+from .config import horizon_label
 from .intervals import QUANTILE_LEVELS, quantile_columns
 from .models import P_PLAY
+from .overrides import (
+    OVERRIDE_REASON,
+    OVERRIDE_REASON_CODES,
+    P_PLAY_MODEL,
+    STATUS_CAPTURED_AT,
+)
 
 log = logging.getLogger(__name__)
 
@@ -64,7 +71,31 @@ STAT_NAMES: dict[str, str] = {
 
 # P(he plays at all). unconditional by construction and the only stat whose
 # value is a probability rather than a quantity.
+#
+# 'prob_active' is the number the product uses: model output with the
+# injury-report override already applied. 'prob_active_model' is what the model
+# said before the layer touched it. both are written for every row, because the
+# override layer's constants are hand-set (fnba_ml/overrides.py) and the only way
+# to ever replace them with learned ones is to have both series on the record.
+# adding a stat name is a vocabulary extension, which migration 014 designed for -
+# the table is long-format precisely so this needs no schema change.
 PROB_ACTIVE = "prob_active"
+PROB_ACTIVE_MODEL = "prob_active_model"
+
+# WHY THESE TWO ARE NUMBERS. player_game_predictions.value is NUMERIC NOT NULL,
+# so a text reason cannot be stored as-is and the schema is not being widened for
+# it. instead:
+#   'status_override'     the reason, as a code from
+#                         overrides.OVERRIDE_REASON_CODES (append-only, so a code
+#                         never changes meaning).
+#   'status_captured_at'  the report's captured_at as unix epoch SECONDS, which is
+#                         lossless to the second and recovers to a timestamp with
+#                         to_timestamp(value) in postgres.
+# both rows are written ONLY for overridden player-games. an absent row means "the
+# model's probability stands", which is a fact better recorded by absence than by
+# a sentinel value that a later query has to know to exclude.
+STATUS_OVERRIDE = "status_override"
+STATUS_CAPTURED_AT_STAT = "status_captured_at"
 
 # the schedule-level expectation, P(play) x the conditional estimate. a suffix
 # rather than a `conditional` flag alone, because the uniqueness key in
@@ -109,7 +140,13 @@ def build_prediction_rows(
 
     per scheduled player-game, in this order:
 
-      prob_active            unconditional, quantile NULL, clamped to [0, 1]
+      prob_active            unconditional, quantile NULL, clamped to [0, 1].
+                             POST-override: the number the product should use.
+      prob_active_model      the model's own probability, same clamp. present
+                             whenever the frame came through the override layer.
+      status_override        reason code, overridden rows only
+      status_captured_at     the report's captured_at in epoch seconds, overridden
+                             rows only
       <stat>                 conditional expected value, quantile NULL
       <stat>_uncond          unconditional expected value, quantile NULL
       <stat> @ P10/P50/P90   conditional quantiles, sorted so they cannot cross
@@ -159,6 +196,25 @@ def build_prediction_rows(
         else:
             dropped += 1
 
+        model_probability = _finite(record.get(P_PLAY_MODEL))
+        if model_probability is not None:
+            emit(PROB_ACTIVE_MODEL, min(max(model_probability, 0.0), 1.0), conditional=False)
+
+        reason = record.get(OVERRIDE_REASON)
+        if isinstance(reason, str) and reason:
+            code = OVERRIDE_REASON_CODES.get(reason)
+            if code is None:
+                log.warning("override reason %r has no numeric code; not stored", reason)
+            else:
+                emit(STATUS_OVERRIDE, float(code), conditional=False)
+            captured = record.get(STATUS_CAPTURED_AT)
+            if captured is not None and not pd.isna(captured):
+                emit(
+                    STATUS_CAPTURED_AT_STAT,
+                    float(pd.Timestamp(captured).timestamp()),
+                    conditional=False,
+                )
+
         for target in targets:
             stat = STAT_NAMES.get(target, target.lower())
 
@@ -194,6 +250,7 @@ def build_run_record(
     code_sha: str | None = None,
     status: str = "complete",
     notes: str | None = None,
+    horizon: str | None = None,
 ) -> dict[str, object]:
     """the prediction_runs row: which model, trained how far, knowing what.
 
@@ -202,9 +259,19 @@ def build_run_record(
     they are usually close and are never the same fact - a backtest re-run today
     has today's ``predicted_at``, last season's ``forecast_cutoff_at``, and a
     ``trained_through`` earlier than both.
+
+    ``horizon`` is one of config.HORIZONS and is prepended to ``notes`` as
+    ``horizon=<name> (<offset>)``. it goes in notes rather than a column because
+    migration 014 has no horizon field and does not need one: notes is free text
+    on an append-only row, so the label is as immutable as a column would be, and
+    the same run row stays readable by a consumer that has never heard of
+    horizons. a run without a horizon is a run whose timing was not recorded,
+    which is worth being able to see.
     """
     window = metadata.get("training_window") or {}
     trained_through = window.get("end") if isinstance(window, dict) else None
+    if horizon:
+        notes = "; ".join(filter(None, [f"horizon={horizon_label(horizon)}", notes]))
     return {
         "model_version": str(metadata.get("model_version") or "unknown"),
         "feature_version": str(metadata.get("feature_version") or "unknown"),
