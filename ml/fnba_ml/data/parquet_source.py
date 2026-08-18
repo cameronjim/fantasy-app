@@ -31,6 +31,7 @@ from .schema import (
     STAT_COLS,
     STATUS_COLS,
     TEAM_LOG_COLS,
+    TEAM_LOG_OPTIONAL_COLS,
     normalise_dates,
     normalise_ids,
     require_columns,
@@ -103,11 +104,17 @@ class ParquetSource:
             )
         require_columns(raw, ("TEAM_ID", "GAME_ID", "GAME_DATE", "PTS", "MATCHUP"), "team log")
 
+        # FG3A is read IF PRESENT and never required. the spike's own nba_api
+        # exports predate the P2 matchup family; a directory without it produces a
+        # null ``opp_fg3a_allowed_per100`` and a warning from
+        # :mod:`fnba_ml.matchup`, rather than failing an offline run over one column
+        # of a candidate feature set.
+        optional = [c for c in TEAM_LOG_OPTIONAL_COLS if c in raw.columns]
         keep = ["TEAM_ID", "TEAM_ABBREVIATION", "GAME_ID", "SEASON", "GAME_DATE",
-                "MATCHUP", "PTS", "MIN", "FGA", "FTA", "TOV"]
+                "MATCHUP", "PTS", "MIN", "FGA", "FTA", "TOV", *optional]
         out = raw[keep].copy()
         out = normalise_ids(normalise_dates(out))
-        for col in ("PTS", "MIN", "FGA", "FTA", "TOV"):
+        for col in ("PTS", "MIN", "FGA", "FTA", "TOV", *optional):
             out[col] = pd.to_numeric(out[col], errors="coerce").astype(float)
         require_columns(out, TEAM_LOG_COLS, "canonical team log")
         log.info("parquet team logs: %d rows, seasons %s", len(out), found)

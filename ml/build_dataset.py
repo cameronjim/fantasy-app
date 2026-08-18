@@ -36,8 +36,10 @@ from fnba_ml.config import (  # noqa: E402
     MAGNITUDE_SHRINK_K,
     MAGNITUDE_WINDOW,
     P_CONTEXT,
+    V4_FEATURE_COLS,
 )
 from fnba_ml.features import attach_cross_fit_context, build_features  # noqa: E402
+from fnba_ml.matchup import attach_v4_features  # noqa: E402
 from fnba_ml.teammates import (  # noqa: E402
     position_group_counts,
     teammate_feature_summary,
@@ -52,6 +54,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     add_source_args(parser)
     add_common_args(parser)
     parser.add_argument("--out", type=Path, default=DATA_DIR / "dataset.parquet")
+    parser.add_argument(
+        "--no-v4-candidate", action="store_true",
+        help="skip the P2 matchup / blowout / stakes / start-rate columns "
+             f"({len(V4_FEATURE_COLS)} of them, fnba_ml.matchup). they are PURELY "
+             f"ADDITIVE - FEATURE_COLS names none of them and the served contract is "
+             f"unchanged - and they cost one extra LightGBM cross-fit over 9,840 "
+             f"team-games. This flag exists so a dataset can be rebuilt to the exact "
+             f"pre-P2 column set if a v3 number ever has to be reproduced",
+    )
     return parser.parse_args(argv)
 
 
@@ -69,6 +80,11 @@ def main(argv: list[str] | None = None) -> int:
     # for every consumer (evaluate, train, predict) to run the same cross-fit
     # independently and hope they agreed.
     features = attach_cross_fit_context(features)
+    # P2's candidate family. Additive: FEATURE_COLS names none of these columns, so
+    # the served 51-column contract and the frozen artifact are unaffected, and
+    # FEATURE_SETS["v4"] becomes evaluable over the same rows as v3-honest.
+    if not args.no_v4_candidate:
+        features = attach_v4_features(features, source.load_team_game_logs())
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     features.to_parquet(args.out, index=False)

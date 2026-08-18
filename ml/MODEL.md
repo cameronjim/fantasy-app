@@ -5,7 +5,22 @@ external review. Everything below is implemented and measured unless marked
 **[GAP]** or **[PLANNED]**. Sections 9 and 11 answer the external reviews point by
 point.
 
-**Latest change (2026-08-18, artifact `20260818`, feature_version still `v3`): the
+**Latest change (2026-08-19, P2): a 21-column candidate feature set — opponent matchup /
+pace, a pregame blowout probability, and season-stakes load-management context — was
+built as `feature_version v4` (72 columns), evaluated against the served contract over
+identical rows and six rolling origins under a bar registered before the numbers
+existed, and DID NOT CLEAR IT.** `prospective_2026_27_v1` remains frozen; `FEATURE_COLS`
+is unchanged at 51 columns with the same `914cdc17…` digest; artifact `20260818` is
+untouched. Pooled: availability Brier **+0.66%** (95% CI [+0.41%, +1.13%]), minutes MAE
+**+0.45%** (CI [+0.28%, +0.73%]) against a **1%** floor — real, significant, and about
+half the bar. Two findings survive the null: the **late-season origin** shows −1.55%
+availability Brier (triple the pooled effect) and the **stakes-flagged cohort** −1.91%,
+so the load-management hypothesis held exactly where it was aimed; and the blowout model
+is worthless (AUC 0.536, no Brier skill), which surfaced the incidental finding that the
+package's default `LGBM_PARAMS` scores **22% worse than a constant** on a frame fifteen
+times smaller than the one it was tuned for. **Section 15** is the full record.
+
+Previous change (2026-08-18, artifact `20260818`, feature_version still `v3`): **the
 system serves all nine fantasy categories instead of two.** `RATE_TARGETS` went from
 `(PTS, AST)` to `PTS REB AST STL BLK TOV FG3M FGM FGA FTM FTA`, each with a halflife
 selected on inner training folds, each through the same guarded composition, and each
@@ -2861,3 +2876,491 @@ across the table, and it does not.
   at all.
 - **`SEASON` still defaults to 2025-26.** The rollover machinery exists; pulling the
   trigger is an opening-week decision, not a P5 one.
+
+## 15. P2 — matchup, blowout and season stakes (2026-08-19). The candidate did NOT clear its bar.
+
+**The verdict first, because a null result buried under its own methodology is a null
+result nobody reads.** A 21-column candidate feature set (`feature_version v4`,
+72 columns against v3's 51) describing the *game* rather than the player — possession
+environment, a pregame blowout probability, and season-stakes / load-management
+context — was built, evaluated against the served contract over identical rows and six
+rolling origins under a bar registered before the numbers existed, and **it did not
+clear the bar. `prospective_2026_27_v1` remains frozen. `FEATURE_COLS` is still the
+same 51 columns with the same `914cdc17…` digest, `FEATURE_VERSION` is still `v3`,
+artifact `20260818` is untouched, and `tests/test_prospective_freeze.py` is green.**
+
+**Nothing in section 13 is superseded and nothing in it was edited.** The candidate
+exists as `config.FEATURE_COLS_V4` and `config.FEATURE_SETS["v4"]`, alongside the frozen
+contract rather than replacing it. That was the design constraint from the start (13.2
+item 6 makes any `FEATURE_COLS` change a re-freeze trigger) and it is what makes this
+section an experiment record rather than a re-freeze.
+
+### 15.1 The pre-registered bar, and one look
+
+Written into `config`'s P2 block before the bracket ran, and quoted by
+`run_p2_bracket.py`'s own header before it prints a single number:
+
+> A paired **7-day moving-block bootstrap** over game dates (the frozen convention from
+> `ml/experiments/production_tournament/bootstrap.py`, loaded by path rather than
+> reimplemented, 2,000 replicates), **95% percentile CI excluding zero**, **AND ≥ 1.0%
+> pooled relative improvement on minutes MAE or availability Brier**, **AND no reported
+> cohort regressing by more than 1.0%**.
+
+**Why 1% and not the package's usual 2%.** The 2% line is the bar for promoting a new
+*estimator* — a different model class in the serving path is a large change and should
+have to pay for itself largely. This is a **feature-set change to an existing champion**:
+same LightGBM, same composition, same artifact shape, more columns. The precedent is
+section 11's v3 adoption, which shipped on −1.98% availability Brier and −0.81% minutes
+MAE and was accepted because it was measured on identical rows with the same estimator.
+1% is that precedent's bar made explicit. **Stating the rationale before the result is
+the whole point**: the pooled availability number came in at +0.66% with a CI upper
+bound of +1.13%, which is exactly the situation in which a bar chosen afterwards would
+have been chosen at 0.5%.
+
+**Unconditional PTS is reported and is not a gate.** It is downstream of both gated
+endpoints, so letting it clear the bar would count one win twice.
+
+**One look, per 13.6.** "If a `v4` feature set is built during 2026-27, it gets **one**
+pre-registered evaluation… it does not get a second look at a later date, it does not
+get re-scored after a fix, and a fix produces `v5` with its own single look." This is
+that look. The numbers below are final for v4; anything that changes them is v5.
+
+### 15.2 What was built
+
+**A. Opponent matchup / possession environment (9 columns).** Own and opponent pace
+(possessions per 48), the game's pace mean and product, own and opponent rolling net
+rating, opponent **defensive rating** (points allowed per 100 possessions — the
+refinement of the v3 `OPP_DEF_FORM`, which is raw points allowed per game and therefore
+conflates good defence with slow pace), and opponent **style**: 3PA allowed and FTA
+allowed, both per 100 possessions. All rolling 15 team-games, season-scoped, every one
+`shift(1)`-ed before the rolling window and *before* the own/opponent merge.
+
+**`OPP_DEF_FORM` was kept, not replaced.** Removing it would have made this a
+two-variable change and there would be no way to distinguish a refinement from a
+removal.
+
+**The possession estimate deviates from the textbook and the deviation is measured.**
+`team_game_logs` **has no `oreb` column** — verified against the dev schema: the table
+carries `reb` with no offensive/defensive split, and no other table in the truth layer
+has one. So the standard OREB-free fallback is used:
+
+```
+poss ≈ FGA + 0.44·FTA + TOV      (documented; config.POSSESSION_USES_OREB = False)
+```
+
+which is the same formula the v2 usage feature already uses, so the two are consistent
+rather than being two notions of a possession. **What it costs:** offensive rebounds
+extend a possession, so the fallback overcounts by roughly a team's OREB count — the
+measured mean pace is **112.3** against a published league figure near 99–100, a level
+shift of about +12%. Every consumer of the number is a *relative* comparison between
+teams (pace percentiles, a shared defensive-rating denominator), so a level shift is
+close to harmless; it becomes a real error only where teams differ a lot in OREB rate,
+which is a second-order spread on a first-order one. **[GAP]** An upstream OREB/DREB
+split would allow the textbook form, and the fix belongs in the scraper.
+
+**B. Honest pregame blowout model (2 columns).** Two-stage, all out-of-fold.
+`blowout_prob` plus one interaction, `blowout_prob × minutes_share`. See 15.7 — this
+family is the phase's clearest negative result and it produced the phase's most useful
+incidental finding.
+
+**C. Season stakes (8 columns).** `team_games_remaining` (82 − games played; 82 is a
+constant, and it is exactly right — 2,460 team-game rows / 30 teams = 82.0 in all four
+seasons), `team_win_pct`, `team_games_over_500` = (W−L)/2 signed, a `late_season`
+indicator at ≤ 15 games remaining, and a **clinch proxy** rather than seed math:
+
+```
+stakes_lockedness = 1(late season) · min(1, |games over .500| / games remaining)
+```
+
+which reads as "how far from .500 this team is, in units of the games it has left to
+change it". At 1.0 the remaining schedule cannot return the team to .500 — the
+tiebreak-free version of "this team's season is decided". True seed math needs the full
+conference standings on every date plus tiebreak rules and would still not produce
+"clinched"; the proxy is cheap, continuous (a hard flag would throw away the ordering
+inside the band where the effect is strongest), and documented as a proxy. Plus the two
+player-level interactions the observation demands: `stakes_lockedness × minutes_share`
+and `stakes_lockedness × log1p(career appearances)`, because a rest candidate is not "a
+player on a locked team" but a **high-minute veteran** on one, and neither factor alone
+identifies him.
+
+**D. Start rate: the data does not exist, and it is not sparse — it is absent (1
+column).** Measured on the dev truth layer:
+
+| column | rows | NULL | `true` | `false` |
+|---|---:|---:|---:|---:|
+| `player_game_logs.started` | 105,253 | **105,253 (100%)** | 0 | 0 |
+| `player_game_status.started` | 74,870 | 52,957 (70.7%) | **0** | 21,913 |
+
+**Zero `true` values league-wide.** A rolling start rate would be a rolling mean of
+zero. This confirms the suspicion in `build_player_game_log_row` and extends it: the
+box-score path writes only the negative case, so the column is structurally absent
+rather than thinly populated. The proxy shipped instead is `top5_min_share_10` — the
+share of the player's last 10 **scheduled** team-games in which he was among his team's
+top 5 by minutes played. Five is the number of players on the floor at tip, so "top 5 in
+minutes" is the outcome a start usually produces; it is not the same thing (a sixth man
+can out-minute a starter) and the column is named for what it measures. Non-appearances
+count as 0, exactly as `avail_rate_10` counts them, because "did not play" is not
+"started". **Nothing was scraped.**
+
+Plus `minutes_share` (roll10_MIN ÷ rolling team minutes per lineup slot, ~48 in
+regulation), which is its own column and not only an interaction term because it is the
+quantity *both* interactions multiply and a booster handed only the products cannot
+recover it.
+
+### 15.3 The sixth origin, and why it is March **2025**
+
+`config.ORIGINS` is untouched at five entries — `tests/test_teammates_v3.py` pins
+`len(ORIGINS) == 5` and every champion decision in sections 5, 11 and 12 was made on
+exactly those five, so a sixth entry there would silently redefine what "the five
+origins" means in every published table. The sixth lives in **`config.DEV_ORIGINS`**,
+which is `ORIGINS + [LATE_SEASON_ORIGIN]`, and the P2 bracket runs on that.
+
+**It validates on 2025-03-15 → 2025-04-12 and the choice of year is the load-bearing
+part.** March–April **2026** is inside the **selection holdout** (section 6: Feb-2026 →
+Apr-2026, "never used for model selection"). Using it as a development origin would have
+consumed the holdout for selection, which is precisely the claim section 6 makes.
+March–April **2025** is in 2024-25, is not the holdout, and carries comparable volume
+(6,679 scheduled rows against ~6,500 for the 2026 window). The more recent data was
+available and was not usable for this purpose.
+`tests/test_matchup_v4.py::test_the_late_season_origin_is_outside_the_selection_holdout`
+encodes the constraint so it cannot be quietly reverted.
+
+### 15.4 The decision table
+
+Paired 7-day moving-block bootstrap, 2,000 replicates, blocks drawn within origin,
+pooled over all six origins. **Positive = the candidate is better.**
+
+| endpoint | gate | v3-honest | v4 | rel. improvement | 95% CI | CI excl. 0 | clears 1% bar |
+|---|:--:|---:|---:|---:|---|:--:|:--:|
+| **availability Brier** | yes | 0.073697 | 0.073208 | **+0.66%** | [+0.41%, +1.13%] | yes | **NO** |
+| **minutes MAE** | yes | 4.7330 | 4.7117 | **+0.45%** | [+0.28%, +0.73%] | yes | **NO** |
+| uncond. PTS MAE | report | 3.9744 | 3.9617 | +0.32% | [+0.25%, +0.48%] | yes | — |
+
+37,596 scheduled rows / 26,498 appearance rows / 170 distinct game dates. Every
+bootstrap p-value is at the resolution floor (0.0005).
+
+**The candidate is real and it is too small.** All three effects are in the right
+direction, all three CIs exclude zero, and neither of the two gated point estimates
+reaches 1%. This is the cleanest kind of null this document has produced: not "we could
+not tell", but "we could tell, and the answer is about half the bar". Availability's CI
+upper bound of +1.13% straddles the bar, which is worth stating plainly — a season's more
+data might well put it over — and is exactly why the bar was written down first.
+
+**One cohort regresses past the tolerance**, and it would have blocked promotion even
+had a gate cleared: `control: vacated_minutes < 5` minutes MAE at **+1.63%** on 564
+rows. That is the *control* cohort — the quiet nights where nobody is out — and it is
+the smallest cohort in the report, so the honest reading is "probably noise on 564 rows,
+and the rule does not have a noise exemption".
+
+### 15.5 Per-origin: the late-season effect is real and it is the largest one
+
+| endpoint | O1 12-24 | O2 01-25 | O3 02-25 | O4 12-25 | O5 01-26 | **O6 Mar–Apr 25** |
+|---|---:|---:|---:|---:|---:|---:|
+| availability Brier Δ% | −0.52 | −0.15 | −0.26 | −0.80 | −0.50 | **−1.55** |
+| minutes MAE Δ% | −0.03 | −0.50 | −0.52 | −0.35 | −0.54 | **−0.69** |
+| uncond. PTS MAE Δ% | −0.35 | **+0.14** | −0.36 | −0.39 | −0.40 | **−0.57** |
+
+(negative = v4 better.)
+
+**The late-season origin is the best origin on all three endpoints, and on availability
+it is roughly triple the pooled effect.** −1.55% on a single month of March–April rows
+is within touching distance of the 1% bar on its own. This is the load-management
+hypothesis behaving exactly as predicted, and it is the finding that makes the sixth
+origin worth having existed: pooled over five winter months the same effect reads
+−0.66%, which is a dilution and not a measurement.
+
+**It is not, however, licence to promote on the late-season origin.** Selecting the
+window where the answer is most flattering is the thing the pre-registration exists to
+prevent, and the pooled number is the gate. What it *is* licence to do is say where a v5
+should look.
+
+### 15.6 The two new cohorts: the stakes family earns its keep, the blowout family does not
+
+Both cohorts are appended (`config.V4_DESCRIPTIVE_COHORTS`); `EVENT_COHORTS` is frozen
+by `test_prospective_freeze.py` and was not touched. The blowout cohort is a **quantile**
+cut rather than a fixed threshold — the league blowout rate drifted 26.8% → 37.2% across
+the four seasons, so a fixed probability would not mean the same share of rows in every
+origin.
+
+| cohort | n | availability Brier Δ% | minutes MAE Δ% | uncond. PTS Δ% |
+|---|---:|---:|---:|---:|
+| ALL | 37,596 | −0.66 | −0.45 | −0.32 |
+| **v4: stakes-flagged (locked, late)** | 4,755 | **−1.91** | −0.51 | **−0.80** |
+| **v4: blowout_prob top decile** | 3,800 | **−0.00** | −0.06 | −0.01 |
+
+**The stakes-flagged cohort is the largest availability gain of any cohort in the
+report** — larger than `star_out = 1` (−1.14%), larger than `star (≥30)` (−1.28%), and
+close to triple the pooled effect. The features aimed at load management improve
+availability on exactly the games load management happens in. **That is the phase's
+positive result and it survived a null verdict.**
+
+**The blowout-decile cohort is indistinguishable from zero on all three endpoints**, on
+the 10% of rows where a blowout feature should help most. Combined with 15.7 that is a
+coherent story rather than two puzzles: a probability with AUC 0.536 cannot separate
+anything, so the cohort it defines is barely a cohort.
+
+### 15.7 The blowout model: AUC 0.536, no Brier skill, and a hyperparameter finding worth more than the feature
+
+**Label.** `1(|final margin| ≥ 15)`. Chosen from the data and the alternatives are
+recorded so the choice can be argued with — over all 9,840 team-games (mean |margin|
+12.45, median 10):
+
+| threshold | 5 | 10 | 12 | **15** | 18 | 20 | 25 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| share | 80.1% | 53.0% | 44.0% | **32.6%** | 24.2% | 19.7% | 11.2% |
+
+10 is a coin flip and names nothing; 20 leaves 1,900 positives and stops describing the
+games where a starter loses six minutes rather than sixteen. 15 keeps a third positive.
+The **per-season trend is 26.8% / 32.4% / 34.2% / 37.2%** — a real league-level drift,
+and one more reason the classifier is cross-fitted forward in time rather than fitted
+once on the pooled four seasons.
+
+**Construction.** Pregame-knowable inputs only: both teams' rolling net ratings and
+their absolute gap, both season-to-date win percentages as a gap and a sum, the pace
+environment, rest and back-to-back on both sides, home/away. Cross-fitted over
+consecutive calendar-month blocks — **the identical scheme
+`models.cross_fit_base_probabilities` uses for `p_j`**, deliberately the same rather
+than merely similar — with every probability stamped with its block start and checked by
+`validate_out_of_fold`. 93.4% of team-games scored by a fitted block; the opening month
+(6.6%) falls back to the hand-set `BLOWOUT_PRIOR = 0.33`.
+
+**Both a GAP and a SUM of every strength measure, because the target is symmetric.**
+`|margin| ≥ 15` is the same label for both team-games of a game, so pooled over the
+dataset every game appears twice with the roles swapped and `corr(own_net_rating, y)`
+is forced to equal `corr(opp_net_rating, y)` exactly — measured at −0.0166 for both,
+which looks like a duplicated-column bug and is not one. The gap is the mismatch; the
+sum is the quality level, which is a different question.
+
+**Quality, out-of-fold, over 9,840 team-games:**
+
+| | value |
+|---|---:|
+| base rate | 0.3264 |
+| **AUC** | **0.5360** |
+| Brier | 0.2209 |
+| Brier of the constant base rate | 0.2199 |
+| **Brier skill** | **−0.0045** |
+| calibration slope / intercept | 0.601 / −0.177 |
+
+**So the honest statement is that this feature set predicts blowouts essentially not at
+all in Brier terms, with a small but real ranking signal.** The signal is visible where
+you would look for it — the top decile of |as-of margin gap| contains **41.5%** blowouts
+against **27.1%** in the bottom decile, and the shipped `blowout_prob` top decile
+contains **43.0%** against 34.6% elsewhere — but a 1.24× lift on a base rate of 0.33 is
+not enough to move a minutes model, and 15.6 confirms it did not.
+
+**The incidental finding, which is worth more than the feature.** The first
+implementation used the package's default `LGBM_PARAMS` (400 estimators, 31 leaves,
+`min_child_samples` 50) for the blowout classifier, and shipped a `blowout_prob` with
+**AUC 0.515, Brier skill −0.122 and calibration slope 0.057. Nothing failed.** The
+dataset build succeeded, every leakage guard passed, and the column looked like a
+probability. An inner-fold selection — a time-ordered 70/30 split of every team-game
+strictly before 2024-12-01, i.e. inside the training window of every reported origin,
+3,854 / 1,652 rows — found this:
+
+| estimator | AUC | Brier | Brier skill |
+|---|---:|---:|---:|
+| constant base rate | 0.500 | 0.2217 | 0.0000 |
+| **logistic (shipped)** | 0.516 | 0.2218 | **−0.0005** |
+| LightGBM 150/7/150 | — | 0.2268 | −0.0205 |
+| LightGBM 200/15/100 | — | 0.2331 | −0.0490 |
+| **LightGBM 400/31/50 (`LGBM_PARAMS`)** | 0.465 | 0.2696 | **−0.2163** |
+
+**`LGBM_PARAMS` is catastrophically wrong for a 9,840-row frame, by a factor nobody
+would guess: 22% worse than a constant.** It was tuned for the 147,413-row player-game
+frame; a team-game frame is fifteen times smaller and the same settings memorise it.
+**Reusing a package default across a fifteen-fold change in sample size is the error**,
+and it is recorded because it would otherwise have shipped silently and every
+`blowout_prob`-derived number in this section would have been a statement about noise.
+`config.BLOWOUT_MODEL_KIND` now names the logistic with the table above written next to
+it, and `matchup.select_blowout_estimator` reruns the pass — *rerunning it is how the
+choice is CHECKED, not how it is changed*, the same rule `select_rate_halflives`
+operates under.
+
+**Scored on Brier and not AUC**, deliberately: the column is consumed as a probability
+and multiplied by `minutes_share`, so a well-ranked but badly calibrated probability
+would put a systematic scale error into the interaction.
+
+### 15.8 Which features carried signal
+
+Mean split-gain share over all six origins, v4 feature set. The 21 candidate columns
+take **5.84%** of the availability model's gain and **4.27%** of the minutes model's —
+and the top of each table is unchanged from v3 (`games_since_last_app` 59.8% for
+availability, `ewma_MIN` 58.0% for minutes), which is the correct shape: a game-context
+family should not displace the player's own history.
+
+| rank | availability | share | minutes | share |
+|---|---|---:|---|---:|
+| 1 | `team_games_remaining` | 0.587% | `team_games_remaining` | 0.757% |
+| 2 | `team_win_pct` | 0.427% | `team_games_over_500` | 0.278% |
+| 3 | `own_net_rating` | 0.424% | `opp_fta_allowed_per100` | 0.271% |
+| 4 | `own_pace` | 0.391% | `opp_net_rating` | 0.269% |
+| 5 | `opp_net_rating` / `opp_fta_allowed_per100` | 0.383% | `team_win_pct` | 0.267% |
+| … | `blowout_x_minutes_share` | 0.334% | `blowout_prob` | 0.236% |
+| … | `stakes_x_minutes_share` | 0.232% | `stakes_late_x_over500` | 0.228% |
+| … | `top5_min_share_10` | 0.155% | `top5_min_share_10` | 0.094% |
+| last | **`late_season`** | **0.0002%** | **`late_season`** | **0.0002%** |
+
+**Read the first row and the last row together.** `team_games_remaining` is the single
+largest new column in both models, and `late_season` — which is a deterministic step
+function *of* `team_games_remaining` — carries essentially zero gain. The model did not
+want a hand-drawn threshold at 15 games; it wanted the continuous variable and it cut it
+where it liked. **`late_season` should not exist in a v5**, and neither should
+`stakes_lockedness` as a *gate* on the interactions: the interactions
+(`stakes_x_minutes_share` 0.232% for availability, `stakes_late_x_over500` 0.228% for
+minutes) do carry signal, but the lockedness column itself is near the bottom (0.049% /
+0.056%), which says the composite was doing less work than its two ingredients would
+have separately.
+
+**And section 5.2's general conclusion applies again: split gain is an allocation
+statement, not a value statement.** 5.84% of gain co-exists with a +0.66% Brier
+improvement. The stakes family's *value* claim rests on 15.6's cohort table, not on this
+one.
+
+### 15.9 Leakage tests
+
+**57 new tests in `tests/test_matchup_v4.py`.** Suite total **575** (518 before this
+phase); `ml/experiments/production_tournament` is untouched at **70**. The six that
+carry the argument:
+
+1. **The freeze, asserted from this side too.** `FEATURE_COLS` is 51 columns, its
+   sha256 is still `914cdc17…`, `FEATURE_VERSION` is `v3`, `FEATURE_SETS["v1"]` and
+   `["v3-honest"]` are byte-identical, and `TARGET_COLS ∩ FEATURE_COLS_V4 = ∅`. A
+   candidate feature set is the single most likely thing to break the freeze by
+   accident, because the natural way to write one is to append to `FEATURE_COLS`.
+2. **Box-score flip invariance, with a mandatory counter-assertion.** One mid-season
+   game's box score is replaced with absurd values on both sides; **every rolling and
+   stakes feature on that game's own two rows must be bit-identical**, and *later* rows
+   must move. Without the second half, a construction where the flip silently failed to
+   take effect would pass. This is the v2 defect (section 11) transplanted to team level
+   and the opponent's target-game box score is sitting one merge away.
+3. **A hand-computed rolling window plus an unshifted negative control.** The context
+   column at row *k* must equal the mean of the raw per-game pace over rows
+   [*k*−15, *k*−1], null before `min_periods`; and the leaky twin
+   (`rolling().mean()` with no `shift(1)`) is built in the test and required to
+   **differ**. "The first row is null" passes against an unshifted window as soon as
+   `min_periods` is 1, so it is not a shift test.
+4. **The peeked blowout control.** `cross_fit_blowout_probabilities(peek=True)` fits one
+   model on every row including its own outcome; its Brier must be **at least 5% better**
+   than the out-of-fold one and its AUC strictly higher. A margin rather than mere
+   inequality is what makes it detect a vacuous test. Plus a truncation test: deleting
+   every game from a month onward must not change any earlier row's probability, which is
+   the strongest available statement of forward chaining.
+5. **The stakes record cannot see the target game's result.** A game's winner is flipped
+   in a synthetic three-game season; that row's `team_wins_to_date` must be unchanged and
+   the *next* row's must move. Plus the lockedness formula against an 80-game hand-built
+   60-20 record, where the arithmetic is checkable by addition.
+6. **The start-rate proxy gets the same pair.** It is the one candidate column computed
+   directly from the target game's own minutes (step 1 ranks that game's appearances), so
+   its safety rests on a single `shift(1)`: an unshifted twin is built and required to
+   differ, and a bench player is given 48 minutes in one game with the requirement that
+   his start rate on *that* row is unchanged and on later rows is not. The victim is
+   chosen from rows currently OUTSIDE the top-5 on purpose — flipping a player who
+   already leads his team in minutes changes no label, and the counter-assertion would
+   then fail for a reason unrelated to leakage.
+
+Also pinned: the possession formula including its OREB-free deviation (the deviation is
+the thing most likely to be silently "fixed" by someone who remembers the textbook);
+that matchup rest days equal `features.schedule_features`' rest days, because the
+definition is written twice and two definitions of one quantity is how a package
+acquires a number that is right in one table and wrong in another; that
+`opp_def_rating` on team A's row is team B's shifted rating and **not** A's own; that
+the blowout label is symmetric and the signed margins sum to zero; that a thin block
+falls back to the prior rather than to a model; that the pregame model raises if an
+outcome column is added to its feature list; that a quantile cohort over a *constant*
+column is **skipped** rather than reported as a 100%-of-rows duplicate of ALL; and both
+bootstrap nulls — two identical passes must not promote, and a uniform 20% improvement
+must.
+
+### 15.10 Deviations, with justification
+
+- **`ORIGINS` was not extended; `DEV_ORIGINS` was added.** The task allowed either;
+  `tests/test_teammates_v3.py:918` pins `len(ORIGINS) == 5`, so the extra origin is in a
+  separate list and the P2 bracket runs on it. 15.3.
+- **The late-season origin is 2025, not 2026.** Reasoned in 15.3: the 2026 window is
+  inside the selection holdout.
+- **`evaluate.py --bracket` was run with `--no-rate-ladder`.** Four feature-set passes
+  (v1 / v3-honest / v2-oracle / v4) over six origins with the full 11-stat rate ladder
+  did not fit the phase's wall-clock budget. The rate ladder is a per-stat estimator
+  question that this feature-set change does not bear on, and the ladder's headline
+  numbers (availability Brier, minutes MAE, unconditional PTS) are unaffected by the
+  flag. Composition parity still ran and passed: −1.44% against the previous
+  composition, i.e. the promoted composition is *better*, well inside the 1% regression
+  tolerance.
+- **`run_p2_bracket.py` exists rather than the decision being computed inside
+  `evaluate.py`.** A paired bootstrap needs **per-row** losses from both passes with row
+  identity intact; `evaluate.py` aggregates to per-cohort means over origins. The new
+  script fits only the promoted path, twice per origin, and derives the pooled numbers,
+  the per-origin table, the cohort tables *and* the bootstrap from one per-row frame — so
+  the cohort table cannot disagree with the bootstrap, because both are aggregations of
+  the same loss array.
+- **The bootstrap is loaded from `ml/experiments/production_tournament/bootstrap.py` by
+  file path.** That module is the frozen convention (the instrument PTS/AST were closed
+  under, which 13.6 names as this phase's precedent), `ml/experiments/` is read-only in
+  this phase, and a second implementation would be a second set of edge cases in the
+  block-sum arithmetic. `importlib` by path rather than a `sys.path` insertion because
+  `fnba_ml` is imported from several working directories.
+- **`build_v4_dataset.py` backfills rather than `build_dataset.py` rebuilding.** The dev
+  database holds `player_game_status` for 2024-25 onward only (74,870 rows against the
+  truth layer's 147,565) and `nba_schedule` likewise, so a full rebuild there would have
+  silently produced a two-season dataset and every number would have been incomparable
+  with every number in this document. `team_game_logs` **is** complete in dev (2,460 rows
+  per season, all four), so the backfill reads the existing 147,413-row dataset and
+  decorates it. Both paths call the same `matchup.attach_v4_features`, so a backfilled
+  column and a freshly built one are the same number by construction.
+- **`TEAM_LOGS_SQL` no longer joins `nba_schedule`.** It was reading two tables to get
+  one table's own `season` / `season_type` / `game_date`, and where `nba_schedule` is
+  incompletely backfilled the INNER join dropped every team-game of the earlier seasons.
+  On a complete database the two forms return identical rows. `FG3A` was added to the
+  same query and is **optional** downstream, so a parquet directory that predates it
+  yields a null `opp_fg3a_allowed_per100` and a warning rather than a failure.
+- **`FG3A` was added to the test fixtures, derived and not drawn.** `fg3a = min(max(fg3m,
+  fg3m/0.36), fga)` makes **no rng call**, so every previously recorded fixture number in
+  the repo is byte-identical — the same technique the FGM addition used in section 12.1.
+- **No hyperparameter grid was reduced except the blowout classifier's**, which was
+  selected on inner folds over four LightGBM configurations plus a logistic (15.7). Pace
+  window (15) and `min_periods` (5) are hand-set on the same reasoning as
+  `OPP_FORM_WINDOW`, and a window selected on validation rows would be selecting on the
+  thing being reported. No origin and no row count was reduced anywhere.
+
+### 15.11 What this means for opening night, and what a v5 should do
+
+**For opening night: nothing changes.** `prospective_2026_27_v1` is intact, artifact
+`20260818` is what serves, `FEATURE_COLS` is the same 51 columns, and the ten
+falsification rows in 13.5 stand unmodified. The candidate columns *are* on
+`data/dataset_v4.parquet` and `build_dataset.py` computes them by default (additively —
+`FEATURE_COLS` names none of them, so `available_features` returns the same 51 names),
+which costs one extra LightGBM cross-fit over 9,840 team-games and makes a future
+re-evaluation a scoring run rather than a rebuild. `--no-v4-candidate` reproduces the
+exact pre-P2 column set.
+
+**The one thing this phase changes about how the prospective test will be read.** F2/F3
+concern teammate context and are unaffected. But 15.5's per-origin table says the
+game-context effect is **three times larger in March–April than in December–January**,
+and 13.6's look schedule is Dec 1 / All-Star / season end. A v5 evaluated at the
+season-end look will see its best month; one evaluated at Dec 1 will see its worst. That
+is a fact about the effect, not about the protocol, and recording it now means a
+December reading of "v5 bought nothing" cannot be presented in April as evidence of
+anything — the mirror image of 13.5's note on the F2/F3/F4 Dec-1 tripwires.
+
+**What a v5 should do differently**, in order of expected value:
+
+1. **Drop the blowout family.** AUC 0.536, no Brier skill, and exactly zero effect on the
+   cohort it defines (15.6). The inputs available at forecast time — 15-game rolling net
+   ratings — are too noisy a strength measure, and the thing that would fix it is not a
+   better model but better information: a market line, or a lineup-aware strength
+   estimate. Until one exists, three columns and a cross-fit are buying nothing.
+2. **Drop `late_season` and `stakes_lockedness` as columns and keep their interactions.**
+   15.8: the model wanted `team_games_remaining` continuous and cut it where it liked;
+   the hand-drawn 15-game threshold carries 0.0002% of gain.
+3. **Take the stakes family seriously and scope it to where it works.** −1.91%
+   availability Brier on the stakes-flagged cohort and −1.55% on the whole late-season
+   origin are the two largest numbers in this section. A v5 that shipped the stakes
+   family *alone* — five or six columns instead of twenty-one — would face a far smaller
+   dilution penalty on the pooled endpoint, and dilution is the most likely reason a
+   real effect measured at −1.91% on 4,755 rows landed at +0.66% on 37,596.
+4. **Fix the OREB gap upstream first if the pace family is to be revisited.** The pace
+   columns carry gain (0.39% / 0.22%) and no measurable value; a possession count that is
+   12% too high is not the obvious reason, but it is a reason that can be removed rather
+   than argued about.
+5. **Do not re-score v4.** 13.6: one look per feature version. This was it.
