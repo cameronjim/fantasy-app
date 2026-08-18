@@ -4,7 +4,9 @@ import { pgResult } from '../helpers/mockDb.js';
 
 const { app } = await import('../../src/app.js');
 const { query } = await import('../../src/db.js');
-const { IMPACT_PERCENTILE_FLOOR } = await import('../../src/services/watchlist.js');
+const { IMPACT_PERCENTILE_FLOOR, MAX_WINDOW_DAYS, POSITION_FILTERS } = await import(
+  '../../src/services/watchlist.js'
+);
 const { baselineDescriptor, BASELINE_STATS } = await import('../../src/services/baselines.js');
 const { IMPACT_POOL_KEY, IMPACT_POOL_LABEL, IMPACT_POOL_DEFINITION, POINTS_UNCOND_STAT } =
   await import('../../src/services/slate.js');
@@ -455,10 +457,12 @@ describe('GET /api/predictions/slate', () => {
  */
 function watchRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   const row: Record<string, unknown> = {
+    game_date: '2026-02-04',
     nba_game_id: '0022500555',
     nba_player_id: '1630559',
     name: 'Breakout Wing',
     team_abbr: 'OKC',
+    position: 'SG,SF',
     prob_active: 0.88,
     proj_min_p50: 31,
   };
@@ -506,6 +510,25 @@ function benchBaselines(count: number): Record<string, unknown>[] {
 }
 
 const gameTeamRows = [{ nba_game_id: '0022500555', home_team_abbr: 'OKC', away_team_abbr: 'LAL' }];
+
+/**
+ * The same player-game on another date, with its own game id so the opponent
+ * lookup and the teammate grouping stay per-game.
+ */
+function watchRowOn(
+  date: string,
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return watchRow({ game_date: date, nba_game_id: `00225005${date.slice(-2)}`, ...overrides });
+}
+
+function benchPoolOn(date: string, count: number): Record<string, unknown>[] {
+  return benchPool(count).map((row) => ({
+    ...row,
+    game_date: date,
+    nba_game_id: `00225005${date.slice(-2)}`,
+  }));
+}
 
 describe('GET /api/watchlist', () => {
   it('ranks a role increase with its deltas, both score factors and its reasons', async () => {
@@ -667,9 +690,13 @@ describe('GET /api/watchlist', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       date: '2026-02-04',
+      window: { from: '2026-02-04', to: '2026-02-04', days: 1 },
       run: null,
       pool: poolOf(0),
       baseline,
+      position: null,
+      position_options: [...POSITION_FILTERS],
+      position_coverage: { known: 0, unknown: 0 },
       players: [],
     });
     // no run means the remaining round trips are never issued
@@ -758,7 +785,7 @@ describe('GET /api/watchlist', () => {
     expect(params?.[0]).toBe('2026-02-04');
   });
 
-  it('binds the run and the date as parameters rather than interpolating them', async () => {
+  it('binds the run and the window as parameters rather than interpolating them', async () => {
     // arrange
     queryMock
       .mockResolvedValueOnce(pgResult([runRow]))
@@ -771,7 +798,238 @@ describe('GET /api/watchlist', () => {
 
     // assert
     const [sql, params] = queryMock.mock.calls[1];
-    expect(params?.slice(0, 2)).toEqual([42, '2026-02-04']);
+    expect(params?.slice(0, 3)).toEqual([42, '2026-02-04', '2026-02-04']);
     expect(sql).toContain('$1');
+  });
+
+  it('carries the position and the games count on every row', async () => {
+    // arrange
+    queryMock
+      .mockResolvedValueOnce(pgResult([runRow]))
+      .mockResolvedValueOnce(pgResult([watchRow({ u_pts: 20, c_pts: 20 }), ...benchPool(60)]))
+      .mockResolvedValueOnce(
+        pgResult([baselineRow('1630559', { minutes: 22, pts: 11 }), ...benchBaselines(60)])
+      )
+      .mockResolvedValueOnce(pgResult(gameTeamRows));
+
+    // act
+    const res = await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
+
+    // assert
+    const candidate = res.body.players[0];
+    expect(candidate.position).toBe('SG/SF');
+    expect(candidate.games_count).toBe(1);
+    expect(candidate.score_per_game).toBe(candidate.score);
+    expect(candidate.games).toHaveLength(1);
+    expect(candidate.games[0]).toMatchObject({
+      game_date: '2026-02-04',
+      opponent_team_abbr: 'LAL',
+      minutes_p50: 31,
+      proj_pts: 20,
+    });
+    expect(res.body.position).toBeNull();
+    expect(res.body.position_coverage).toEqual({ known: 61, unknown: 0 });
+  });
+});
+
+describe('GET /api/watchlist over a window', () => {
+  /** Three dates of the same slate shape, from a single ranged query. */
+  const DATES = ['2026-02-04', '2026-02-05', '2026-02-06'];
+
+  it('sums a player over the window and lists his games', async () => {
+    // arrange — four nights of the same big projection, one ranged query
+    const rows = DATES.flatMap((date) => [
+      watchRowOn(date, { u_pts: 20, c_pts: 20 }),
+      ...benchPoolOn(date, 60),
+    ]);
+    queryMock
+      .mockResolvedValueOnce(pgResult([runRow]))
+      .mockResolvedValueOnce(pgResult(rows))
+      .mockResolvedValueOnce(
+        pgResult([baselineRow('1630559', { minutes: 22, pts: 11 }), ...benchBaselines(60)])
+      )
+      .mockResolvedValueOnce(pgResult([]));
+
+    // act
+    const res = await request(app)
+      .get('/api/watchlist')
+      .query({ date: '2026-02-04', days: 3 });
+
+    // assert
+    expect(res.status).toBe(200);
+    expect(res.body.window).toEqual({ from: '2026-02-04', to: '2026-02-06', days: 3 });
+    const candidate = res.body.players[0];
+    expect(candidate.games_count).toBe(3);
+    expect(candidate.games.map((g: { game_date: string }) => g.game_date)).toEqual(DATES);
+    // three identical nights, so the total is three times the per-game product
+    expect(candidate.score).toBeCloseTo(3 * candidate.score_per_game, 3);
+    expect(candidate.score).toBeGreaterThan(candidate.upside * candidate.relevance);
+    expect(candidate.totals.pts).toBe(60);
+  });
+
+  it('takes three round trips regardless of how many days the window covers', async () => {
+    // arrange
+    queryMock
+      .mockResolvedValueOnce(pgResult([runRow]))
+      .mockResolvedValueOnce(pgResult(DATES.flatMap((date) => [watchRowOn(date)])))
+      .mockResolvedValueOnce(pgResult([]))
+      .mockResolvedValueOnce(pgResult([]));
+
+    // act
+    await request(app).get('/api/watchlist').query({ date: '2026-02-04', days: 14 });
+
+    // assert — the run, one ranged prediction query, the baselines, the schedule
+    expect(queryMock).toHaveBeenCalledTimes(4);
+    const [, predictionParams] = queryMock.mock.calls[1];
+    expect(predictionParams?.slice(0, 3)).toEqual([42, '2026-02-04', '2026-02-17']);
+    const [, scheduleParams] = queryMock.mock.calls[3];
+    expect(scheduleParams).toEqual(['2026-02-04', '2026-02-17']);
+  });
+
+  it('takes the baseline once, as of the window start', async () => {
+    // arrange
+    queryMock
+      .mockResolvedValueOnce(pgResult([runRow]))
+      .mockResolvedValueOnce(pgResult(DATES.flatMap((date) => [watchRowOn(date)])))
+      .mockResolvedValueOnce(pgResult([]))
+      .mockResolvedValueOnce(pgResult([]));
+
+    // act
+    await request(app).get('/api/watchlist').query({ date: '2026-02-04', days: 7 });
+
+    // assert — a baseline at date+3 would average in games that have not been played
+    const [sql, params] = queryMock.mock.calls[2];
+    expect(sql).toContain('g.game_date < $1');
+    expect(params?.[0]).toBe('2026-02-04');
+  });
+
+  it('lets a four-game week beat a two-game week for a better player', async () => {
+    // arrange — the busy wing is projected LOWER every single night
+    const busy = DATES.map((date) =>
+      watchRowOn(date, { nba_player_id: 'busy', name: 'Busy Wing', u_pts: 17, c_pts: 17 })
+    );
+    const rested = DATES.slice(0, 1).map((date) =>
+      watchRowOn(date, { nba_player_id: 'rested', name: 'Rested Wing', u_pts: 24, c_pts: 24 })
+    );
+    const rows = [...busy, ...rested, ...DATES.flatMap((date) => benchPoolOn(date, 60))];
+    queryMock
+      .mockResolvedValueOnce(pgResult([runRow]))
+      .mockResolvedValueOnce(pgResult(rows))
+      .mockResolvedValueOnce(
+        pgResult([
+          baselineRow('busy', { minutes: 22, pts: 11 }),
+          baselineRow('rested', { minutes: 22, pts: 11 }),
+          ...benchBaselines(60),
+        ])
+      )
+      .mockResolvedValueOnce(pgResult([]));
+
+    // act
+    const res = await request(app)
+      .get('/api/watchlist')
+      .query({ date: '2026-02-04', days: 3 });
+
+    // assert — this is the whole point of the window being a sum
+    const ids = res.body.players.map((p: { nba_player_id: string }) => p.nba_player_id);
+    expect(ids.indexOf('busy')).toBeLessThan(ids.indexOf('rested'));
+    const busyRow = res.body.players.find((p: { nba_player_id: string }) => p.nba_player_id === 'busy');
+    const restedRow = res.body.players.find(
+      (p: { nba_player_id: string }) => p.nba_player_id === 'rested'
+    );
+    // he wins on volume alone: the rested wing is projected higher on his one night
+    expect(busyRow.games_count).toBe(3);
+    expect(restedRow.games_count).toBe(1);
+    expect(busyRow.points.projected).toBeLessThan(restedRow.points.projected);
+    expect(busyRow.score).toBeGreaterThan(restedRow.score);
+  });
+
+  it('filters to a roster slot, and echoes which filter it applied', async () => {
+    // arrange — a guard and a centre, both worth a row
+    const rows = [
+      watchRow({ nba_player_id: 'guard', name: 'Combo Guard', position: 'PG,SG', u_pts: 20, c_pts: 20 }),
+      watchRow({ nba_player_id: 'big', name: 'Starting Five', position: 'C,PF', u_pts: 20, c_pts: 20 }),
+      ...benchPool(60),
+    ];
+    const baselines = [
+      baselineRow('guard', { minutes: 22, pts: 11 }),
+      baselineRow('big', { minutes: 22, pts: 11 }),
+      ...benchBaselines(60),
+    ];
+    queryMock
+      .mockResolvedValueOnce(pgResult([runRow]))
+      .mockResolvedValueOnce(pgResult(rows))
+      .mockResolvedValueOnce(pgResult(baselines))
+      .mockResolvedValueOnce(pgResult(gameTeamRows));
+
+    // act
+    const res = await request(app)
+      .get('/api/watchlist')
+      .query({ date: '2026-02-04', position: 'G' });
+
+    // assert
+    expect(res.status).toBe(200);
+    expect(res.body.position).toBe('G');
+    expect(res.body.players.map((p: { nba_player_id: string }) => p.nba_player_id)).toEqual([
+      'guard',
+    ]);
+    expect(res.body.players[0].position).toBe('PG/SG');
+  });
+
+  it('counts the candidates it could not place at a position', async () => {
+    // arrange — a projected player with no roster row has no position
+    const rows = [
+      watchRow({ nba_player_id: 'guard', position: 'PG,SG', u_pts: 20, c_pts: 20 }),
+      watchRow({ nba_player_id: 'ghost', name: null, position: null, u_pts: 20, c_pts: 20 }),
+      ...benchPool(60),
+    ];
+    const baselines = [
+      baselineRow('guard', { minutes: 22, pts: 11 }),
+      baselineRow('ghost', { minutes: 22, pts: 11 }),
+      ...benchBaselines(60),
+    ];
+    queryMock
+      .mockResolvedValueOnce(pgResult([runRow]))
+      .mockResolvedValueOnce(pgResult(rows))
+      .mockResolvedValueOnce(pgResult(baselines))
+      .mockResolvedValueOnce(pgResult(gameTeamRows));
+
+    // act
+    const res = await request(app)
+      .get('/api/watchlist')
+      .query({ date: '2026-02-04', position: 'G' });
+
+    // assert — "unknown" is excluded from a specific filter and counted, not hidden
+    expect(res.body.position_coverage).toEqual({ known: 61, unknown: 1 });
+    expect(res.body.players.map((p: { nba_player_id: string }) => p.nba_player_id)).toEqual([
+      'guard',
+    ]);
+  });
+
+  it('rejects a window it will not answer for, without touching the database', async () => {
+    // act
+    const tooLong = await request(app)
+      .get('/api/watchlist')
+      .query({ date: '2026-02-04', days: MAX_WINDOW_DAYS + 1 });
+    const fractional = await request(app)
+      .get('/api/watchlist')
+      .query({ date: '2026-02-04', days: '3.5' });
+
+    // assert — clamping 30 to 14 would be a wrong answer that looks right
+    expect(tooLong.status).toBe(400);
+    expect(tooLong.body.error).toMatch(new RegExp(`between 1 and ${MAX_WINDOW_DAYS}`));
+    expect(fractional.status).toBe(400);
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a position it does not publish, without touching the database', async () => {
+    // act
+    const res = await request(app)
+      .get('/api/watchlist')
+      .query({ date: '2026-02-04', position: 'WING' });
+
+    // assert
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/position must be one of/);
+    expect(queryMock).not.toHaveBeenCalled();
   });
 });

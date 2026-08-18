@@ -5,6 +5,7 @@ import type {
   PlayerSeasonRow, TeamSeasonRow,
   Rating2kSummary, Rating2kDetail, Rating2kTeamType,
   PlayerAnalytics, PlayerPredictionsResponse, SlateResponse, WatchlistResponse,
+  WatchlistPositionFilter,
 } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL
@@ -254,26 +255,86 @@ const EMPTY_BASELINE = {
   definition: '',
 };
 
+/** What the page falls back to if a server sends no position vocabulary. */
+const WATCHLIST_POSITION_OPTIONS: WatchlistPositionFilter[] = [
+  'G',
+  'F',
+  'C',
+  'PG',
+  'SG',
+  'SF',
+  'PF',
+];
+
 /**
- * Ranked big-night candidates: players projected above their OWN usual by enough
- * to matter tonight, with the deltas and the rule codes that explain each row.
+ * Query parameters for a watchlist request.
+ *
+ * The default window and "every position" are OMITTED rather than sent
+ * explicitly, so the ordinary request stays the bare `?date=` URL an older
+ * server also answers, and so the browser caches one URL for the common case
+ * instead of two spellings of it.
  */
-export async function getWatchlist(date?: string): Promise<WatchlistResponse> {
-  const { data } = await api.get<WatchlistResponse>('/watchlist', {
-    params: date ? { date } : {},
-  });
+export function watchlistParams(
+  date?: string,
+  days?: number,
+  position?: WatchlistPositionFilter | null
+): Record<string, string | number> {
   return {
-    date: data.date,
+    ...(date ? { date } : {}),
+    ...(days && days > 1 ? { days } : {}),
+    ...(position ? { position } : {}),
+  };
+}
+
+/**
+ * Fills in every field a watchlist payload might be missing.
+ *
+ * Defaulted HERE rather than in the page so that a server caught mid-deploy —
+ * one answering without `window`, `games_count` or `position` — renders as a
+ * one-day, one-game, position-unknown list instead of as NaN and blank badges.
+ * A one-day window is the right fallback because it is what the endpoint did
+ * before windows existed.
+ */
+export function normalizeWatchlist(data: Partial<WatchlistResponse>): WatchlistResponse {
+  const date = data.date ?? '';
+  const from = data.window?.from ?? date;
+  return {
+    date,
+    window: data.window ?? { from, to: from, days: 1 },
     run: data.run ?? null,
     pool: data.pool ?? { key: '', label: '', definition: '', sample_size: 0 },
     baseline: data.baseline ?? EMPTY_BASELINE,
+    position: data.position ?? null,
+    position_options: data.position_options ?? WATCHLIST_POSITION_OPTIONS,
+    position_coverage: data.position_coverage ?? { known: 0, unknown: 0 },
     players: (data.players ?? []).map((player) => ({
       ...player,
+      position: player.position ?? null,
+      games_count: player.games_count ?? 1,
+      games: player.games ?? [],
+      score_per_game: player.score_per_game ?? player.score,
+      totals: player.totals ?? {},
       reasons: player.reasons ?? [],
       drivers: player.drivers ?? [],
       evidence: player.evidence ?? {},
     })),
   };
+}
+
+/**
+ * Ranked big-night candidates over a window of `days` starting at `date`:
+ * players projected above their OWN usual by enough to matter, with the deltas
+ * and the rule codes that explain each row.
+ */
+export async function getWatchlist(
+  date?: string,
+  days?: number,
+  position?: WatchlistPositionFilter | null
+): Promise<WatchlistResponse> {
+  const { data } = await api.get<WatchlistResponse>('/watchlist', {
+    params: watchlistParams(date, days, position),
+  });
+  return normalizeWatchlist(data ?? {});
 }
 
 export async function getTeams(): Promise<Team[]> {
