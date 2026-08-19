@@ -1,8 +1,10 @@
 import type { Page, Route } from '@playwright/test';
 import { ALL_PLAYERS, type PlayerFixture } from './players';
+import { watchlistFixture } from './watchlist';
 import type {
   Team, Game, TeamAnalysis,
   BettingGame, BettingPicksResponse, Bet, LedgerSummary,
+  PlayerAnalytics, PlayerPredictionsResponse, WatchlistResponse,
 } from '../../src/types';
 
 // route handlers that satisfy the api calls the app makes on first paint.
@@ -29,12 +31,25 @@ export interface MockOptions {
   teams?: Team[];
   games?: Game[];
   status?: DataStatus;
+  // payload for /api/players/:id/analytics; omitted means the endpoint 404s,
+  // which is what a player with no computed analytics looks like.
+  playerAnalytics?: PlayerAnalytics;
+  // payload for /api/players/:id/predictions. omitted means "no run has
+  // completed", which is production's state today and the section's own empty
+  // state — never a 404, because the endpoint answers 200 with a null run.
+  playerPredictions?: PlayerPredictionsResponse;
   rosterRequiresAuth?: boolean;
   teamAnalysis?: TeamAnalysis;
   waiverSuggestions?: WaiverSuggestionsResponse;
   bettingOdds?: BettingGame[];
   bettingPicks?: BettingPicksResponse;
   bets?: { bets: Bet[]; summary: LedgerSummary };
+  /**
+   * Payload for /api/watchlist. A function receives the request's own query
+   * params, which is how a spec drives the window and position controls and gets
+   * an answer that actually reflects them. Omitted means `watchlistFixture`.
+   */
+  watchlist?: WatchlistResponse | ((params: URLSearchParams) => WatchlistResponse);
   // extra handlers applied before the defaults — useful for forcing a
   // specific status code or asserting that a particular call was made.
   custom?: Array<{ url: RegExp | string; handler: (route: Route) => Promise<void> | void }>;
@@ -79,6 +94,40 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<void>
     route.fulfill({ json: filtered });
   });
 
+  // registered after the players list route because `**/api/players*` stops at
+  // the next slash and would otherwise leave this path unhandled.
+  await page.route('**/api/players/*/analytics', (route) => {
+    if (!opts.playerAnalytics) {
+      route.fulfill({ status: 404, json: { error: 'Not found' } });
+      return;
+    }
+    route.fulfill({ json: opts.playerAnalytics });
+  });
+
+  // same reason this sits after the players list route: `**/api/players*` does
+  // not cross a slash, so this path would otherwise go unhandled.
+  await page.route('**/api/players/*/predictions*', (route) => {
+    const fallback: PlayerPredictionsResponse = {
+      player_id: 0,
+      nba_player_id: null,
+      run: null,
+      stats: [],
+      games: [],
+    };
+    route.fulfill({ json: opts.playerPredictions ?? fallback });
+  });
+
+  // the watchlist answers from the request's own window and position, so a spec
+  // clicking a chip gets back what that chip actually asked for.
+  await page.route('**/api/watchlist*', (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    const payload =
+      typeof opts.watchlist === 'function'
+        ? opts.watchlist(params)
+        : opts.watchlist ?? watchlistFixture(params);
+    route.fulfill({ json: payload });
+  });
+
   await page.route('**/api/teams', (route) => route.fulfill({ json: teams }));
   await page.route('**/api/games**', (route) => route.fulfill({ json: games }));
 
@@ -108,6 +157,19 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<void>
       empty_roster: true,
     };
     route.fulfill({ json: opts.waiverSuggestions ?? fallback });
+  });
+
+  // historical seasons default to "not imported yet", the same as production
+  // before the manual backfill: the season list is empty (the History page
+  // shows its own empty state) and a career lookup 404s, which is exactly what
+  // `PlayerCareerSection` treats as "render nothing". One handler rather than
+  // two routes so this never depends on Playwright's route precedence.
+  await page.route('**/api/history/**', (route) => {
+    if (new URL(route.request().url()).pathname.endsWith('/history/seasons')) {
+      route.fulfill({ json: { seasons: [] } });
+      return;
+    }
+    route.fulfill({ status: 404, json: { error: 'Not found' } });
   });
 
   // 2K ratings surfaces default to "not imported yet": the ratings page shows

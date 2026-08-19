@@ -7,13 +7,18 @@ import { compareStats, formatStat, formatText } from '../utils/stats';
 
 interface SeasonPlayerTableProps {
   rows: PlayerSeasonRow[];
+  /**
+   * Opens the row's player. Optional so the table still renders read-only;
+   * rows only look clickable when a handler is actually wired up.
+   */
+  onSelect?: (row: PlayerSeasonRow) => void;
 }
 
 type SortKey = SeasonStatKey | 'player_name' | 'team';
 
 const TEXT_KEYS: SortKey[] = ['player_name', 'team'];
 
-export const SeasonPlayerTable = ({ rows }: SeasonPlayerTableProps): JSX.Element => {
+export const SeasonPlayerTable = ({ rows, onSelect }: SeasonPlayerTableProps): JSX.Element => {
   const [sortKey, setSortKey] = useState<SortKey>('points_per_game');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
@@ -93,7 +98,11 @@ export const SeasonPlayerTable = ({ rows }: SeasonPlayerTableProps): JSX.Element
             {sorted.map((row) => {
               const teamLogo = row.team ? getTeamLogoUrl(row.team) : null;
               return (
-                <tr key={`${row.nba_player_id}-${row.season}-${row.team ?? ''}`} className="hover">
+                <tr
+                  key={`${row.nba_player_id}-${row.season}-${row.team ?? ''}`}
+                  className={`hover ${onSelect ? 'cursor-pointer' : ''}`}
+                  onClick={onSelect ? () => onSelect(row) : undefined}
+                >
                   <td className="whitespace-nowrap">
                     {/* truncate so unusually long names don't reflow the column */}
                     <span className="font-medium truncate block" title={row.player_name}>

@@ -1,0 +1,2 @@
+# tidy results are a machine artifact; the markdown report is committed alongside its model version
+*_results.csv

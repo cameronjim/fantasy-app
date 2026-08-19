@@ -66,7 +66,7 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
       { role: 'user', content: message },
     ];
 
-    const reply = await callClaude(systemPrompt, messages, { model: 'claude-sonnet-4-6', maxTokens: 1024 });
+    const reply = await callClaude(systemPrompt, messages, { model: 'claude-sonnet-5', maxTokens: 1024 });
     res.json({ reply });
   } catch {
     res.status(500).json({ error: 'Failed to process chat' });

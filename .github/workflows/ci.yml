@@ -15,6 +15,10 @@ jobs:
   backend:
     name: Backend (typecheck + tests)
     runs-on: ubuntu-latest
+    # normal runs finish in ~1 min; without a timeout a hung step burns the
+    # 6-hour github default (observed 2026-08-18: a stalled playwright browser
+    # download sat "in progress" for hours)
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: backend
@@ -42,6 +46,7 @@ jobs:
   frontend:
     name: Frontend (typecheck + unit tests + build)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: frontend
@@ -69,6 +74,7 @@ jobs:
   e2e:
     name: Frontend E2E (Playwright)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: frontend
@@ -124,6 +130,7 @@ jobs:
     needs: [backend, frontend, e2e]
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       id-token: write        # required for aws oidc role assumption
       contents: read
