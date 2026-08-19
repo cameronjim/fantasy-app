@@ -1,0 +1,423 @@
+# Rolling-origin evaluation - verify_p1b
+
+- **generated_at**: 2026-08-17 22:03 UTC
+- **dataset**: C:\Users\CJ\code\fantasy-app\ml\data\dataset.parquet
+- **universe_source**: status
+- **rows**: 147,413
+- **players**: 895
+- **played_rate**: 0.7132
+- **feature_version**: v3
+- **git_commit**: 7c9960c4d636a0cd070ebb105bbbe7e43eefa412
+
+## Champion selection
+
+| task                | family       | metric   | measured_best                |   measured_value | configured_champion          |   configured_value | matches_config   |
+|:--------------------|:-------------|:---------|:-----------------------------|-----------------:|:-----------------------------|-------------------:|:-----------------|
+| A availability      | availability | Brier    | lightgbm                     |           0.0720 | lightgbm                     |             0.0720 | True             |
+| B minutes|played    | minutes      | MAE      | lightgbm                     |           4.6794 | lightgbm                     |             4.6794 | True             |
+| C1 pts|played       | production   | MAE      | ridge                        |           4.5111 | ewma                         |             4.5483 | False            |
+| C2 ast|played       | production   | MAE      | ridge                        |           1.3186 | ewma                         |             1.3269 | False            |
+| D pts UNCONDITIONAL | composition  | MAE      | decomposed_p_x_minutes_x_ppm |           3.9416 | decomposed_p_x_minutes_x_ppm |             3.9416 | True             |
+
+Measured winner differs from the configured champion for: C1 pts|played, C2 ast|played. Config is deliberate - see `config.CHAMPIONS` and REPORT.md section 6.
+
+### Composition parity check
+
+- champion `decomposed_p_x_minutes_x_ppm`: **3.9416** MAE
+- previous `decomposed_p_x_ewma`: 3.9994 MAE
+- relative delta: -1.44% (tolerance 1.00%) — **PARITY**
+
+The minutes-propagating composition was promoted for correctness, not for accuracy: `P(play) x EWMA(stat)` is not a function of predicted minutes at all, so a minutes forecast could not reach a production projection. Parity on aggregate MAE is the expected outcome — most players' predicted minutes are close to their recent minutes — and the check above exists to catch the case where the change costs accuracy rather than to claim it gains any.
+
+## The honest-vs-oracle bracket (v1 / v3-honest / v2-oracle)
+
+Same dataset, same rows, same five origins, same estimators. Three feature lists. `v1` has no teammate context at all; `v3-honest` is the SERVED set, whose teammate columns are expectations over as-of play probabilities; `v2-oracle` is the feature_version-v2 construction, whose teammate columns are sums over REALIZED absences and are therefore functions of other players' target-game labels.
+
+`honest_pct` and `oracle_pct` are relative changes against `v1`, so **negative is better**. `survived` is `honest_delta / oracle_delta`: the share of the value-of-perfect-lineup-information result that survives honest construction. It is the number this whole phase exists to produce.
+
+| task                | metric   | segment                      |      n |     v1 |   v3-honest |   v2-oracle | honest_pct   | oracle_pct   | survived   |
+|:--------------------|:---------|:-----------------------------|-------:|-------:|------------:|------------:|:-------------|:-------------|:-----------|
+| A availability      | Brier    | ALL                          | 30,917 | 0.0735 |      0.072  |      0.0712 | -1.98%       | -3.05%       | 65%        |
+| A availability      | Brier    | star (>=30)                  |  6,958 | 0.0666 |      0.0662 |      0.0665 | -0.55%       | -0.22%       | 246%       |
+| A availability      | Brier    | starter (20-30)              |  9,940 | 0.0681 |      0.0672 |      0.0672 | -1.38%       | -1.38%       | 100%       |
+| A availability      | Brier    | bench (10-20)                |  8,177 | 0.0681 |      0.0675 |      0.0659 | -0.89%       | -3.29%       | 27%        |
+| A availability      | Brier    | fringe (<10)                 |  5,058 | 0.1076 |      0.1022 |      0.1001 | -4.99%       | -6.94%       | 72%        |
+| A availability      | Brier    | unknown (no history)         |    784 | 0.0373 |      0.0359 |      0.0334 | -3.71%       | -10.33%      | 36%        |
+| A availability      | Brier    | event: vacated_minutes >= 30 | 23,231 | 0.077  |      0.0759 |      0.075  | -1.42%       | -2.68%       | 53%        |
+| A availability      | Brier    | event: star_out = 1          |  7,219 | 0.0784 |      0.0771 |      0.0757 | -1.65%       | -3.47%       | 48%        |
+| A availability      | Brier    | control: vacated_minutes < 5 |    955 | 0.0601 |      0.0534 |      0.0518 | -11.18%      | -13.87%      | 81%        |
+| B minutes|played    | MAE      | ALL                          | 21,853 | 4.7178 |      4.6794 |      4.5318 | -0.81%       | -3.94%       | 21%        |
+| B minutes|played    | MAE      | star (>=30)                  |  5,598 | 3.8297 |      3.7707 |      3.8216 | -1.54%       | -0.21%       | 728%       |
+| B minutes|played    | MAE      | starter (20-30)              |  7,823 | 4.642  |      4.6263 |      4.5483 | -0.34%       | -2.02%       | 17%        |
+| B minutes|played    | MAE      | bench (10-20)                |  5,995 | 5.5243 |      5.4849 |      5.1986 | -0.71%       | -5.90%       | 12%        |
+| B minutes|played    | MAE      | fringe (<10)                 |  2,411 | 5.0398 |      4.9914 |      4.5112 | -0.96%       | -10.49%      | 9%         |
+| B minutes|played    | MAE      | unknown (no history)         |     26 | 5.6397 |      4.6683 |      4.2927 | -17.23%      | -23.88%      | 72%        |
+| B minutes|played    | MAE      | event: vacated_minutes >= 30 | 16,625 | 4.7508 |      4.7187 |      4.5764 | -0.68%       | -3.67%       | 18%        |
+| B minutes|played    | MAE      | event: star_out = 1          |  5,196 | 5.1273 |      5.0984 |      4.9136 | -0.56%       | -4.17%       | 14%        |
+| B minutes|played    | MAE      | control: vacated_minutes < 5 |    550 | 4.306  |      4.2963 |      4.2511 | -0.23%       | -1.28%       | 18%        |
+| D pts UNCONDITIONAL | MAE      | ALL                          | 30,917 | 3.9544 |      3.9416 |      3.9107 | -0.32%       | -1.10%       | 29%        |
+| D pts UNCONDITIONAL | MAE      | star (>=30)                  |  6,958 | 6.2986 |      6.2795 |      6.2853 | -0.30%       | -0.21%       | 143%       |
+| D pts UNCONDITIONAL | MAE      | starter (20-30)              |  9,940 | 4.5705 |      4.5599 |      4.5331 | -0.23%       | -0.82%       | 28%        |
+| D pts UNCONDITIONAL | MAE      | bench (10-20)                |  8,177 | 3.105  |      3.0956 |      3.0443 | -0.30%       | -1.96%       | 16%        |
+| D pts UNCONDITIONAL | MAE      | fringe (<10)                 |  5,058 | 1.4444 |      1.434  |      1.3728 | -0.72%       | -4.96%       | 14%        |
+| D pts UNCONDITIONAL | MAE      | unknown (no history)         |    784 | 0.3344 |      0.299  |      0.3027 | -10.57%      | -9.47%       | 112%       |
+| D pts UNCONDITIONAL | MAE      | event: vacated_minutes >= 30 | 23,231 | 4.0507 |      4.0401 |      4.0226 | -0.26%       | -0.69%       | 38%        |
+| D pts UNCONDITIONAL | MAE      | event: star_out = 1          |  7,219 | 4.1488 |      4.1401 |      4.1542 | -0.21%       | +0.13%       | -161%      |
+| D pts UNCONDITIONAL | MAE      | control: vacated_minutes < 5 |    955 | 3.096  |      3.052  |      2.9734 | -1.42%       | -3.96%       | 36%        |
+
+The cohorts are defined on the dataset's own `vacated_minutes` column — the ORACLE one, deliberately, because "on the nights when a lot really was vacated" is a question about the games and answering it with hindsight is legitimate for a report in a way it is not for a feature. All three passes therefore partition the validation rows identically.
+
+`v2-oracle` is an UPPER BOUND, not a forecast. It cannot be earned at any horizon, including `lock`: even when tonight's inactive list is known, the training rows' lists were used to build the training features, so the estimator was fitted on information no live run has.
+
+## Feature-set comparison: v1 features vs the served set
+
+Same dataset, same rows, same origins, same estimators. The only difference is whether the estimators were allowed to see the served teammate-context and reliability columns. `delta` is after minus before, so **negative is better** for both Brier and MAE. When `--bracket` ran, this is the same v1 -> v3-honest pair the bracket's first two columns show, restated as a before/after.
+
+| task                | metric   | segment                      |      n |   before |   after |   delta | delta_pct   |
+|:--------------------|:---------|:-----------------------------|-------:|---------:|--------:|--------:|:------------|
+| A availability      | Brier    | ALL                          | 30,917 |   0.0735 |  0.072  | -0.0015 | -1.98%      |
+| A availability      | Brier    | star (>=30)                  |  6,958 |   0.0666 |  0.0662 | -0.0004 | -0.55%      |
+| A availability      | Brier    | starter (20-30)              |  9,940 |   0.0681 |  0.0672 | -0.0009 | -1.38%      |
+| A availability      | Brier    | bench (10-20)                |  8,177 |   0.0681 |  0.0675 | -0.0006 | -0.89%      |
+| A availability      | Brier    | fringe (<10)                 |  5,058 |   0.1076 |  0.1022 | -0.0054 | -4.99%      |
+| A availability      | Brier    | unknown (no history)         |    784 |   0.0373 |  0.0359 | -0.0014 | -3.71%      |
+| A availability      | Brier    | event: vacated_minutes >= 30 | 23,231 |   0.077  |  0.0759 | -0.0011 | -1.42%      |
+| A availability      | Brier    | event: star_out = 1          |  7,219 |   0.0784 |  0.0771 | -0.0013 | -1.65%      |
+| A availability      | Brier    | control: vacated_minutes < 5 |    955 |   0.0601 |  0.0534 | -0.0067 | -11.18%     |
+| B minutes|played    | MAE      | ALL                          | 21,853 |   4.7178 |  4.6794 | -0.0384 | -0.81%      |
+| B minutes|played    | MAE      | star (>=30)                  |  5,598 |   3.8297 |  3.7707 | -0.059  | -1.54%      |
+| B minutes|played    | MAE      | starter (20-30)              |  7,823 |   4.642  |  4.6263 | -0.0157 | -0.34%      |
+| B minutes|played    | MAE      | bench (10-20)                |  5,995 |   5.5243 |  5.4849 | -0.0393 | -0.71%      |
+| B minutes|played    | MAE      | fringe (<10)                 |  2,411 |   5.0398 |  4.9914 | -0.0484 | -0.96%      |
+| B minutes|played    | MAE      | unknown (no history)         |     26 |   5.6397 |  4.6683 | -0.9715 | -17.23%     |
+| B minutes|played    | MAE      | event: vacated_minutes >= 30 | 16,625 |   4.7508 |  4.7187 | -0.0321 | -0.68%      |
+| B minutes|played    | MAE      | event: star_out = 1          |  5,196 |   5.1273 |  5.0984 | -0.0289 | -0.56%      |
+| B minutes|played    | MAE      | control: vacated_minutes < 5 |    550 |   4.306  |  4.2963 | -0.0098 | -0.23%      |
+| D pts UNCONDITIONAL | MAE      | ALL                          | 30,917 |   3.9544 |  3.9416 | -0.0128 | -0.32%      |
+| D pts UNCONDITIONAL | MAE      | star (>=30)                  |  6,958 |   6.2986 |  6.2795 | -0.0191 | -0.30%      |
+| D pts UNCONDITIONAL | MAE      | starter (20-30)              |  9,940 |   4.5705 |  4.5599 | -0.0107 | -0.23%      |
+| D pts UNCONDITIONAL | MAE      | bench (10-20)                |  8,177 |   3.105  |  3.0956 | -0.0094 | -0.30%      |
+| D pts UNCONDITIONAL | MAE      | fringe (<10)                 |  5,058 |   1.4444 |  1.434  | -0.0104 | -0.72%      |
+| D pts UNCONDITIONAL | MAE      | unknown (no history)         |    784 |   0.3344 |  0.299  | -0.0353 | -10.57%     |
+| D pts UNCONDITIONAL | MAE      | event: vacated_minutes >= 30 | 23,231 |   4.0507 |  4.0401 | -0.0107 | -0.26%      |
+| D pts UNCONDITIONAL | MAE      | event: star_out = 1          |  7,219 |   4.1488 |  4.1401 | -0.0087 | -0.21%      |
+| D pts UNCONDITIONAL | MAE      | control: vacated_minutes < 5 |    955 |   3.096  |  3.052  | -0.044  | -1.42%      |
+
+The cohorts are defined on the dataset's own columns, not on any model output, so both runs partition the validation rows identically and the two columns above describe the same games.
+
+The rows to read first are `bench (10-20)` / `fringe (<10)` and the two event cohorts. `control: vacated_minutes < 5` is where a regression would show up if the family were buying its wins by adding noise to ordinary games.
+
+## Event cohorts: do they contain what they claim to
+
+Model-free. Mean outcome inside each cohort against the population mean, plus the same split on a randomly PERMUTED copy of `vacated_minutes`. The permuted rows are the null: if they showed comparable lift, the cohort machinery would be manufacturing the finding.
+
+| cohort                       | outcome   |   rows |   cohort_mean |   population_mean |    lift |
+|:-----------------------------|:----------|-------:|--------------:|------------------:|--------:|
+| event: vacated_minutes >= 30 | PLAYED    | 103631 |        0.7210 |            0.7132 | +0.0077 |
+| event: vacated_minutes >= 30 | MIN       |  74715 |       22.7918 |           22.5723 | +0.2195 |
+| event: vacated_minutes >= 30 | PTS       |  74715 |       10.7655 |           10.7128 | +0.0528 |
+| event: star_out = 1          | PLAYED    |  31112 |        0.7224 |            0.7132 | +0.0092 |
+| event: star_out = 1          | MIN       |  22476 |       23.1140 |           22.5723 | +0.5416 |
+| event: star_out = 1          | PTS       |  22476 |       10.7086 |           10.7128 | -0.0042 |
+| control: vacated_minutes < 5 | PLAYED    |  12968 |        0.6875 |            0.7132 | -0.0257 |
+| control: vacated_minutes < 5 | MIN       |   8916 |       22.0228 |           22.5723 | -0.5495 |
+| control: vacated_minutes < 5 | PTS       |   8916 |       10.4714 |           10.7128 | -0.2414 |
+
+## Where the new features rank (split gain, mean over origins)
+
+Gain is ranked WITHIN each model - availability gain and minutes gain are not the same unit. `share` is the feature's fraction of that model's total gain. The `negative-control fit` rows come from a separate pair of fits with a permuted `vacated_minutes` column added, so the real column's gain has something guaranteed-signal-free to be compared against.
+
+| pass   | model        | feature                 |      gain | share   |   rank |
+|:-------|:-------------|:------------------------|----------:|:--------|-------:|
+| main   | availability | exp_vacated_usg         |     6,702 | 1.01%   |      7 |
+| main   | availability | games_with_current_team |     6,465 | 0.98%   |      9 |
+| main   | availability | exp_depth_rank          |     5,880 | 0.89%   |     11 |
+| main   | availability | season_appearances      |     3,949 | 0.60%   |     13 |
+| main   | availability | teammate_magnitude_ess  |     3,887 | 0.59%   |     15 |
+| main   | availability | exp_vacated_minutes_pos |     3,660 | 0.55%   |     17 |
+| main   | availability | exp_depth_rank_pos      |     3,550 | 0.54%   |     18 |
+| main   | availability | usg_ewma                |     3,285 | 0.50%   |     20 |
+| main   | availability | exp_vacated_fga         |     2,986 | 0.45%   |     22 |
+| main   | availability | exp_top3_usage_out      |     2,937 | 0.44%   |     23 |
+| main   | availability | exp_vacated_minutes     |     2,836 | 0.43%   |     24 |
+| main   | availability | p_star_out              |     2,749 | 0.42%   |     25 |
+| main   | availability | is_rookie               |       289 | 0.04%   |     47 |
+| main   | availability | is_traded               |       171 | 0.03%   |     48 |
+| main   | availability | magnitude_ess           |       152 | 0.02%   |     49 |
+| main   | minutes      | exp_depth_rank          | 2,152,398 | 4.16%   |      4 |
+| main   | minutes      | exp_vacated_usg         |   261,222 | 0.50%   |      7 |
+| main   | minutes      | teammate_magnitude_ess  |   235,374 | 0.45%   |      8 |
+| main   | minutes      | exp_depth_rank_pos      |   234,256 | 0.45%   |      9 |
+| main   | minutes      | season_appearances      |   233,169 | 0.45%   |     10 |
+| main   | minutes      | exp_top3_usage_out      |   228,271 | 0.44%   |     11 |
+| main   | minutes      | exp_vacated_minutes_pos |   186,909 | 0.36%   |     14 |
+| main   | minutes      | p_star_out              |   181,525 | 0.35%   |     15 |
+| main   | minutes      | exp_vacated_minutes     |   155,804 | 0.30%   |     16 |
+| main   | minutes      | exp_vacated_fga         |   148,311 | 0.29%   |     18 |
+| main   | minutes      | games_with_current_team |   136,580 | 0.26%   |     23 |
+| main   | minutes      | usg_ewma                |    97,586 | 0.19%   |     29 |
+| main   | minutes      | is_traded               |    27,331 | 0.05%   |     45 |
+| main   | minutes      | is_rookie               |    20,703 | 0.04%   |     47 |
+| main   | minutes      | magnitude_ess           |     5,523 | 0.01%   |     49 |
+
+### Top 12 features per model, for context
+
+| model        | feature                 |       gain | share   |   rank |
+|:-------------|:------------------------|-----------:|:--------|-------:|
+| availability | games_since_last_app    |    390,301 | 59.05%  |      1 |
+| availability | days_since_last_app     |     80,316 | 12.15%  |      2 |
+| availability | avail_rate_10           |     47,033 | 7.12%   |      3 |
+| availability | avail_rate_std          |     11,767 | 1.78%   |      4 |
+| availability | uncond_std_MIN          |     10,626 | 1.61%   |      5 |
+| availability | uncond_std_PTS          |      7,402 | 1.12%   |      6 |
+| availability | exp_vacated_usg         |      6,702 | 1.01%   |      7 |
+| availability | roll3_MIN               |      6,529 | 0.99%   |      8 |
+| availability | games_with_current_team |      6,465 | 0.98%   |      9 |
+| availability | TEAM_REST_DAYS          |      6,327 | 0.96%   |     10 |
+| availability | exp_depth_rank          |      5,880 | 0.89%   |     11 |
+| availability | OPP_DEF_FORM            |      4,644 | 0.70%   |     12 |
+| minutes      | ewma_MIN                | 32,654,274 | 63.10%  |      1 |
+| minutes      | roll3_MIN               |  7,682,798 | 14.85%  |      2 |
+| minutes      | roll5_MIN               |  2,975,637 | 5.75%   |      3 |
+| minutes      | exp_depth_rank          |  2,152,398 | 4.16%   |      4 |
+| minutes      | std_MIN                 |    981,767 | 1.90%   |      5 |
+| minutes      | days_since_last_app     |    543,678 | 1.05%   |      6 |
+| minutes      | exp_vacated_usg         |    261,222 | 0.50%   |      7 |
+| minutes      | teammate_magnitude_ess  |    235,374 | 0.45%   |      8 |
+| minutes      | exp_depth_rank_pos      |    234,256 | 0.45%   |      9 |
+| minutes      | season_appearances      |    233,169 | 0.45%   |     10 |
+| minutes      | exp_top3_usage_out      |    228,271 | 0.44%   |     11 |
+| minutes      | OPP_DEF_FORM            |    207,866 | 0.40%   |     12 |
+
+## A. Availability (all scheduled rows)
+
+
+**Brier**
+
+|                                        |   O1 valid=2024-12 |   O2 valid=2025-01 |   O3 valid=2025-02 |   O4 valid=2025-12 |   O5 valid=2026-01 |   mean |
+|:---------------------------------------|-------------------:|-------------------:|-------------------:|-------------------:|-------------------:|-------:|
+| LightGBM                               |             0.0751 |             0.0713 |             0.0774 |             0.0719 |             0.0643 | 0.0720 |
+| logistic regression                    |             0.0989 |             0.0945 |             0.1035 |             0.0965 |             0.0840 | 0.0955 |
+| baseline: shifted appearance rate (10) |             0.1163 |             0.1086 |             0.1202 |             0.1146 |             0.0963 | 0.1112 |
+| baseline: global rate                  |             0.2067 |             0.2065 |             0.2041 |             0.2098 |             0.2088 | 0.2072 |
+
+**LogLoss**
+
+|                                        |   O1 valid=2024-12 |   O2 valid=2025-01 |   O3 valid=2025-02 |   O4 valid=2025-12 |   O5 valid=2026-01 |   mean |
+|:---------------------------------------|-------------------:|-------------------:|-------------------:|-------------------:|-------------------:|-------:|
+| LightGBM                               |             0.2685 |             0.2556 |             0.2739 |             0.2557 |             0.2360 | 0.2579 |
+| logistic regression                    |             0.3395 |             0.3216 |             0.3520 |             0.3271 |             0.2961 | 0.3273 |
+| baseline: shifted appearance rate (10) |             0.4589 |             0.4193 |             0.4635 |             0.4328 |             0.3832 | 0.4315 |
+| baseline: global rate                  |             0.6040 |             0.6035 |             0.5984 |             0.6105 |             0.6084 | 0.6049 |
+
+**BrierSkill**
+
+|                                        |   O1 valid=2024-12 |   O2 valid=2025-01 |   O3 valid=2025-02 |   O4 valid=2025-12 |   O5 valid=2026-01 |    mean |
+|:---------------------------------------|-------------------:|-------------------:|-------------------:|-------------------:|-------------------:|--------:|
+| baseline: global rate                  |            -0.7782 |            -0.9019 |            -0.6986 |            -0.8303 |            -1.1684 | -0.8755 |
+| baseline: shifted appearance rate (10) |             0.0000 |             0.0000 |             0.0000 |             0.0000 |             0.0000 |  0.0000 |
+| logistic regression                    |             0.1495 |             0.1299 |             0.1389 |             0.1577 |             0.1275 |  0.1407 |
+| LightGBM                               |             0.3544 |             0.3433 |             0.3559 |             0.3725 |             0.3320 |  0.3516 |
+
+## B minutes|played - MAE
+
+|                                 |   O1 valid=2024-12 |   O2 valid=2025-01 |   O3 valid=2025-02 |   O4 valid=2025-12 |   O5 valid=2026-01 |   mean |
+|:--------------------------------|-------------------:|-------------------:|-------------------:|-------------------:|-------------------:|-------:|
+| LightGBM                        |             4.6984 |             4.5696 |             4.7898 |             4.7387 |             4.6004 | 4.6794 |
+| ridge                           |             4.7600 |             4.6262 |             4.8505 |             4.8115 |             4.6273 | 4.7351 |
+| baseline: EWMA (halflife 5)     |             4.8104 |             4.7173 |             4.9629 |             4.9082 |             4.7197 | 4.8237 |
+| baseline: expanding season mean |             4.9289 |             4.9791 |             5.3503 |             5.0999 |             4.9728 | 5.0662 |
+
+Skill vs `ewma` (positive = less error)
+
+|                                 |   O1 valid=2024-12 |   O2 valid=2025-01 |   O3 valid=2025-02 |   O4 valid=2025-12 |   O5 valid=2026-01 |    mean |
+|:--------------------------------|-------------------:|-------------------:|-------------------:|-------------------:|-------------------:|--------:|
+| baseline: expanding season mean |            -0.0246 |            -0.0555 |            -0.0781 |            -0.0391 |            -0.0536 | -0.0502 |
+| baseline: EWMA (halflife 5)     |             0.0000 |             0.0000 |             0.0000 |             0.0000 |             0.0000 |  0.0000 |
+| ridge                           |             0.0105 |             0.0193 |             0.0227 |             0.0197 |             0.0196 |  0.0183 |
+| LightGBM                        |             0.0233 |             0.0313 |             0.0349 |             0.0345 |             0.0253 |  0.0299 |
+
+## C1 pts|played - MAE
+
+|                                 |   O1 valid=2024-12 |   O2 valid=2025-01 |   O3 valid=2025-02 |   O4 valid=2025-12 |   O5 valid=2026-01 |   mean |
+|:--------------------------------|-------------------:|-------------------:|-------------------:|-------------------:|-------------------:|-------:|
+| ridge                           |             4.5386 |             4.4132 |             4.6152 |             4.6022 |             4.3864 | 4.5111 |
+| LightGBM                        |             4.5535 |             4.4504 |             4.6513 |             4.5795 |             4.3937 | 4.5257 |
+| baseline: EWMA (halflife 5)     |             4.5727 |             4.4487 |             4.6870 |             4.6278 |             4.4054 | 4.5483 |
+| baseline: expanding season mean |             4.5548 |             4.4841 |             4.7323 |             4.6488 |             4.4151 | 4.5670 |
+
+Skill vs `ewma` (positive = less error)
+
+|                                 |   O1 valid=2024-12 |   O2 valid=2025-01 |   O3 valid=2025-02 |   O4 valid=2025-12 |   O5 valid=2026-01 |    mean |
+|:--------------------------------|-------------------:|-------------------:|-------------------:|-------------------:|-------------------:|--------:|
+| baseline: expanding season mean |             0.0039 |            -0.0080 |            -0.0097 |            -0.0045 |            -0.0022 | -0.0041 |
+| baseline: EWMA (halflife 5)     |             0.0000 |             0.0000 |             0.0000 |             0.0000 |             0.0000 |  0.0000 |
+| LightGBM                        |             0.0042 |            -0.0004 |             0.0076 |             0.0104 |             0.0027 |  0.0049 |
+| ridge                           |             0.0075 |             0.0080 |             0.0153 |             0.0055 |             0.0043 |  0.0081 |
+
+## C2 ast|played - MAE
+
+|                                 |   O1 valid=2024-12 |   O2 valid=2025-01 |   O3 valid=2025-02 |   O4 valid=2025-12 |   O5 valid=2026-01 |   mean |
+|:--------------------------------|-------------------:|-------------------:|-------------------:|-------------------:|-------------------:|-------:|
+| ridge                           |             1.3198 |             1.3091 |             1.3306 |             1.3217 |             1.3116 | 1.3186 |
+| baseline: EWMA (halflife 5)     |             1.3281 |             1.3225 |             1.3410 |             1.3233 |             1.3195 | 1.3269 |
+| LightGBM                        |             1.3367 |             1.3259 |             1.3358 |             1.3256 |             1.3143 | 1.3277 |
+| baseline: expanding season mean |             1.3331 |             1.3214 |             1.3489 |             1.3223 |             1.3221 | 1.3295 |
+
+Skill vs `ewma` (positive = less error)
+
+|                                 |   O1 valid=2024-12 |   O2 valid=2025-01 |   O3 valid=2025-02 |   O4 valid=2025-12 |   O5 valid=2026-01 |    mean |
+|:--------------------------------|-------------------:|-------------------:|-------------------:|-------------------:|-------------------:|--------:|
+| baseline: expanding season mean |            -0.0038 |             0.0009 |            -0.0059 |             0.0007 |            -0.0019 | -0.0020 |
+| LightGBM                        |            -0.0065 |            -0.0025 |             0.0038 |            -0.0018 |             0.0039 | -0.0006 |
+| baseline: EWMA (halflife 5)     |             0.0000 |             0.0000 |             0.0000 |             0.0000 |             0.0000 |  0.0000 |
+| ridge                           |             0.0062 |             0.0101 |             0.0077 |             0.0012 |             0.0060 |  0.0062 |
+
+## D pts UNCONDITIONAL - MAE
+
+|                                                              |   O1 valid=2024-12 |   O2 valid=2025-01 |   O3 valid=2025-02 |   O4 valid=2025-12 |   O5 valid=2026-01 |   mean |
+|:-------------------------------------------------------------|-------------------:|-------------------:|-------------------:|-------------------:|-------------------:|-------:|
+| decomposed CHAMPION: P(play) x E[MIN|played] x EWMA[PTS/min] |             3.9930 |             3.8425 |             4.1023 |             3.9638 |             3.8063 | 3.9416 |
+| decomposed: P(play) x LightGBM[PTS|played]                   |             4.0169 |             3.8954 |             4.1267 |             3.9945 |             3.8355 | 3.9738 |
+| direct LightGBM on all scheduled rows                        |             4.0251 |             3.9022 |             4.1463 |             4.0158 |             3.8441 | 3.9867 |
+| decomposed (demoted): P(play) x EWMA[PTS|played]             |             4.0490 |             3.9006 |             4.1514 |             4.0363 |             3.8595 | 3.9994 |
+| naive: unconditional season mean (0 for misses)              |             4.4726 |             4.5073 |             4.9214 |             4.5741 |             4.3836 | 4.5718 |
+| naive: conditional season mean (selection-biased)            |             5.5510 |             5.5196 |             5.7388 |             5.8379 |             5.6953 | 5.6685 |
+
+Skill vs `naive_unconditional_mean` (positive = less error)
+
+|                                                              |   O1 valid=2024-12 |   O2 valid=2025-01 |   O3 valid=2025-02 |   O4 valid=2025-12 |   O5 valid=2026-01 |    mean |
+|:-------------------------------------------------------------|-------------------:|-------------------:|-------------------:|-------------------:|-------------------:|--------:|
+| naive: conditional season mean (selection-biased)            |            -0.2411 |            -0.2246 |            -0.1661 |            -0.2763 |            -0.2992 | -0.2415 |
+| naive: unconditional season mean (0 for misses)              |             0.0000 |             0.0000 |             0.0000 |             0.0000 |             0.0000 |  0.0000 |
+| decomposed (demoted): P(play) x EWMA[PTS|played]             |             0.0947 |             0.1346 |             0.1565 |             0.1176 |             0.1195 |  0.1246 |
+| direct LightGBM on all scheduled rows                        |             0.1001 |             0.1343 |             0.1575 |             0.1221 |             0.1231 |  0.1274 |
+| decomposed: P(play) x LightGBM[PTS|played]                   |             0.1019 |             0.1358 |             0.1615 |             0.1267 |             0.1250 |  0.1302 |
+| decomposed CHAMPION: P(play) x E[MIN|played] x EWMA[PTS/min] |             0.1072 |             0.1475 |             0.1665 |             0.1334 |             0.1317 |  0.1373 |
+
+## Segment breakdown - MAE by minutes tier (mean over origins)
+
+
+**B minutes|played**
+
+|                                 |   star (>=30) |   starter (20-30) |   bench (10-20) |   fringe (<10) |   unknown (no history) |
+|:--------------------------------|--------------:|------------------:|----------------:|---------------:|-----------------------:|
+| baseline: EWMA (halflife 5)     |        3.8552 |            4.7916 |          5.7050 |         4.8990 |                16.7311 |
+| baseline: expanding season mean |        4.0169 |            5.0955 |          5.9657 |         5.0951 |                16.7311 |
+| LightGBM                        |        3.7707 |            4.6263 |          5.4849 |         4.9914 |                 4.6683 |
+| ridge                           |        3.8655 |            4.6517 |          5.5628 |         4.9784 |                 6.8825 |
+
+**C1 pts|played**
+
+|                                 |   star (>=30) |   starter (20-30) |   bench (10-20) |   fringe (<10) |   unknown (no history) |
+|:--------------------------------|--------------:|------------------:|----------------:|---------------:|-----------------------:|
+| baseline: EWMA (halflife 5)     |        5.8900 |            4.7387 |          3.8107 |         2.5994 |                 8.7578 |
+| baseline: expanding season mean |        5.8487 |            4.7637 |          3.8590 |         2.6762 |                 8.7578 |
+| LightGBM                        |        5.8255 |            4.7020 |          3.7929 |         2.7659 |                 2.7895 |
+| ridge                           |        5.7869 |            4.7042 |          3.8144 |         2.6624 |                 3.4107 |
+
+**C2 ast|played**
+
+|                                 |   star (>=30) |   starter (20-30) |   bench (10-20) |   fringe (<10) |   unknown (no history) |
+|:--------------------------------|--------------:|------------------:|----------------:|---------------:|-----------------------:|
+| baseline: EWMA (halflife 5)     |        1.7485 |            1.3957 |          1.0783 |         0.7305 |                 2.1660 |
+| baseline: expanding season mean |        1.7421 |            1.3993 |          1.0873 |         0.7379 |                 2.1660 |
+| LightGBM                        |        1.7579 |            1.3870 |          1.0703 |         0.7786 |                 0.7823 |
+| ridge                           |        1.7370 |            1.3828 |          1.0748 |         0.7472 |                 0.9085 |
+
+**D pts UNCONDITIONAL**
+
+|                                                              |   star (>=30) |   starter (20-30) |   bench (10-20) |   fringe (<10) |   unknown (no history) |
+|:-------------------------------------------------------------|--------------:|------------------:|----------------:|---------------:|-----------------------:|
+| decomposed (demoted): P(play) x EWMA[PTS|played]             |        6.3159 |            4.6063 |          3.1835 |         1.4406 |                 0.7053 |
+| decomposed: P(play) x LightGBM[PTS|played]                   |        6.2508 |            4.5694 |          3.1505 |         1.5719 |                 0.2464 |
+| decomposed CHAMPION: P(play) x E[MIN|played] x EWMA[PTS/min] |        6.2795 |            4.5599 |          3.0956 |         1.4340 |                 0.2990 |
+| direct LightGBM on all scheduled rows                        |        6.2827 |            4.5843 |          3.1513 |         1.5704 |                 0.2713 |
+| naive: conditional season mean (selection-biased)            |        8.1677 |            6.1534 |          4.3912 |         2.5545 |                10.6559 |
+| naive: unconditional season mean (0 for misses)              |        7.2976 |            5.3909 |          3.5209 |         1.5676 |                 0.2875 |
+
+**A availability - Brier**
+
+|                                        |   star (>=30) |   starter (20-30) |   bench (10-20) |   fringe (<10) |   unknown (no history) |
+|:---------------------------------------|--------------:|------------------:|----------------:|---------------:|-----------------------:|
+| baseline: global rate                  |        0.1650 |            0.1721 |          0.1960 |         0.3073 |                 0.4998 |
+| LightGBM                               |        0.0662 |            0.0672 |          0.0675 |         0.1022 |                 0.0359 |
+| logistic regression                    |        0.0840 |            0.0932 |          0.0925 |         0.1297 |                 0.0395 |
+| baseline: shifted appearance rate (10) |        0.0938 |            0.1122 |          0.1098 |         0.1469 |                 0.0400 |
+
+## Event-cohort breakdown (mean over origins)
+
+Two events and one control, defined in `config.EVENT_COHORTS`. The teammate features are supposed to help on the first two and change nothing on the third; a family that improves high-absence games at the cost of quiet ones has not helped.
+
+
+**A availability - Brier**
+
+|                                        |   event: vacated_minutes >= 30 |   event: star_out = 1 |   control: vacated_minutes < 5 |
+|:---------------------------------------|-------------------------------:|----------------------:|-------------------------------:|
+| baseline: global rate                  |                         0.2034 |                0.2013 |                         0.2880 |
+| LightGBM                               |                         0.0759 |                0.0771 |                         0.0534 |
+| logistic regression                    |                         0.0993 |                0.1033 |                         0.0830 |
+| baseline: shifted appearance rate (10) |                         0.1167 |                0.1232 |                         0.0939 |
+
+**B minutes|played - MAE**
+
+|                                 |   event: vacated_minutes >= 30 |   event: star_out = 1 |   control: vacated_minutes < 5 |
+|:--------------------------------|-------------------------------:|----------------------:|-------------------------------:|
+| baseline: EWMA (halflife 5)     |                         4.8747 |                5.3123 |                         4.4641 |
+| baseline: expanding season mean |                         5.1354 |                5.7144 |                         4.5724 |
+| LightGBM                        |                         4.7187 |                5.0984 |                         4.2963 |
+| ridge                           |                         4.7591 |                5.1307 |                         4.5085 |
+
+**C1 pts|played - MAE**
+
+|                                 |   event: vacated_minutes >= 30 |   event: star_out = 1 |   control: vacated_minutes < 5 |
+|:--------------------------------|-------------------------------:|----------------------:|-------------------------------:|
+| baseline: EWMA (halflife 5)     |                         4.5410 |                4.6733 |                         4.4558 |
+| baseline: expanding season mean |                         4.5675 |                4.7268 |                         4.3899 |
+| LightGBM                        |                         4.5201 |                4.6672 |                         4.3058 |
+| ridge                           |                         4.5018 |                4.6384 |                         4.3269 |
+
+**C2 ast|played - MAE**
+
+|                                 |   event: vacated_minutes >= 30 |   event: star_out = 1 |   control: vacated_minutes < 5 |
+|:--------------------------------|-------------------------------:|----------------------:|-------------------------------:|
+| baseline: EWMA (halflife 5)     |                         1.3300 |                1.3683 |                         1.3556 |
+| baseline: expanding season mean |                         1.3348 |                1.3898 |                         1.3861 |
+| LightGBM                        |                         1.3319 |                1.3749 |                         1.3601 |
+| ridge                           |                         1.3208 |                1.3644 |                         1.3577 |
+
+**D pts UNCONDITIONAL - MAE**
+
+|                                                              |   event: vacated_minutes >= 30 |   event: star_out = 1 |   control: vacated_minutes < 5 |
+|:-------------------------------------------------------------|-------------------------------:|----------------------:|-------------------------------:|
+| decomposed (demoted): P(play) x EWMA[PTS|played]             |                         4.0942 |                4.1789 |                         3.1013 |
+| decomposed: P(play) x LightGBM[PTS|played]                   |                         4.0702 |                4.1703 |                         3.0727 |
+| decomposed CHAMPION: P(play) x E[MIN|played] x EWMA[PTS/min] |                         4.0401 |                4.1401 |                         3.0520 |
+| direct LightGBM on all scheduled rows                        |                         4.0817 |                4.1840 |                         3.1598 |
+| naive: conditional season mean (selection-biased)            |                         5.7271 |                5.6570 |                         5.6872 |
+| naive: unconditional season mean (0 for misses)              |                         4.7036 |                4.8641 |                         3.8002 |
+
+## Interval coverage - nominal 80%
+
+| task             |   O1 valid=2024-12 |   O2 valid=2025-01 |   O3 valid=2025-02 |   O4 valid=2025-12 |   O5 valid=2026-01 |   mean |
+|:-----------------|-------------------:|-------------------:|-------------------:|-------------------:|-------------------:|-------:|
+| B minutes|played |             0.8292 |             0.8335 |             0.8098 |             0.8215 |             0.8337 | 0.8256 |
+| C1 pts|played    |             0.8116 |             0.8164 |             0.7946 |             0.8029 |             0.8188 | 0.8089 |
+| C2 ast|played    |             0.8015 |             0.8043 |             0.7935 |             0.8095 |             0.8142 | 0.8046 |
+
+Intervals are empirical residual quantiles of the champion estimate, fitted on the training window only.
+
+## Segment support (validation rows per cohort, summed over origins)
+
+| segment                      |     n |
+|:-----------------------------|------:|
+| star (>=30)                  |  6958 |
+| starter (20-30)              |  9940 |
+| bench (10-20)                |  8177 |
+| fringe (<10)                 |  5058 |
+| unknown (no history)         |   784 |
+| event: vacated_minutes >= 30 | 23231 |
+| event: star_out = 1          |  7219 |
+| control: vacated_minutes < 5 |   955 |
+
+The tiers partition the rows; the event cohorts do not (a bench player on a high-absence night is in two of them, and the two `vacated_minutes` cohorts are disjoint but do not cover the 5-30 middle).

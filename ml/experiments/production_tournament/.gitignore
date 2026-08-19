@@ -1,0 +1,5 @@
+# cached intermediates are build artifacts, not source
+*.parquet
+*.csv
+*.json
+__pycache__/

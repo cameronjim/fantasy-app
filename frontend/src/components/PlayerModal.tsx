@@ -1,3 +1,5 @@
+import { Link } from 'react-router-dom';
+import { BarChart3 } from 'lucide-react';
 import type { Player } from '../types';
 import { PlayerCareerSection } from './PlayerCareerSection';
 import { Rating2kBadge } from './Rating2kBadge';
@@ -72,8 +74,21 @@ export const PlayerModal = ({ player, onClose }: PlayerModalProps) => {
             <div>
               <h3 className="font-bold text-2xl">{player.name}</h3>
               <p className="text-sm opacity-60">{player.team} · {player.position}</p>
-              {/* renders nothing when the player has no 2K match */}
-              <Rating2kBadge playerName={player.name} />
+              <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                {/* renders nothing when the player has no 2K match */}
+                <Rating2kBadge playerName={player.name} />
+                {/* deliberately the same badge recipe as Rating2kBadge so the
+                    two read as one row of equal chips */}
+                <Link
+                  to={`/player/${player.id}`}
+                  onClick={onClose}
+                  className="badge badge-sm badge-primary gap-1 font-semibold transition-opacity hover:opacity-75"
+                  title="Trends, percentiles and projections"
+                >
+                  <BarChart3 size={12} />
+                  Full Analytics
+                </Link>
+              </div>
             </div>
           </div>
           <button className="btn btn-sm btn-circle btn-ghost" onClick={onClose}>✕</button>
@@ -83,7 +98,7 @@ export const PlayerModal = ({ player, onClose }: PlayerModalProps) => {
           <div className={`${injuryAlertClass(player.injury_status)} mb-4 py-2`}>
             <span className="text-xs font-bold uppercase">{player.injury_status.replace(/_/g, ' ')}</span>
             {player.injury_detail && (
-              <span className="text-xs ml-2 opacity-80">— {player.injury_detail}</span>
+              <span className="text-xs ml-2 opacity-80">· {player.injury_detail}</span>
             )}
           </div>
         )}

@@ -4,6 +4,8 @@ import type {
   BettingGame, BettingPicksResponse, Bet, NewBet, LedgerSummary, BetStatus,
   PlayerSeasonRow, TeamSeasonRow,
   Rating2kSummary, Rating2kDetail, Rating2kTeamType,
+  PlayerAnalytics, PlayerPredictionsResponse, SlateResponse, WatchlistResponse,
+  WatchlistPositionFilter,
 } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_URL
@@ -159,6 +161,180 @@ export async function getPlayers(params?: { search?: string; team?: string; posi
 export async function getPlayer(id: number): Promise<Player> {
   const { data } = await api.get(`/players/${id}`);
   return data;
+}
+
+/**
+ * Percentiles, distributions and recent-form trends for one player. The trend
+ * arrays come back empty for players with no ingested game logs, so callers
+ * must render the percentile half on its own.
+ */
+export async function getPlayerAnalytics(id: number): Promise<PlayerAnalytics> {
+  const { data } = await api.get<PlayerAnalytics>(`/players/${id}/analytics`);
+  return {
+    ...data,
+    percentiles: data.percentiles ?? [],
+    distributions: data.distributions ?? [],
+    trends: {
+      games: data.trends?.games ?? [],
+      rolling: data.trends?.rolling ?? [],
+      last10_vs_season: data.trends?.last10_vs_season ?? [],
+    },
+    prediction: data.prediction ?? null,
+  };
+}
+
+export interface PlayerPredictionsParams {
+  /** Inclusive lower bound on game date, YYYY-MM-DD. */
+  from?: string;
+  /** Games to return; the server defaults to 14. */
+  limit?: number;
+}
+
+/**
+ * Every game the latest completed model run has a prediction for, for one
+ * player, earliest first.
+ *
+ * `from` IS DELIBERATELY OMITTED BY DEFAULT. The server applies no date filter
+ * without it, which matters because the only run published so far is a backtest
+ * of a week in January — asking for "today onwards" would render an empty
+ * section on a page that is working perfectly.
+ *
+ * `run: null` (no completed run) and an empty `games` array are both normal
+ * answers, not errors; the section renders a different empty state for each.
+ */
+export async function getPlayerPredictions(
+  id: number,
+  params: PlayerPredictionsParams = {}
+): Promise<PlayerPredictionsResponse> {
+  const { data } = await api.get<PlayerPredictionsResponse>(`/players/${id}/predictions`, {
+    params,
+  });
+  return {
+    ...data,
+    run: data.run ?? null,
+    stats: data.stats ?? [],
+    games: (data.games ?? []).map((game) => ({ ...game, stats: game.stats ?? {} })),
+  };
+}
+
+/**
+ * The day's games with each game's top projected players. `date` is a
+ * YYYY-MM-DD ET calendar day; omitting it asks the server for today.
+ *
+ * Both `run: null` (no completed model run) and an empty `games` array are
+ * normal answers, not errors — the page renders an empty state for each.
+ */
+export async function getSlate(date?: string): Promise<SlateResponse> {
+  const { data } = await api.get<SlateResponse>('/predictions/slate', {
+    params: date ? { date } : {},
+  });
+  return {
+    date: data.date,
+    run: data.run ?? null,
+    // the pool descriptor is what explains the impact numbers, so a response
+    // that predates it (a Lambda caught mid-deploy) degrades to an empty
+    // definition rather than to a page that throws while rendering a footnote.
+    pool: data.pool ?? { key: '', label: '', definition: '', sample_size: 0 },
+    baseline: data.baseline ?? EMPTY_BASELINE,
+    games: (data.games ?? []).map((game) => ({ ...game, players: game.players ?? [] })),
+  };
+}
+
+/**
+ * The baseline descriptor a response that predates it degrades to — a Lambda
+ * caught mid-deploy. `notable_min_delta: 0` is deliberately NOT a threshold of
+ * zero in disguise: the pages treat a descriptor with an empty `definition` as
+ * "no baseline information", and simply omit the vs-usual chips rather than
+ * claiming a deviation against a window nobody described.
+ */
+const EMPTY_BASELINE = {
+  window_games: 0,
+  min_games: 0,
+  notable_min_delta: 0,
+  label: '',
+  definition: '',
+};
+
+/** What the page falls back to if a server sends no position vocabulary. */
+const WATCHLIST_POSITION_OPTIONS: WatchlistPositionFilter[] = [
+  'G',
+  'F',
+  'C',
+  'PG',
+  'SG',
+  'SF',
+  'PF',
+];
+
+/**
+ * Query parameters for a watchlist request.
+ *
+ * The default window and "every position" are OMITTED rather than sent
+ * explicitly, so the ordinary request stays the bare `?date=` URL an older
+ * server also answers, and so the browser caches one URL for the common case
+ * instead of two spellings of it.
+ */
+export function watchlistParams(
+  date?: string,
+  days?: number,
+  position?: WatchlistPositionFilter | null
+): Record<string, string | number> {
+  return {
+    ...(date ? { date } : {}),
+    ...(days && days > 1 ? { days } : {}),
+    ...(position ? { position } : {}),
+  };
+}
+
+/**
+ * Fills in every field a watchlist payload might be missing.
+ *
+ * Defaulted HERE rather than in the page so that a server caught mid-deploy —
+ * one answering without `window`, `games_count` or `position` — renders as a
+ * one-day, one-game, position-unknown list instead of as NaN and blank badges.
+ * A one-day window is the right fallback because it is what the endpoint did
+ * before windows existed.
+ */
+export function normalizeWatchlist(data: Partial<WatchlistResponse>): WatchlistResponse {
+  const date = data.date ?? '';
+  const from = data.window?.from ?? date;
+  return {
+    date,
+    window: data.window ?? { from, to: from, days: 1 },
+    run: data.run ?? null,
+    pool: data.pool ?? { key: '', label: '', definition: '', sample_size: 0 },
+    baseline: data.baseline ?? EMPTY_BASELINE,
+    position: data.position ?? null,
+    position_options: data.position_options ?? WATCHLIST_POSITION_OPTIONS,
+    position_coverage: data.position_coverage ?? { known: 0, unknown: 0 },
+    players: (data.players ?? []).map((player) => ({
+      ...player,
+      position: player.position ?? null,
+      games_count: player.games_count ?? 1,
+      games: player.games ?? [],
+      score_per_game: player.score_per_game ?? player.score,
+      totals: player.totals ?? {},
+      reasons: player.reasons ?? [],
+      drivers: player.drivers ?? [],
+      evidence: player.evidence ?? {},
+    })),
+  };
+}
+
+/**
+ * Ranked big-night candidates over a window of `days` starting at `date`:
+ * players projected above their OWN usual by enough to matter, with the deltas
+ * and the rule codes that explain each row.
+ */
+export async function getWatchlist(
+  date?: string,
+  days?: number,
+  position?: WatchlistPositionFilter | null
+): Promise<WatchlistResponse> {
+  const { data } = await api.get<WatchlistResponse>('/watchlist', {
+    params: watchlistParams(date, days, position),
+  });
+  return normalizeWatchlist(data ?? {});
 }
 
 export async function getTeams(): Promise<Team[]> {
