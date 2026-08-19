@@ -3364,3 +3364,142 @@ anything — the mirror image of 13.5's note on the F2/F3/F4 Dec-1 tripwires.
    12% too high is not the obvious reason, but it is a reason that can be removed rather
    than argued about.
 5. **Do not re-score v4.** 13.6: one look per feature version. This was it.
+
+## 16. Ops automation: the daily publishing run (2026-08-19)
+
+**What changed and what did not.** Nothing in the model changed. `FEATURE_COLS` is the
+same 51 columns with the same `914cdc17…` digest, `FEATURE_VERSION` is `v3`, artifact
+`20260818` is byte-identical, and `tests/test_prospective_freeze.py` is green. What
+landed is the thing section 13.8 committed to and did not build: a scheduled process
+that actually serves the commitment. **13.8.1 says "a prediction run at the `gameday`
+horizon before every slate, best effort" — until now the best effort was a human
+remembering to run three scripts in the right order with the right flags.**
+
+### 16.1 The two files
+
+`ml/daily_run.py` is one idempotent command that performs the whole publishing
+pipeline in seven named phases: verify the pinned artifact against the freeze, compute
+the window, read the slate, rebuild the historical dataset from the truth layer, build
+prospective rows for the window, read the latest injury designations, and score and
+write. `.github/workflows/predictions.yml` runs it once a day at 21:00 UTC and does
+nothing else. It is the same shape as `.github/workflows/scraper.yml`, which has been
+reaching `nba_api` from a GitHub runner on a six-hour cron since May.
+
+**The driver computes nothing the three scripts it drives do not already compute.**
+`build_dataset.py`, `fnba_ml.prospective` and `predict.py` are called with arguments,
+not reimplemented. That is deliberate: an ops wrapper that grows its own feature logic
+is a second serving path, and a second serving path is a second thing that can disagree
+with the freeze.
+
+### 16.2 The four decisions that are genuinely new
+
+Everything else in the driver is sequencing. These four are judgements, they are pure
+functions at the top of `daily_run.py`, and `tests/test_daily_run.py` is about them
+because each can be wrong in a way that produces a plausible-looking run rather than an
+error.
+
+**1. The window is Eastern, and that is not a detail.** `nba_schedule.game_date` is an
+Eastern calendar date; a 9:30pm ET tip on 2026-10-20 carries
+`scheduled_at = 2026-10-21 01:30Z`. A window computed in UTC would, for five hours
+every evening, ask for tomorrow's slate — and would then publish it, at a measured
+horizon of 27 hours, under a `gameday` label. The window is `[today, today + N - 1]` in
+`America/New_York` with `N = 2` by default: tonight, plus tomorrow so that one missed
+cron does not lose a night. **It always extends forward. 13.8.2 forbids backfilling a
+missed slate, so the arithmetic cannot express a backward window.**
+
+**2. Staleness is a warning, never a refusal.** The truth layer's lag is
+`max(nba_schedule.game_date before the window) − max(player_game_logs.game_date)`. Over
+three days — the scraper runs every six hours, so a one-day gap is an ordinary
+overnight and a four-day gap is a broken scrape — the run logs it loudly, **writes the
+message into `prediction_runs.notes`, and serves anyway.** Friday's form is a worse
+projection for Monday than Sunday's would have been and a much better one than an empty
+page; and a stale run has to be identifiable as stale from the store alone, in April,
+by someone who was not reading the logs that morning.
+
+**3. The prospective label is a claim about seven things at once.** 13.8.4 makes the
+label the *definition* of what counts, so `prospective_conditions()` returns the
+reasons a run does not qualify and the note says which: the season is `2026-27` (read
+from `PROSPECTIVE_2026_27["season"]`, not typed out again), the season type is Regular
+Season, the horizon is `PROSPECTIVE_SERVING_HORIZON`, the model is
+`PROSPECTIVE_MODEL_VERSION`, the feature version is `PROSPECTIVE_FEATURE_VERSION`, the
+universe is `prospective` rather than the biased approximation, and the pinned
+checksums verified. A qualifying run's note is 13.4's verbatim
+`prospective_2026_27_v1; feature_set=v3-honest; shadow=false`. **A disqualified run's
+note must not contain the label anywhere** — a look report will select the season by
+substring, and `NOT prospective_2026_27_v1` would be selected by it — so `run_notes()`
+raises rather than emit one. A reworded reason string is the failure mode that
+assertion exists for.
+
+**4. The post-tipoff filter is here because it can only be here.** 13.8.2: *"a
+prediction made after tipoff is never inserted into the store, under any circumstance,
+for any reason."* `predict.py` has no notion of a tip time, so the rule is enforced in
+the driver, and it is applied **twice** — once when the slate is chosen and once against
+the frame that is about to be scored, because the phases in between take minutes and a
+7pm tip does not wait for them. The comparison is `tip > now` strictly: a prediction
+made *at* the tip is not before it. A game whose tip cannot be computed at all is
+dropped, and the `GAME_DATE + 00:00 UTC` fallback `predict.NOMINAL_TIP_HOUR_UTC`
+supplies is *earlier* than almost every real tip, so an unknown tip errs toward
+dropping rather than publishing. **Games dropped this way are counted in the log and in
+the run summary. They are a recorded missed slate (13.8.2), not a backlog.**
+
+### 16.3 Why 21:00 UTC
+
+5pm EDT / 4pm EST. Inside the `gameday` bucket of `(2, 12]` hours before tipoff for
+every 7pm-and-later tip, which is the overwhelming majority of the schedule, and after
+the league's 5pm-local initial participation report deadline for the following day. The
+handful of 3pm ET weekend afternoon games have already tipped at that hour and the
+driver drops them rather than publishing them — a real, small, *stated* gap in 13.8.1's
+"before every slate", and the honest options were a second earlier cron or this
+sentence. This is the sentence.
+
+### 16.4 The offseason no-op, and what red means
+
+**No game in the window means exit 0 having written nothing.** No empty run row, no
+placeholder. That is the expected result on most days of the year, and it matters
+because a cron that goes red every morning from June to October is a cron whose red is
+worth nothing by November. **A red run is the alert**: any phase failure exits non-zero
+naming the phase, so the failed-workflow notification points at the database or at the
+artifact rather than at this document. There is no retry, and re-running after tipoff
+will correctly refuse to publish the games it missed.
+
+Two more guardrails worth naming. `timeout-minutes: 30` — the dataset rebuild fits one
+LightGBM base-availability model per calendar block and then builds features once per
+game date, which runs in single-digit minutes; the cap exists because CI grew timeouts
+on 2026-08-18 after a stalled step sat "in progress" for six hours. And a
+`concurrency: predictions` group with `cancel-in-progress: false` — the store is
+append-only so two overlapping runs would both *succeed*, leaving one slate carrying
+two runs at the same information boundary, which makes every per-slate aggregate
+ambiguous. The run already underway holds the earlier and therefore correct boundary,
+so a manual dispatch queues behind it instead of killing it.
+
+### 16.5 Python 3.14, not the scraper's 3.12
+
+`predictions.yml` installs `ml/requirements.txt` on Python 3.14 where `scraper.yml`
+uses 3.12, and the reason is the freeze. The daily run **unpickles the frozen serving
+artifact** — joblib pickles of scikit-learn 1.9.0 and LightGBM 4.7.0 estimators whose
+sha256 digests are pinned in `PROSPECTIVE_ARTIFACT_CHECKSUMS` and must not be
+regenerated (13.2). Python 3.12 cannot install those versions at all: the newest cp312
+wheels are pandas 2.3.2 and scikit-learn 1.7.2. A 3.12 job would therefore install an
+*older* scikit-learn and then be handed a *newer* pickle, which is the direction
+scikit-learn does not support. **Matching the artifact's own library versions is the
+constraint; the interpreter version follows from it**, and every pin has a cp314
+`manylinux_2_28_x86_64` wheel so nothing on the runner builds from source.
+
+### 16.6 What this does not do
+
+- **No shadow run.** 13.4 requires the `v1` comparator at the same boundary on the same
+  slate. It is one more `predict.py` invocation with a different feature set and a
+  `shadow=true` note, and it is not wired up here. Until it is, the comparison ladder's
+  rung (c) has no prospective data.
+- **No look reports.** 13.6's three looks and 13.5's falsification table still have to
+  be computed by hand from the store.
+- **No alerting beyond a red workflow run.** Adequate while the author is the only
+  consumer; not adequate once the projections page has users.
+- **It has never run against production.** Both demonstrated runs were `--dry-run`
+  against the dev branch, whose `nba_schedule` holds only two of the four seasons prod
+  holds (2024-25 and 2025-26, so 74,718 played-universe rows against prod's ~147,000).
+  The pipeline is season-count agnostic — the career-scoped as-of joins simply have
+  less history to work with — but **the first production run will be the first time
+  this code sees four seasons and a live `secrets.DATABASE_URL`**, and it should be
+  triggered by hand with `dry_run: true` before October rather than being met for the
+  first time by a cron.
