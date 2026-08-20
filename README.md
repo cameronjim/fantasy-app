@@ -5,9 +5,7 @@
 [![NBA Scraper](https://github.com/cameronjim/fantasy-app/actions/workflows/scraper.yml/badge.svg)](https://github.com/cameronjim/fantasy-app/actions/workflows/scraper.yml)
 
 A full-stack fantasy basketball app built on real NBA stats, with AI-powered team
-analysis, waiver wire suggestions, and a betting picks tab. It runs as a live
-deployed service: automated CI/CD, tests at every layer, and a scheduled scraper
-that refreshes the data every six hours.
+analysis, waiver wire suggestions, game predictions, and a betting picks tab.
 
 **Live app: [fantasy-nba.cameronjim.com](https://fantasy-nba.cameronjim.com)**
 
@@ -19,480 +17,71 @@ fantasy roster, the Claude-powered analysis surfaces, and the bet tracker.
 
 | Layer | Stack |
 |---|---|
-| **Frontend** | React 18, TypeScript (strict), Vite 6, Tailwind CSS 4, daisyUI 5, React Router 7, Axios, `@react-oauth/google`, lucide-react |
-| **Backend** | Node.js 20, Express 4, TypeScript (ESM / NodeNext), `pg`, `jsonwebtoken`, `bcryptjs`, `helmet`, `cors` |
-| **Database** | PostgreSQL (Neon in production), with a hand-written schema plus sequential SQL migrations |
-| **AI** | Anthropic Claude API (`@anthropic-ai/sdk`) |
-| **Email** | AWS SES v2 (`@aws-sdk/client-sesv2`) for password-reset mail |
-| **Scraper** | Python 3.12, `nba_api`, `requests`, Beautiful Soup, `psycopg2` |
-| **Tests** | Vitest (unit + API), Supertest, React Testing Library, Playwright |
-| **Infra** | AWS Lambda + HTTP API Gateway (Serverless Framework v3), S3 + CloudFront, GitHub Actions |
+| **Frontend** | React 18, TypeScript, Vite 6, Tailwind CSS 4, daisyUI 5, React Router 7 |
+| **Backend** | Node.js 20, Express 4, TypeScript (ESM) |
+| **Database** | PostgreSQL (Neon in production) |
+| **ML** | Python, LightGBM — availability/minutes/production predictions |
+| **AI** | Anthropic Claude API |
+| **Scraper** | Python, `nba_api`, Beautiful Soup |
+| **Tests** | Vitest, Supertest, React Testing Library, Playwright, pytest |
+| **Infra** | AWS Lambda + API Gateway, S3 + CloudFront, GitHub Actions |
 
 ## Features
 
 ### Stats (`/`), public
 
 - Searchable, sortable player table with a **Fantasy Score (FS)** column
-- Filters for free-text search, team, and position (PG/SG/SF/PF/C, multi-position
-  aware)
-- **Infinite scroll**, with rows paging in via `IntersectionObserver`
-- Teams view with an **East / West / All** conference filter, plus offensive,
-  defensive, and net ratings
-- **Player comparison**: pick up to 3 players and open a side-by-side modal that
-  highlights the winner in each category
-- Player detail modal with headshot and injury status
-- Live scoreboard strip along the top showing today's games and scores
+- Filters for search, team, and position (multi-position aware)
+- Teams view with conference filter and offensive/defensive/net ratings
+- **Player comparison**: pick up to 3 players and compare side by side
+- Live scoreboard strip showing today's games and scores
+
+### Projections and Watchlist, public
+
+- Nightly game-by-game projections across all 9 fantasy categories, with
+  confidence ranges and availability estimates
+- Watchlist ranks players by projected deviation from their own usual output,
+  over a configurable window, with position and team filters — built for
+  finding streaming pickups
 
 ### 2K Ratings (`/ratings`), public
 
-- Searchable, sortable list of NBA 2K player ratings with a **Current / Classic /
-  All-Time** roster toggle
-- Click any player for the full breakdown: all 35 attributes as labelled bars
-  grouped into Outside Scoring, Inside Scoring, Athleticism, Playmaking, and
-  Defense & Rebounding, plus badges and the overall rating across past game
-  versions
-- The same attribute modal opens from a 2K badge inside the player detail modal
-  on the Stats tab, when the player's name resolves to a 2K row
+- Searchable NBA 2K player ratings with a Current / Classic / All-Time toggle
+- Full attribute and badge breakdown per player
 
-### My Team (`/fantasy`), sign-in required
+### My Team and Improve Team, sign-in required
 
-- Add and drop players to build a personal fantasy roster
-- Roster table with per-game stats and computed team averages
-- Claude-powered **9-category analysis** covering strengths, weaknesses, and
-  suggestions, cached server-side and refreshable on demand
-- Nudge to fill out Team Preferences if you haven't yet
-
-### Improve Team (`/improve`), sign-in required
-
-- Claude-generated **trade targets** and **waiver wire pickups**, driven by your
-  roster's weakest categories
-- AI chat for trade and waiver questions, with your roster supplied as context
+- Build a personal fantasy roster with per-game stats and team averages
+- Claude-powered 9-category analysis, trade targets, and waiver pickups
+- AI chat for trade and waiver questions, with your roster as context
 
 ### Betting (`/betting`), odds board public, picks require sign-in
 
-- **Odds board** for upcoming games (spread, moneyline, total) sourced from ESPN
-- Claude-generated **Best Value / Safe / Hail Mary** picks and a suggested parlay,
-  tuned by your betting preferences
-- **Bet ledger** to track, settle, and delete bets with running profit and loss
-- AI chat scoped to betting, plus a glossary of betting terminology
+- Odds board for upcoming games (spread, moneyline, total)
+- Claude-generated picks and a suggested parlay, tuned by your preferences
+- Bet ledger to track, settle, and delete bets
 - Entertainment-only disclaimer and a responsible-gambling notice
 
 ### Accounts and settings
 
-- **Email/password auth** (bcrypt, cost 10) and **Google Sign-In** with
-  server-side ID-token verification
-- **Password reset by email** through AWS SES. Tokens are stored as SHA-256
-  hashes and consumed exactly once, and forgot-password responds identically for
-  known and unknown addresses so it cannot be used to enumerate accounts.
-- **Profile page** (`/profile`) with My Profile and Change Password tabs
-- **Team Preferences questionnaire** (`/preferences`), 10 questions spanning risk
-  tolerance, league format, roster construction, trade appetite, schedule
-  weighting, rookie appetite, and waiver strategy. Every AI prompt reads from it.
-- **About page** (`/about`) describing the stack and the CI/CD pipeline
-- **Developer Tools** (`/admin`), an admin-only dashboard with user count,
-  24-hour pageviews, active users, a user list, and pageview breakdowns.
-  Authorization is re-checked against the database on every request.
+- Email/password auth and Google Sign-In
+- Password reset by email
+- Team Preferences questionnaire that every AI prompt reads from
+- 7 themes with a navbar picker
 
-### Cross-cutting
+## Documentation
 
-- **7 themes with a navbar picker**: `lofi` (Light), Cream, Sage, Slate, Ocean,
-  `business` (Dark), and Graphite. Two are daisyUI built-ins and five are custom
-  themes defined in `frontend/src/index.css`. The choice persists in
-  `localStorage`, and a pre-paint script in `index.html` prevents a flash of the
-  wrong theme on load.
-- **Data-freshness badge** in the navbar showing per-source "last updated" times
-  for players, teams, and games, polled every 5 minutes
-- **Rate limiting**, database-backed and keyed per IP or per user: login 5/15min,
-  register 5/hr, forgot-password 3/hr, reset-password 10/hr, betting picks,
-  pageview beacon 300/hr, and a 200/day per-user ceiling across all
-  Claude-backed endpoints to bound API spend
-- Client-side response caching with background revalidation and warm-up
-  prefetching, which keeps tab switches instant
-
-## Data Sources
-
-| Source | Used for | Notes |
-|---|---|---|
-| [`stats.nba.com`](https://stats.nba.com) (via `nba_api`) | Player and team per-game stats | Sits behind Akamai, which **blocks AWS and GitHub Actions IP ranges**. Requests from CI can fail; the scraper tolerates it and the app keeps serving the last good data from Postgres. |
-| ESPN public API (`site.api.espn.com`) | Games, scores, live scoreboard, betting odds | Not IP-blocked from AWS, which is why it backs the scoreboard and odds board instead of `cdn.nba.com`. |
-| [CBS Sports](https://www.cbssports.com/nba/injuries/) | Injury reports and specific positions | Parsed with Beautiful Soup. |
-| [`nba2kapi.com`](https://nba2kapi.com) | NBA 2K overall ratings, 35 attributes, badges, and rating history | Data originates from [2kratings.com](https://www.2kratings.com). Not affiliated with or endorsed by 2K Sports, Take-Two, or the NBA. Matching to our players is name-based, since 2K publishes no NBA ids. |
-| `stats.nba.com` &rarr; `scheduleleaguev2` | The season schedule, including games not yet played | Publishes the whole season in advance, which is what lets a prediction be made for tonight's game before any box score exists. Falls back to reconstructing completed games from `leaguegamelog` when the endpoint is unavailable. ESPN is deliberately *not* the fallback: it keys on its own event ids, which do not join to any `stats.nba.com` game id. |
-| `stats.nba.com` &rarr; `playergamelogs`, `leaguegamelog` | Per-game player and team box scores | One request each covers a whole season, or any date window within it, so the incremental sync costs two requests per run rather than one per game. |
-| `stats.nba.com` &rarr; `boxscoresummaryv3` (fallback `boxscoresummaryv2`) | Official per-game inactive lists, from the `InactivePlayers` result set | The only phase that costs a request **per game**, which is why the truth-layer backfill is slow and opt-in. `v3` is tried first because `nba_api` documents `v2` as having no data for games on or after 2025-04-10. |
-
-## Configuration
-
-Runtime configuration lives in GitHub Actions secrets and variables, and
-Serverless injects it into the Lambda environment (see `backend/serverless.yml`).
-The backend, scraper, and seed script all read from a single set of variables;
-the frontend has its own, which Vite reads at build time.
-
-Backend, scraper, and seed:
-
-| Variable | Required | Description |
-|---|---|---|
-| `DATABASE_URL` | yes | Postgres connection string |
-| `AUTH_SECRET` | yes | JWT signing key. Must be at least 32 characters and not a placeholder, or `backend/src/config.ts` refuses to boot. |
-| `ANTHROPIC_API_KEY` | for AI features | Anthropic API key |
-| `FRONTEND_URL` | no | Comma-separated CORS allow-list |
-| `GOOGLE_CLIENT_ID` | for Google Sign-In | OAuth client ID, verified server-side |
-| `FROM_EMAIL` | for password reset | An SES-verified sender identity |
-| `PORT` | no | Backend port, defaults to `3001` |
-
-Frontend build:
-
-| Variable | Description |
-|---|---|
-| `VITE_API_URL` | Origin of the deployed API |
-| `VITE_GOOGLE_CLIENT_ID` | Google OAuth client ID. Public by design, since it is baked into the bundle. Leave empty to hide the Google button. |
-
-Never put a secret in a `VITE_`-prefixed variable. Vite inlines those values into
-the static JavaScript at build time, so anything there is readable by anyone who
-loads the page.
-
-## API
-
-Base path `/api`. All responses are JSON.
-
-| Endpoint | Method | Auth | Description |
-|---|---|---|---|
-| `/health` | GET | none | Liveness check, used by the post-deploy smoke test |
-| `/status` | GET | none | Last-updated timestamps per data source |
-| `/status/benchmarks` | GET | none | League benchmarks computed from the player pool |
-| `/players` | GET | none | List players (search, team/position filters) |
-| `/players/:id` | GET | none | Player detail |
-| `/teams` | GET | none | All teams |
-| `/teams/:id` | GET | none | Team detail |
-| `/games` | GET | none | Today's and recent games |
-| `/games/live` | GET | none | Live scoreboard, ESPN-backed |
-| `/ratings2k/players` | GET | none | NBA 2K cards (roster type, search, sort, paging) |
-| `/ratings2k/players/:slug` | GET | none | One 2K card with attributes, badges, and rating history |
-| `/ratings2k/by-player-name` | GET | none | Resolve an app player to their 2K card by name |
-| `/auth/register` | POST | none | Create an account (rate limited) |
-| `/auth/login` | POST | none | Email/password sign-in (rate limited) |
-| `/auth/google` | POST | none | Google Sign-In, ID token verified server-side |
-| `/auth/forgot-password` | POST | none | Send a reset email (rate limited) |
-| `/auth/reset-password` | POST | none | Consume a reset token (rate limited) |
-| `/auth/me` | GET | user | Current user, including the `is_admin` flag |
-| `/auth/profile` | PATCH | user | Update profile fields |
-| `/auth/change-password` | PATCH | user | Change password |
-| `/auth/set-email` | PATCH | user | Set or change email address |
-| `/fantasy/roster` | GET | user | Current user's roster |
-| `/fantasy/roster` | POST | user | Add a player |
-| `/fantasy/roster/:playerId` | DELETE | user | Drop a player |
-| `/preferences` | GET / PATCH | user | Team Preferences questionnaire |
-| `/ai/chat` | POST | user | AI chat with roster, waiver, or betting context |
-| `/ai/team-analysis` | GET | user | 9-category team analysis |
-| `/ai/waiver-suggestions` | GET | user | Trade targets and waiver pickups |
-| `/betting/odds` | GET | none | Odds board for upcoming games |
-| `/betting/picks` | GET | user | AI picks and suggested parlay |
-| `/betting/bets` | GET / POST | user | List or track bets |
-| `/betting/bets/:id` | PATCH / DELETE | user | Settle or remove a bet |
-| `/track/pageview` | POST | optional | Pageview beacon, counts anonymous visits |
-| `/admin/users` | GET | admin | User list |
-| `/admin/stats` | GET | admin | Totals and 24-hour activity |
-| `/admin/views` | GET | admin | Pageview breakdown |
-
-Everything under `/api/ai/*` also enforces a 200-request/day per-user cap.
-
-## Architecture
-
-```
-                        GitHub Actions cron (every 6h)
-                                    │
-    stats.nba.com ─┐                ▼
-    ESPN API ──────┼──────► scraper/run_scraper.py ──► upsert
-    CBS Sports ────┘                                     │
-                                                         ▼
-  Browser ──► CloudFront ──► S3 (React SPA)      PostgreSQL (Neon)
-                                                         ▲
-                                 ┌───────────────────────┘
-  Browser ──► API Gateway ──► Lambda (Express)
-                                 ├──► Anthropic Claude API
-                                 └──► AWS SES (password reset)
-```
-
-The scraper writes to Postgres on its own schedule, fully decoupled from the API.
-Request latency therefore never depends on data collection, and a blocked scrape
-only means the app serves slightly staler stats.
-
-Inside the backend, route handlers validate input and return JSON, `requireAuth`
-binds the user id from the JWT rather than from a query parameter, services own
-the business logic (fantasy scoring, Claude calls, odds math, SES sends), and
-every database access funnels through one parameterized `query()` helper in
-`db.ts`.
-
-On the frontend, `src/api/client.ts` is the only module that speaks HTTP. No
-component fetches directly.
-
-## Database Schema and Migrations
-
-- **`db/schema.sql`** declares 27 tables: `players`, `teams`, `games`, `users`,
-  `password_reset_tokens`, `my_roster`, `analysis_cache`, `waiver_cache`,
-  `bets`, `betting_cache`, `chat_history`, `page_views`, `rate_limits`,
-  `player_season_stats`, `team_season_stats`, `nba_2k_players`,
-  `nba_2k_attributes`, `nba_2k_badges`, `nba_2k_rating_history`,
-  `schema_migrations`, `ingestion_runs`, `nba_schedule`, `player_game_logs`,
-  `team_game_logs`, `player_game_status`, `player_team_stints`, and
-  `player_injury_reports`. It uses `CREATE TABLE / INDEX IF NOT EXISTS`
-  throughout, so re-running it is safe.
-- **`db/migrations/`** holds sequential, hand-written SQL migrations, `001`
-  through `013`, covering email and password reset, team conference backfill,
-  user preferences, Google Sign-In, profile fields, betting, bet money fields,
-  rate limits, admin and pageviews, the team abbreviation backfill, the
-  historical season-stats tables, the NBA 2K ratings tables, and the data truth
-  layer. Each is idempotent, so re-applying one is harmless.
-- The four `nba_2k_*` tables are key-value rather than wide (one row per
-  attribute, per badge, per game version) because 2K reshuffles its attribute and
-  badge sets every September, and with no migration runner a wide table would
-  need a hand-applied migration every game year.
-- There is no migration runner. A fresh database needs `schema.sql` **and then
-  every migration in numeric order**. `schema.sql` has drifted slightly behind
-  and does not declare `users.ai_preferences`, which migration `003` adds and the
-  preferences and AI features depend on, so the schema alone is not enough.
-- Migrations are applied by hand in the Neon SQL editor.
-- Since there is no runner, "did I already apply this here?" has historically had
-  no answer. Migration `013` adds a `schema_migrations` table and
-  `scraper/check_migrations.py` reports against it:
-
-  ```bash
-  cd scraper
-  python check_migrations.py                        # prod (DATABASE_URL)
-  python check_migrations.py --dev                  # dev branch
-  python check_migrations.py --record 013_truth_layer.sql
-  ```
-
-  It is read-only except for `--record`, which writes a `schema_migrations` row
-  for a migration you have just applied by hand. It never executes SQL from a
-  migration file, so it cannot be mistaken for a runner. A database with no
-  `schema_migrations` table is reported as "nothing recorded" rather than
-  treated as empty.
-- Admin has no signup path and is enforced server-side. Grant it directly:
-  `UPDATE users SET is_admin = TRUE WHERE email = 'you@example.com';`
-
-### The data truth layer
-
-Migration `013` adds the tables a fantasy availability model trains on. The
-short version of why: a model fitted only on recorded game logs answers "how
-much will he produce **given** he plays", and a Phase 0 feasibility spike
-measured that as overstating production over the real schedule by roughly half.
-The training unit therefore has to be the *scheduled player-game*, including the
-ones a player missed and the reason he missed them.
-
-| Table | Holds |
-|---|---|
-| `nba_schedule` | Every scheduled game, played or not, keyed on NBA's game id. Separate from `games`, which keys on ESPN event ids — the two id spaces do not join. |
-| `player_game_logs` | One row per player per game they recorded a line for. `minutes` is decimal (34.20 for `34:12`); `dnp_reason` is the verbatim box-score `COMMENT`. |
-| `team_game_logs` | Two rows per game. Doubles as the completed-game schedule. |
-| `player_game_status` | **The training universe.** One row per scheduled player-game, appeared or not, with `rostered` / `listed_inactive` / `played` kept distinct. |
-| `player_team_stints` | Which team a player belonged to over which span, so a feature cannot leak a trade backwards into pre-trade rows. |
-| `player_injury_reports` | Append-only history of scraped injury designations — "what was known at the time", which the overwrite-in-place `players.injury_status` cannot answer. |
-| `ingestion_runs` | One row per truth-layer scraper phase invocation, for tracing which rows came from which run. |
-
-Ids are `TEXT` throughout, because NBA game ids carry leading zeros
-(`0022300061`) and stop being valid ids the moment something parses them as a
-number.
-
-**The incremental half runs as part of the normal 6-hour cron** — schedule, game
-logs, then game status, after the existing four scrapes. Each phase logs and
-continues on failure, so an outage in one cannot cost the others. The game-log
-sync is watermarked on `MAX(game_date)` and re-reads a trailing 3-day window to
-pick up scorer corrections. The status phase is bounded to recent games and
-capped at 40 per run, since it costs one request per game.
-
-#### Runbook: migration → backfill → validate
-
-1. **Apply the migration by hand, to both databases.** Paste
-   `db/migrations/013_truth_layer.sql` into the Neon SQL editor and run it
-   against **prod first, then the dev branch**. Nothing below works until this
-   is done. Then record it:
-
-   ```bash
-   cd scraper
-   python check_migrations.py --record 013_truth_layer.sql
-   python check_migrations.py --dev --record 013_truth_layer.sql
-   ```
-
-2. **Backfill, locally.** Like `--backfill-history`, this must run from a
-   residential IP: `stats.nba.com` is Akamai-blocked from GitHub Actions and
-   throttles hard, so it is deliberately not part of the cron.
-
-   ```bash
-   cd scraper
-   pip install -r requirements.txt
-   python run_scraper.py --backfill-game-logs --dev          # rehearse on dev
-   python run_scraper.py --backfill-game-logs --dry-run      # reads only, writes nothing
-   python run_scraper.py --backfill-game-logs                # prod, 2022-23 to current
-   python run_scraper.py --backfill-game-logs --from 2022-23 --to 2024-25
-   ```
-
-   **Expect it to take hours.** Schedule and game logs are two requests per
-   season; the inactive lists are one request per game, paced at
-   `BACKFILL_REQUEST_DELAY_SECONDS` (5s). At ~1,230 games per season that is
-   **roughly 1.7 hours per season of pacing alone**, so ~7 hours for the default
-   four-season range, more with retries. It is resumable: a game is only fetched
-   if it has no `player_game_status` rows at all, so a killed run re-run from the
-   same command skips everything already done and costs only the two league-wide
-   calls per season to get going again.
-
-3. **Validate.** Read-only, takes no locks, safe against prod mid-scrape:
-
-   ```bash
-   python run_scraper.py --validate-game-logs
-   python run_scraper.py --validate-game-logs --from 2024-25 --to 2025-26
-   ```
-
-   Per season it checks two team rows per completed game, no duplicate
-   player/game keys, `FGM <= FGA`, `3PM <= 3PA`, `3PM <= FGM`, `FTM <= FTA`,
-   player-points summing to team points, and lists any completed scheduled game
-   with no logs or no status rows. It finishes with `pg_total_relation_size` for
-   each new table.
-
-`--dry-run` is honoured by every write path in the scraper, including the four
-original scrapes: reads still run, writes are counted and skipped.
-
-#### Tests
-
-The truth layer's parsing, watermark, stint, validation, and derivation logic is
-pure and unit-tested with no database and no network:
-
-```bash
-python -m pytest scraper/test_truth_layer.py
-```
-
-Fixtures are copied from `nba_api`'s own `expected_data` column declarations, so
-a fixture that drifts from the real response shape cannot pass silently.
-
-## Deployment
-
-Deployment is fully automated by GitHub Actions. **There is nothing to run by
-hand.**
-
-**On every pull request** (`.github/workflows/ci.yml`):
-
-1. Backend job: typecheck source, typecheck tests, run unit and API tests
-2. Frontend job: typecheck, run unit tests, production build
-3. E2E job: typecheck E2E, then the Playwright suite on Chromium
-4. If all three pass, a **preview deploy** goes out to the shared `dev`
-   environment (`serverless deploy --stage dev`, plus a sync to the dev S3 bucket
-   and a CloudFront invalidation). Two open PRs share one dev environment, so the
-   last push wins.
-
-**On push or merge to `main`:** CI re-runs against the merge commit, and
-`.github/workflows/deploy.yml` fires via `workflow_run`, but only if CI concluded
-successfully. It then:
-
-1. Builds and deploys the backend with `serverless deploy --stage prod`
-2. Builds the frontend and syncs it to the prod S3 bucket, giving content-hashed
-   `assets/` a one-year immutable cache and root files `no-cache`, then
-   invalidates CloudFront
-3. Runs a smoke test against `/api/health` and the frontend root
-
-**On a 6-hour cron** (`.github/workflows/scraper.yml`): `python
-scraper/run_scraper.py` refreshes stats in Postgres. It can also be triggered
-manually with `workflow_dispatch`.
-
-The historical season backfill is **not** part of that cron. `stats.nba.com`
-blocks CI IP ranges and throttles hard, so it is a one-time job run locally from
-a residential connection: `python run_scraper.py --backfill-history`. It is
-resumable — seasons already in the database are skipped — so an interrupted run
-can simply be started again.
-
-The **NBA 2K sync** is also opt-in and not on the cron, because 2K ratings change
-a handful of times a season rather than every six hours:
-
-```bash
-cd scraper
-python run_scraper.py --sync-2k                              # current rosters (~672 cards)
-python run_scraper.py --sync-2k --team-types curr,class,allt # everything (~1,889 cards)
-```
-
-It defaults to current players only. Each card is written in its own
-transaction, with its attributes and badges replaced wholesale, so re-running is
-idempotent and a card is never left half-updated. Cards 2K no longer lists for a
-synced roster type are pruned.
-
-AWS access uses **OIDC role assumption**, so no long-lived AWS keys live in the
-repo or in CI.
-
-**Database migrations are deliberately not automated.** Every schema change gets
-applied by hand in the Neon SQL editor with human review. For code regressions,
-Lambda's built-in versioning covers fast rollback.
-
-`backend/deploy.ps1` exists only as an emergency escape hatch, for something like
-a GitHub Actions outage. Prefer the pipeline. If you do need it, deploy to an
-unused stage so it doesn't fight the workflow over Lambda environment variables.
-
-## Project Layout
-
-```
-fantasy-app/
-├── .env.example                  # env template (backend + scraper + seed)
-├── AGENTS.md                     # contributor/AI-agent style guide
-├── .github/
-│   ├── deploy-iam-policy.json    # IAM policy for the OIDC deploy role
-│   └── workflows/
-│       ├── ci.yml                # PR gate + dev preview deploy
-│       ├── deploy.yml            # prod deploy on push to main
-│       └── scraper.yml           # 6-hour scraper cron
-├── db/
-│   ├── schema.sql                # full PostgreSQL schema
-│   ├── migrations/               # 001 through 013, sequential SQL migrations
-│   └── seed.ts                   # sample players/teams/games
-├── scraper/
-│   ├── requirements.txt
-│   ├── run_scraper.py            # players, teams, games, injuries, truth layer
-│   ├── check_migrations.py       # migration state report (read-only)
-│   └── test_truth_layer.py       # pytest, pure functions, no db or network
-├── backend/
-│   ├── package.json
-│   ├── serverless.yml            # Lambda + HTTP API definition
-│   ├── deploy.ps1                # emergency manual deploy only
-│   ├── tsconfig.json
-│   ├── src/
-│   │   ├── app.ts                # Express app: middleware + router mounting
-│   │   ├── index.ts              # server entry
-│   │   ├── lambda.ts             # AWS Lambda handler (serverless-http)
-│   │   ├── config.ts             # boot-time config guards
-│   │   ├── db.ts                 # pg pool + parameterized query() helper
-│   │   ├── middleware/           # auth, admin, rateLimit
-│   │   ├── routes/               # players, teams, games, fantasy, ai, auth,
-│   │   │                         #   preferences, betting, status, track, admin
-│   │   └── services/             # ai, fantasyScore, odds, oddsMath, email,
-│   │                             #   benchmarks, betSettlement, chatHistory,
-│   │                             #   preferences, dates
-│   └── tests/                    # Vitest unit + Supertest API tests
-└── frontend/
-    ├── package.json
-    ├── vite.config.ts            # React + Tailwind plugins, /api dev proxy
-    ├── playwright.config.ts
-    ├── src/
-    │   ├── App.tsx               # routes
-    │   ├── index.css             # Tailwind + daisyUI themes
-    │   ├── types.ts
-    │   ├── api/                  # client.ts + response caches
-    │   ├── components/           # navbar, tables, modals, chat, betting panels
-    │   ├── hooks/                # theme, caching, betting, page tracking
-    │   ├── pages/                # Stats, Fantasy, ImproveTeam, Betting, Login,
-    │   │                         #   Register, Forgot/ResetPassword, Profile,
-    │   │                         #   Preferences, About, Admin
-    │   └── utils/                # teamLogos, formatOdds
-    ├── test/                     # Vitest unit tests
-    └── e2e/                      # Playwright specs, page objects, fixtures
-```
+- **[TECHNICAL.md](TECHNICAL.md)** — architecture, data sources, API reference,
+  database schema, deployment pipeline
+- **[ml/README.md](ml/README.md)** and **[ml/MODEL.md](ml/MODEL.md)** — the
+  prediction system
+- **[AGENTS.md](AGENTS.md)** — contribution conventions, testing, pre-commit
+  checklist
 
 ## Contributing
 
-`AGENTS.md` is the style guide, covering architecture boundaries, TypeScript and
-React conventions, testing layout, and the pre-commit checklist.
-
-CI gates every pull request on the full suite: typecheck and unit tests for both
-the backend and frontend, API tests via Supertest, and the Playwright E2E suite
-on Chromium. A PR needs all of it green before it can deploy.
-
-There is no ESLint or Prettier config, so formatting follows the surrounding
-code.
+CI gates every pull request: typecheck and tests for the backend, frontend, and
+ML package, plus a Playwright E2E suite. See `AGENTS.md` for the style guide.
 
 ## License
 
