@@ -20,8 +20,6 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   }
 }
 
-// attaches userId when a valid bearer token is present, but never rejects —
-// for endpoints that serve anonymous visitors too (e.g. page-view tracking).
 export function optionalAuth(req: Request, _res: Response, next: NextFunction): void {
   const header = req.headers.authorization;
   if (header?.startsWith('Bearer ')) {
@@ -29,7 +27,6 @@ export function optionalAuth(req: Request, _res: Response, next: NextFunction): 
       const payload = jwt.verify(header.slice(7), process.env.AUTH_SECRET!) as { userId: number };
       (req as AuthRequest).userId = payload.userId;
     } catch {
-      // expired/garbage token -> treat the request as anonymous.
     }
   }
   next();

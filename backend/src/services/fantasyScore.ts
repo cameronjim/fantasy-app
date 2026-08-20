@@ -1,22 +1,5 @@
 import { query } from '../db.js';
 
-// fantasy scoring engine. supports the major industry formats — pick one
-// via `ScoringFormat` or compose your own. the global ranking cache uses
-// `NBA_STANDARD` as a sensible default; per-user rankings (driven by the
-// `league_format` preference) will be wired up in a follow-up.
-//
-// industry reference (verified may 2026):
-//
-//   NBA.com (NBA_FANTASY_PTS): PTS·1 + REB·1.2 + AST·1.5 + STL·3 + BLK·3 − TOV·1
-//   FanDuel:                   PTS·1 + REB·1.2 + AST·1.5 + STL·3 + BLK·3 − TOV·1
-//   DraftKings:                PTS·1 + 3PM·0.5 + REB·1.25 + AST·1.5 + STL·2 + BLK·2 − TOV·0.5
-//                              + DD bonus 1.5, TD bonus 3
-//   ESPN H2H points:           PTS·1 + 3PM·1 + REB·1 + AST·2 + STL·4 + BLK·4 − TOV·2
-//                              + FGM·2 − FGA·1 + FTM·1 − FTA·1
-//   Yahoo "High Score":        PTS·1 + REB·1 + AST·2 + STL·3 + BLK·3, no TOV penalty
-//
-// category leagues (9-cat) use z-scores rather than a single number, so
-// they're modeled separately under `zScoreRank()` below.
 
 export interface FantasyStatLine {
   points_per_game: number;
@@ -28,23 +11,17 @@ export interface FantasyStatLine {
   turnovers_per_game: number;
 }
 
-// optional extras some formats use. exposed separately so a caller with a
-// simple stat line doesn't have to provide them — they're treated as 0
-// when missing, which matches every preset's "stat not in formula" case.
 export interface FantasyStatLineExtras {
   field_goals_made?: number;
   field_goals_attempted?: number;
   free_throws_made?: number;
   free_throws_attempted?: number;
-  // double-double / triple-double counts per game. only DraftKings uses these.
   double_doubles_per_game?: number;
   triple_doubles_per_game?: number;
 }
 
 export interface ScoringFormat {
-  /** human-readable name (used in ai prompts and the ui). */
   name: string;
-  /** coefficient per stat per game. */
   pts: number;
   reb: number;
   ast: number;
@@ -98,9 +75,6 @@ export const YAHOO_HIGH_SCORE: ScoringFormat = {
   pts: 1.0, reb: 1.0, ast: 2.0, stl: 3.0, blk: 3.0, tov: 0,
 };
 
-// the original formula this app shipped with — NBA standard plus a small
-// 3PM bonus. kept as a named format so anyone who relied on the old scores
-// can opt back in.
 export const APP_LEGACY: ScoringFormat = {
   ...ZERO_COEFFS,
   name: 'App Legacy (NBA + 3PM bonus)',
@@ -116,11 +90,6 @@ export const SCORING_FORMATS: Readonly<Record<string, ScoringFormat>> = Object.f
   app_legacy: APP_LEGACY,
 });
 
-/**
- * Compute fantasy points for one player under the given scoring format.
- * Missing optional fields (FGM, FGA, FTM, FTA, DD, TD) are treated as 0 —
- * formats that don't use them get the right answer either way.
- */
 export function fantasyPoints(
   p: FantasyStatLine,
   format: ScoringFormat = NBA_STANDARD,
@@ -143,15 +112,9 @@ export function fantasyPoints(
   );
 }
 
-// minimum volume to receive a meaningful rank. below this a player has played
-// too little to compare against rotation regulars — their score is null so the
-// FS column shows "-" instead of a misleading "47.8" from a tiny sample.
 export const MIN_GAMES_FOR_RANK = 15;
 export const MIN_MIN_FOR_RANK = 12;
 
-// per-game fantasy score for one player, or null if the player hasn't played
-// enough to be ranked. pulled out of the cached load path so unit tests can
-// exercise the scoring rules without a database.
 export function scorePlayer(
   stats: FantasyStatLine & { games_played: number; minutes_per_game: number },
   format: ScoringFormat = NBA_STANDARD,
@@ -162,18 +125,6 @@ export function scorePlayer(
   return Math.round(fantasyPoints(stats, format, extras) * 10) / 10;
 }
 
-/**
- * Z-score-based ranking for category leagues. Returns each player's average
- * z-score across the 9 standard categories. Higher = better, except TOV
- * which is sign-flipped before averaging.
- *
- * Note: this is a one-shot computation over a slice of players (the
- * "rotation" pool to compute mean/stddev against). Volume-adjusted FG%/FT%
- * are NOT implemented yet — the naive percentage is used. A full
- * basketball-monster-style ranking would weight percentages by attempts
- * (a 90% FT% on 1 attempt/game is less valuable than 80% on 8 attempts/game);
- * we'd add that when category-league users actually adopt this.
- */
 export interface CategoryStatLine extends FantasyStatLine {
   field_goal_percentage: number;
   free_throw_percentage: number;
@@ -190,8 +141,6 @@ export function zScoreRank<T extends CategoryStatLine>(
     const variance = mean(xs.map((x) => (x - m) ** 2));
     return Math.sqrt(variance);
   };
-  // safe-divide: if stddev is 0 (all values identical), every player gets 0
-  // for that category instead of NaN/Infinity.
   const safeZ = (val: number, m: number, sd: number): number =>
     sd === 0 ? 0 : (val - m) / sd;
 
@@ -207,7 +156,6 @@ export function zScoreRank<T extends CategoryStatLine>(
     'turnovers_per_game',
   ];
 
-  // precompute mean + stddev per category from the supplied pool.
   const stats = new Map<keyof CategoryStatLine, { m: number; sd: number }>();
   for (const cat of cats) {
     const values = players.map((p) => p[cat]);
@@ -219,7 +167,6 @@ export function zScoreRank<T extends CategoryStatLine>(
     for (const cat of cats) {
       const s = stats.get(cat)!;
       const z = safeZ(p[cat], s.m, s.sd);
-      // turnovers: lower is better, so flip the sign before averaging.
       total += cat === 'turnovers_per_game' ? -z : z;
     }
     return { ...p, z_score: total / cats.length };
@@ -295,8 +242,6 @@ async function compute(): Promise<{ ranked: PlayerWithScore[]; byId: Map<number,
       turnovers_per_game: Number(p.turnovers_per_game) || 0,
     };
 
-    // global cache uses NBA standard as the default — see the explainer
-    // at the top of the file for why and how to support per-user formats.
     const score = scorePlayer({ ...stats, games_played: gp, minutes_per_game: mpg });
 
     return {
@@ -319,7 +264,6 @@ async function compute(): Promise<{ ranked: PlayerWithScore[]; byId: Map<number,
     };
   });
 
-  // rank by FP descending; unranked players (null score) stay at the bottom.
   const rankable = scored.filter((p) => p.fantasy_score !== null);
   rankable.sort((a, b) => (b.fantasy_score ?? 0) - (a.fantasy_score ?? 0));
   rankable.forEach((p, i) => { p.fantasy_rank = i + 1; });
@@ -327,8 +271,6 @@ async function compute(): Promise<{ ranked: PlayerWithScore[]; byId: Map<number,
   const byId = new Map<number, PlayerWithScore>();
   scored.forEach((p) => byId.set(p.id, p));
 
-  // returned `ranked` is sorted: rankable first (best to worst), then
-  // un-scored players in their original order.
   const unranked = scored.filter((p) => p.fantasy_score === null);
   return { ranked: [...rankable, ...unranked], byId };
 }
@@ -340,12 +282,10 @@ async function load(): Promise<CacheEntry> {
   return cache;
 }
 
-/** All players with their fantasy scores + ranks, sorted by rank (nulls last). */
 export async function getRankedPlayers(): Promise<PlayerWithScore[]> {
   return (await load()).ranked;
 }
 
-/** Quick lookup by player id (e.g. when overlaying scores onto an existing list). */
 export async function getScoresById(): Promise<Map<number, PlayerWithScore>> {
   return (await load()).byId;
 }

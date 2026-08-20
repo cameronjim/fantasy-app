@@ -2,26 +2,11 @@ import crypto from 'crypto';
 import { etIsoDate } from './dates.js';
 import { americanToImpliedProb } from './oddsMath.js';
 
-/**
- * Upcoming-game odds from the ESPN public scoreboard — the same endpoint the
- * games route uses for live scores, whose payload also carries a sportsbook
- * odds node per competition. Parsing is deliberately defensive: ESPN changes
- * the odds shape between seasons and omits it entirely until books post lines,
- * so every market is optional.
- */
 
-// odds move, but a personal app doesn't need tick-level freshness; 10 minutes
-// keeps us polite to ESPN while staying current enough to bet on.
 const ODDS_CACHE_TTL = 10 * 60_000;
 
-// a rolling 3-day window (today plus two more days). during the regular
-// season a wider window would surface 30+ games at once, which is noise:
-// books barely post lines that far out and the AI can't say anything useful
-// about a game four days away.
 const FUTURE_WINDOW_DAYS = 2;
 
-// spread/total prices fall back to the books' standard juice when ESPN gives
-// us only the line. surfaced in the response so the UI can show it honestly.
 export const DEFAULT_LINE_PRICE = -110;
 
 export interface SpreadMarket {
@@ -64,9 +49,6 @@ export interface BettingGame {
   };
 }
 
-// the slices of ESPN's odds node we read. observed June 2026: per-side close
-// prices under pointSpread/total/moneyline; older payloads only carried the
-// flat details/overUnder/spread fields, kept here as fallbacks.
 interface EspnPriceNode {
   close?: { line?: string; odds?: string };
 }
@@ -96,7 +78,6 @@ export interface EspnEvent {
   }>;
 }
 
-/** "-130" | "+105" | "EVEN" → american odds int; undefined when unparseable */
 function parseAmerican(odds: string | undefined): number | undefined {
   if (!odds) return undefined;
   const trimmed = odds.trim();
@@ -105,18 +86,12 @@ function parseAmerican(odds: string | undefined): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-/** "o216.5" | "u216.5" | "-2.5" → numeric line; undefined when unparseable */
 function parseLine(line: string | undefined): number | undefined {
   if (!line) return undefined;
   const n = parseFloat(line.replace(/^[ou]/i, ''));
   return Number.isFinite(n) ? n : undefined;
 }
 
-/**
- * Parses the legacy "ABBR -6.5" details string into a home-relative line.
- * Exported for unit tests. Returns undefined when the string doesn't match
- * or names a team that isn't in this game.
- */
 export function parseSpreadDetails(
   details: string | undefined,
   homeAbbrev: string,
@@ -134,12 +109,10 @@ export function parseSpreadDetails(
 }
 
 function parseSpreadMarket(odds: EspnOddsNode, homeAbbrev: string, awayAbbrev: string): SpreadMarket | undefined {
-  // preferred: per-side close lines and prices
   const homeLine = parseLine(odds.pointSpread?.home?.close?.line);
   const homePrice = parseAmerican(odds.pointSpread?.home?.close?.odds);
   const awayPrice = parseAmerican(odds.pointSpread?.away?.close?.odds);
 
-  // fallbacks: home-relative numeric spread, then the details string
   const line =
     homeLine ??
     (typeof odds.spread === 'number' ? odds.spread : undefined) ??
@@ -190,11 +163,6 @@ function parseMoneylineMarket(odds: EspnOddsNode): MoneylineMarket | undefined {
   };
 }
 
-/**
- * Maps one scheduled ESPN event to a BettingGame. Exported for unit tests.
- * Games without a usable odds node come back with empty markets — the UI
- * shows "odds not yet posted" and the AI context skips them.
- */
 export function parseEventOdds(event: EspnEvent): BettingGame | null {
   const competition = event.competitions[0];
   const home = competition?.competitors.find((c) => c.homeAway === 'home');
@@ -210,8 +178,7 @@ export function parseEventOdds(event: EspnEvent): BettingGame | null {
     away_team: away.team.displayName,
     home_abbrev: homeAbbrev,
     away_abbrev: awayAbbrev,
-    // ESPN stores dates as UTC; convert to the ET calendar date (same
-    // convention as the games table).
+    // espn dates are utc; convert to the ET calendar date to match the games table
     game_date: new Date(event.date).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }),
     tipoff: event.status.type.shortDetail?.trim() || event.status.type.detail?.trim() || 'Scheduled',
     provider: '',
@@ -233,13 +200,6 @@ export function parseEventOdds(event: EspnEvent): BettingGame | null {
 
 let oddsCache: { data: BettingGame[]; fetchedAt: number } = { data: [], fetchedAt: 0 };
 
-/**
- * Scheduled games for the rolling window with parsed odds. In-memory cache,
- * 10-min TTL. Throws on ESPN failure — callers map that to 502/504 like
- * games.ts. Only games that have not tipped off are returned, which is also
- * what makes the AI picks cache safe: once a game goes live it drops out of
- * the snapshot, the odds hash changes, and cached picks for it expire.
- */
 export async function getUpcomingOdds(): Promise<BettingGame[]> {
   if (Date.now() - oddsCache.fetchedAt < ODDS_CACHE_TTL && oddsCache.data.length > 0) {
     return oddsCache.data;
@@ -270,17 +230,12 @@ export async function getUpcomingOdds(): Promise<BettingGame[]> {
     .map(parseEventOdds)
     .filter((g): g is BettingGame => g !== null);
 
-  // don't cache an empty window — let the next request retry immediately.
   if (games.length > 0) {
     oddsCache = { data: games, fetchedAt: Date.now() };
   }
   return games;
 }
 
-/**
- * Stable fingerprint of an odds snapshot. Part of the AI picks cache key, so
- * a line move (or a new game appearing) invalidates cached picks.
- */
 export function computeOddsHash(games: BettingGame[]): string {
   const parts = games
     .map((g) => {

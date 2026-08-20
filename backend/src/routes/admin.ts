@@ -1,11 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { query } from '../db.js';
 
-// mounted behind requireAuth + requireAdmin in app.ts — every handler here
-// can assume the caller is an authenticated admin.
 const router = Router();
 
-/** All registered accounts, newest first, with per-user activity rollups. */
 router.get('/users', async (_req: Request, res: Response): Promise<void> => {
   try {
     const result = await query(
@@ -23,7 +20,6 @@ router.get('/users', async (_req: Request, res: Response): Promise<void> => {
   }
 });
 
-/** Headline counters plus the most-viewed pages over the last 7 days. */
 router.get('/stats', async (_req: Request, res: Response): Promise<void> => {
   try {
     const totals = await query(
@@ -49,7 +45,6 @@ router.get('/stats', async (_req: Request, res: Response): Promise<void> => {
   }
 });
 
-/** Most recent page views with the viewer's username when known. */
 router.get('/views', async (_req: Request, res: Response): Promise<void> => {
   try {
     const result = await query(

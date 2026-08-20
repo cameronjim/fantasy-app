@@ -3,9 +3,6 @@ import request from 'supertest';
 import { pgResult } from '../helpers/mockDb.js';
 import { bearerFor } from '../helpers/authToken.js';
 
-// mock the anthropic boundary: tests never hit the real api. buildBettingContext
-// is also mocked because it queries teams/players/games — those joins are
-// exercised implicitly by the prompt content and aren't the contract here.
 vi.mock('../../src/services/ai.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/services/ai.js')>();
   return {
@@ -30,7 +27,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-// a scheduled ESPN event with the June-2026 odds shape (per-side close prices).
 const espnEvent = {
   id: '401859966',
   date: '2026-06-11T00:30Z',
@@ -62,52 +58,37 @@ const espnEvent = {
   ],
 };
 
-// NOTE: the odds service keeps a module-level 10-minute cache that only
-// stores non-empty snapshots. test order in this file is deliberate:
-// 1. ESPN failure cases (nothing cached)
-// 2. the empty-window case (empty result is not cached)
-// 3. the success case — which CACHES the snapshot
-// 4. everything after relies on that cached snapshot instead of stubbing fetch
 describe('GET /api/betting/odds', () => {
   it('returns 502 when ESPN responds with a non-OK status', async () => {
-    // arrange
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503 } as Response));
 
-    // act
     const res = await request(app).get('/api/betting/odds');
 
-    // assert
     expect(res.status).toBe(502);
     expect(res.body.error).toBe('ESPN API unavailable');
   });
 
   it('returns 504 when the ESPN request aborts', async () => {
-    // arrange
     const abortError = new Error('aborted');
     abortError.name = 'AbortError';
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abortError));
 
-    // act
     const res = await request(app).get('/api/betting/odds');
 
-    // assert
     expect(res.status).toBe(504);
     expect(res.body.error).toBe('ESPN timed out');
   });
 
   it('reports no_games on /picks when the window has no scheduled games', async () => {
-    // arrange — empty events parse to an empty snapshot, which is NOT cached
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ events: [] }),
     } as Response));
 
-    // act
     const res = await request(app)
       .get('/api/betting/picks')
       .set('Authorization', bearerFor(5));
 
-    // assert — short-circuits before preferences/cache/AI: no db, no claude
     expect(res.status).toBe(200);
     expect(res.body.no_games).toBe(true);
     expect(res.body.picks).toEqual([]);
@@ -116,16 +97,13 @@ describe('GET /api/betting/odds', () => {
   });
 
   it('parses scheduled games with per-side prices and implied probabilities', async () => {
-    // arrange
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ events: [espnEvent] }),
     } as Response));
 
-    // act
     const res = await request(app).get('/api/betting/odds');
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.games).toHaveLength(1);
     const game = res.body.games[0];
@@ -140,16 +118,12 @@ describe('GET /api/betting/odds', () => {
 
 describe('GET /api/betting/picks', () => {
   it('rejects requests without a token', async () => {
-    // act
     const res = await request(app).get('/api/betting/picks');
 
-    // assert
     expect(res.status).toBe(401);
   });
 
   it('serves cached picks without calling the model', async () => {
-    // arrange — odds come from the snapshot cached by the success test above.
-    // db call order: getUserPreferences, then the betting_cache lookup.
     const cachedPicks = {
       picks: [
         {
@@ -167,12 +141,10 @@ describe('GET /api/betting/picks', () => {
       .mockResolvedValueOnce(pgResult([{ ai_preferences: {} }]))
       .mockResolvedValueOnce(pgResult([{ picks: cachedPicks, created_at: '2026-06-09T12:00:00Z' }]));
 
-    // act
     const res = await request(app)
       .get('/api/betting/picks')
       .set('Authorization', bearerFor(5));
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.cached).toBe(true);
     expect(res.body.picks).toHaveLength(1);
@@ -180,21 +152,16 @@ describe('GET /api/betting/picks', () => {
   });
 
   it('serves the previous picks with stale:true when lines moved, without calling the model', async () => {
-    // arrange — the odds-hash lookup misses (lines drifted), the by-user
-    // fallback finds the user's last picks. db order: prefs, fresh miss, stale hit.
     const oldPicks = { picks: [{ game_id: '401859966', category: 'safe' }], parlay: null, summary: 'old slate' };
     queryMock
       .mockResolvedValueOnce(pgResult([{ ai_preferences: {} }]))
       .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult([{ picks: oldPicks, created_at: '2026-06-09T12:00:00Z' }]));
 
-    // act
     const res = await request(app)
       .get('/api/betting/picks')
       .set('Authorization', bearerFor(5));
 
-    // assert — the old picks come back instantly, flagged for background
-    // regeneration; the model is never called on this request.
     expect(res.status).toBe(200);
     expect(res.body.stale).toBe(true);
     expect(res.body.cached_at).toBe('2026-06-09T12:00:00Z');
@@ -203,7 +170,6 @@ describe('GET /api/betting/picks', () => {
   });
 
   it('generates fresh picks, re-attaches snapshot odds, and caps each category at 2', async () => {
-    // arrange — refresh=true skips the cache read; db: prefs, then cache upsert
     queryMock
       .mockResolvedValueOnce(pgResult([{ ai_preferences: {} }]))
       .mockResolvedValueOnce(pgResult([]));
@@ -215,38 +181,31 @@ describe('GET /api/betting/picks', () => {
       picks: [
         pick('spread', 'home', 'best_value'),
         pick('total', 'over', 'best_value'),
-        // third best_value must be dropped by the per-category cap
         pick('moneyline', 'home', 'best_value'),
         pick('moneyline', 'away', 'safe'),
-        // hallucinated game — must be dropped entirely
         { game_id: '999999', category: 'hail_mary', market: 'moneyline', selection: 'away', estimated_win_prob: 0.4, rationale: 'ghost', confidence: 'low' },
       ],
       parlay: { legs: [{ game_id: '401859966', market: 'spread', selection: 'home' }], rationale: 'one leg only' },
       summary: 'Take the home side.',
     }));
 
-    // act
     const res = await request(app)
       .get('/api/betting/picks')
       .query({ refresh: 'true' })
       .set('Authorization', bearerFor(5));
 
-    // assert
     expect(res.status).toBe(200);
     const categories = res.body.picks.map((p: { category: string }) => p.category);
     expect(categories.filter((c: string) => c === 'best_value')).toHaveLength(2);
     expect(categories.filter((c: string) => c === 'safe')).toHaveLength(1);
     expect(categories.filter((c: string) => c === 'hail_mary')).toHaveLength(0);
-    // numbers come from the snapshot, not the model
     const spreadPick = res.body.picks[0];
     expect(spreadPick.american_odds).toBe(-105);
     expect(spreadPick.line).toBe(-2.5);
     expect(spreadPick.implied_prob).toBeCloseTo(0.5122, 3);
     expect(spreadPick.edge).toBeCloseTo(0.58 - 0.5122, 3);
     expect(spreadPick.selection_label).toBe('New York Knicks -2.5');
-    // a 1-leg parlay is rejected
     expect(res.body.parlay).toBeNull();
-    // result was cached
     const upsert = queryMock.mock.calls.find(([sql]) =>
       (sql as string).includes('INSERT INTO betting_cache')
     );
@@ -254,7 +213,6 @@ describe('GET /api/betting/picks', () => {
   });
 
   it('surfaces an empty result without caching when every pick fails validation', async () => {
-    // arrange
     queryMock.mockResolvedValueOnce(pgResult([{ ai_preferences: {} }]));
     claudeMock.mockResolvedValue(JSON.stringify({
       picks: [{ game_id: 'nope', category: 'safe', market: 'moneyline', selection: 'home', estimated_win_prob: 0.6, rationale: '', confidence: 'low' }],
@@ -262,13 +220,11 @@ describe('GET /api/betting/picks', () => {
       summary: 'nothing real',
     }));
 
-    // act
     const res = await request(app)
       .get('/api/betting/picks')
       .query({ refresh: 'true' })
       .set('Authorization', bearerFor(5));
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body._empty).toBe(true);
     const upsert = queryMock.mock.calls.find(([sql]) =>
@@ -280,15 +236,11 @@ describe('GET /api/betting/picks', () => {
 
 describe('GET /api/betting/bets', () => {
   it('auto-settles pending straight bets whose games went final', async () => {
-    // arrange — one pending home -2.5 bet; home won by 10 → 'won'.
     queryMock
-      // settlement join
       .mockResolvedValueOnce(pgResult([
         { id: 42, market: 'spread', selection: 'home', line: -2.5, home_score: 110, away_score: 100 },
       ]))
-      // the UPDATE for bet 42
       .mockResolvedValueOnce(pgResult([]))
-      // the final ledger SELECT
       .mockResolvedValueOnce(pgResult([
         {
           id: 42, market: 'spread', nba_game_id: '401859966', home_team: 'New York Knicks',
@@ -304,13 +256,10 @@ describe('GET /api/betting/bets', () => {
         },
       ]));
 
-    // act
     const res = await request(app)
       .get('/api/betting/bets')
       .set('Authorization', bearerFor(9));
 
-    // assert — the settlement query is scoped to straight markets, and the
-    // UPDATE carries the computed outcome bound to the jwt user
     const [settleSql] = queryMock.mock.calls[0];
     expect(settleSql).toMatch(/b\.market IN \('spread', 'total', 'moneyline'\)/);
     const [updateSql, updateParams] = queryMock.mock.calls[1];
@@ -323,8 +272,6 @@ describe('GET /api/betting/bets', () => {
   });
 
   it('computes per-bet and total net when stakes were recorded', async () => {
-    // arrange — no pending straight bets to settle, then three money bets:
-    // won 50 cash at -105 (+47.62), lost 25 bonus bet (0), lost 20 cash (-20)
     queryMock
       .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult([
@@ -348,32 +295,26 @@ describe('GET /api/betting/bets', () => {
         },
       ]));
 
-    // act
     const res = await request(app)
       .get('/api/betting/bets')
       .set('Authorization', bearerFor(9));
 
-    // assert — a lost bonus bet costs nothing real
     expect(res.status).toBe(200);
     expect(res.body.bets[0].net).toBeCloseTo(47.62, 2);
     expect(res.body.bets[1].net).toBe(0);
     expect(res.body.bets[2].net).toBe(-20);
     expect(res.body.summary.net).toBeCloseTo(27.62, 2);
-    // projected payout rides along for every bet with odds recorded
     expect(res.body.bets[0].to_win).toBeCloseTo(47.62, 2);
     expect(res.body.bets[1].to_win).toBeCloseTo(21.74, 2);
   });
 
   it('binds every query to the jwt user id', async () => {
-    // arrange
     queryMock
       .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult([]));
 
-    // act
     await request(app).get('/api/betting/bets').set('Authorization', bearerFor(77));
 
-    // assert
     for (const [, params] of queryMock.mock.calls) {
       expect(params).toContain(77);
     }
@@ -391,8 +332,6 @@ describe('POST /api/betting/bets', () => {
   };
 
   it('creates a straight bet, resolving game details from the db when not in the snapshot', async () => {
-    // arrange — game id is not in the odds snapshot, so the route falls back
-    // to the games table, then inserts.
     queryMock
       .mockResolvedValueOnce(pgResult([
         { home_team: 'Boston Celtics', away_team: 'Miami Heat', game_date: '2026-06-12' },
@@ -401,13 +340,11 @@ describe('POST /api/betting/bets', () => {
         { id: 1, ...straightBet, home_team: 'Boston Celtics', away_team: 'Miami Heat', game_date: '2026-06-12', description: null, status: 'pending', created_at: '2026-06-09T12:00:00Z', settled_at: null },
       ]));
 
-    // act
     const res = await request(app)
       .post('/api/betting/bets')
       .set('Authorization', bearerFor(9))
       .send(straightBet);
 
-    // assert
     expect(res.status).toBe(201);
     expect(res.body.home_team).toBe('Boston Celtics');
     const insertCall = queryMock.mock.calls.find(([sql]) => (sql as string).includes('INSERT INTO bets'));
@@ -415,7 +352,6 @@ describe('POST /api/betting/bets', () => {
   });
 
   it('creates a custom bet from a description with no game reference', async () => {
-    // arrange
     queryMock.mockResolvedValueOnce(pgResult([
       {
         id: 2, market: 'custom', nba_game_id: null, home_team: null, away_team: null,
@@ -425,16 +361,13 @@ describe('POST /api/betting/bets', () => {
       },
     ]));
 
-    // act
     const res = await request(app)
       .post('/api/betting/bets')
       .set('Authorization', bearerFor(9))
       .send({ market: 'custom', description: 'SGA 40+ points and OKC wins', american_odds: 600, stake: 10 });
 
-    // assert
     expect(res.status).toBe(201);
     expect(res.body.description).toBe('SGA 40+ points and OKC wins');
-    // game/selection/line params are all null for a custom bet
     const insertCall = queryMock.mock.calls.find(([sql]) => (sql as string).includes('INSERT INTO bets'));
     const params = insertCall![1] as unknown[];
     expect(params[2]).toBeNull(); // nba_game_id
@@ -442,7 +375,6 @@ describe('POST /api/betting/bets', () => {
   });
 
   it('persists the stake and wager type', async () => {
-    // arrange
     queryMock.mockResolvedValueOnce(pgResult([
       {
         id: 4, market: 'custom', nba_game_id: null, home_team: null, away_team: null,
@@ -452,13 +384,11 @@ describe('POST /api/betting/bets', () => {
       },
     ]));
 
-    // act
     const res = await request(app)
       .post('/api/betting/bets')
       .set('Authorization', bearerFor(9))
       .send({ market: 'custom', description: 'First basket: Wembanyama', american_odds: 600, stake: 10, wager_type: 'bonus_bet' });
 
-    // assert
     expect(res.status).toBe(201);
     const insertCall = queryMock.mock.calls.find(([sql]) => (sql as string).includes('INSERT INTO bets'));
     const params = insertCall![1] as unknown[];
@@ -467,7 +397,6 @@ describe('POST /api/betting/bets', () => {
   });
 
   it('rejects a junk wager type, a non-positive stake, and a missing stake', async () => {
-    // act
     const badWager = await request(app)
       .post('/api/betting/bets')
       .set('Authorization', bearerFor(9))
@@ -481,7 +410,6 @@ describe('POST /api/betting/bets', () => {
       .set('Authorization', bearerFor(9))
       .send({ market: 'custom', description: 'whatever', american_odds: -110 });
 
-    // assert
     expect(badWager.status).toBe(400);
     expect(badWager.body.error).toBe('wager_type must be cash, bonus_bet, or odds_boost');
     expect(badStake.status).toBe(400);
@@ -491,7 +419,6 @@ describe('POST /api/betting/bets', () => {
   });
 
   it('creates a parlay bet with its combined odds', async () => {
-    // arrange
     queryMock.mockResolvedValueOnce(pgResult([
       {
         id: 3, market: 'parlay', nba_game_id: null, home_team: null, away_team: null,
@@ -501,13 +428,11 @@ describe('POST /api/betting/bets', () => {
       },
     ]));
 
-    // act
     const res = await request(app)
       .post('/api/betting/bets')
       .set('Authorization', bearerFor(9))
       .send({ market: 'parlay', description: 'Knicks ML + Under 216.5 + Celtics -3', stake: 5, american_odds: 264 });
 
-    // assert — the projected payout rides along on the response
     expect(res.status).toBe(201);
     expect(res.body.to_win).toBeCloseTo(13.2, 2);
   });
@@ -525,28 +450,23 @@ describe('POST /api/betting/bets', () => {
     [{ market: 'prop', description: 'x', stake: 10, american_odds: -110 }, 'description is required (3-300 characters)'],
     [{ market: 'custom', description: 'valid words here', stake: 10, american_odds: -110, selection: 'home' }, 'selection and line only apply to spread/total/moneyline bets'],
   ])('rejects invalid payload %#', async (payload, message) => {
-    // act
     const res = await request(app)
       .post('/api/betting/bets')
       .set('Authorization', bearerFor(9))
       .send(payload);
 
-    // assert
     expect(res.status).toBe(400);
     expect(res.body.error).toBe(message);
   });
 
   it('returns 400 for a straight bet on a game neither ESPN nor the db knows', async () => {
-    // arrange — db lookup comes back empty
     queryMock.mockResolvedValueOnce(pgResult([]));
 
-    // act
     const res = await request(app)
       .post('/api/betting/bets')
       .set('Authorization', bearerFor(9))
       .send(straightBet);
 
-    // assert
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('Unknown game');
   });
@@ -554,7 +474,6 @@ describe('POST /api/betting/bets', () => {
 
 describe('PATCH /api/betting/bets/:id', () => {
   it('settles a bet manually and stamps settled_at', async () => {
-    // arrange
     queryMock.mockResolvedValueOnce(pgResult([
       {
         id: 5, market: 'custom', nba_game_id: null, home_team: null, away_team: null,
@@ -564,18 +483,15 @@ describe('PATCH /api/betting/bets/:id', () => {
       },
     ]));
 
-    // act
     const res = await request(app)
       .patch('/api/betting/bets/5')
       .set('Authorization', bearerFor(9))
       .send({ status: 'won' });
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('won');
     const [sql, params] = queryMock.mock.calls[0];
     expect(sql).toMatch(/UPDATE bets/);
-    // settled_at travels as its own parameter, not a sql CASE on $1
     expect((params as unknown[])[0]).toBe('won');
     expect((params as unknown[])[1]).toBeInstanceOf(Date);
     expect((params as unknown[])[2]).toBe(5);
@@ -583,7 +499,6 @@ describe('PATCH /api/betting/bets/:id', () => {
   });
 
   it('clears settled_at when a settle is undone back to pending', async () => {
-    // arrange
     queryMock.mockResolvedValueOnce(pgResult([
       {
         id: 5, market: 'custom', nba_game_id: null, home_team: null, away_team: null,
@@ -593,70 +508,57 @@ describe('PATCH /api/betting/bets/:id', () => {
       },
     ]));
 
-    // act
     const res = await request(app)
       .patch('/api/betting/bets/5')
       .set('Authorization', bearerFor(9))
       .send({ status: 'pending' });
 
-    // assert
     expect(res.status).toBe(200);
     const [, params] = queryMock.mock.calls[0];
     expect((params as unknown[])[1]).toBeNull();
   });
 
   it('rejects an invalid status', async () => {
-    // act
     const res = await request(app)
       .patch('/api/betting/bets/5')
       .set('Authorization', bearerFor(9))
       .send({ status: 'maybe' });
 
-    // assert
     expect(res.status).toBe(400);
   });
 
   it("404s when the bet doesn't exist or belongs to someone else", async () => {
-    // arrange
     queryMock.mockResolvedValueOnce(pgResult([]));
 
-    // act
     const res = await request(app)
       .patch('/api/betting/bets/5')
       .set('Authorization', bearerFor(9))
       .send({ status: 'lost' });
 
-    // assert
     expect(res.status).toBe(404);
   });
 });
 
 describe('DELETE /api/betting/bets/:id', () => {
   it('deletes an owned bet', async () => {
-    // arrange
     queryMock.mockResolvedValueOnce(pgResult([{ id: 5 }]));
 
-    // act
     const res = await request(app)
       .delete('/api/betting/bets/5')
       .set('Authorization', bearerFor(9));
 
-    // assert
     expect(res.status).toBe(204);
     const [, params] = queryMock.mock.calls[0];
     expect(params).toEqual([5, 9]);
   });
 
   it("404s when the bet doesn't exist or belongs to someone else", async () => {
-    // arrange
     queryMock.mockResolvedValueOnce(pgResult([]));
 
-    // act
     const res = await request(app)
       .delete('/api/betting/bets/5')
       .set('Authorization', bearerFor(9));
 
-    // assert
     expect(res.status).toBe(404);
   });
 });

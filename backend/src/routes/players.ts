@@ -46,7 +46,6 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       getScoresById(),
     ]);
 
-    // Overlay fantasy_score + fantasy_rank from the in-memory ranking service.
     const enriched = dbResult.rows.map((p) => {
       const s = scores.get(p.id);
       return {

@@ -8,14 +8,10 @@ import {
   searchPattern,
 } from '../services/historyParams.js';
 
-// public, no auth — same as /api/players. historical stats are not user data.
 const router = Router();
 
 const INVALID_SEASON = 'A valid season is required, formatted like 1996-97';
 
-// pg hands NUMERIC back as a string (arbitrary-precision safety). cast to
-// float8 in sql so the json payload carries real numbers and the frontend
-// doesn't have to Number() every stat. integers already arrive as numbers.
 const PLAYER_COLUMNS = `nba_player_id,
        player_name,
        season,
@@ -33,8 +29,6 @@ const PLAYER_COLUMNS = `nba_player_id,
        free_throw_percentage::float8 AS free_throw_percentage,
        three_pointers_made::float8   AS three_pointers_made`;
 
-// exposed as `abbreviation` to match the shape /api/teams already returns; the
-// column is team_abbreviation because that's what the NBA API calls it.
 const TEAM_COLUMNS = `nba_team_id,
        team_name,
        team_abbreviation AS abbreviation,
@@ -56,11 +50,6 @@ const TEAM_COLUMNS = `nba_team_id,
        offensive_rating::float8      AS offensive_rating,
        net_rating::float8            AS net_rating`;
 
-/**
- * Seasons the backfill actually landed, newest first. The frontend's season
- * picker is driven entirely by this — nothing hardcodes an earliest season,
- * because how far back the NBA API reports is not knowable up front.
- */
 router.get('/seasons', async (_req: Request, res: Response): Promise<void> => {
   try {
     const result = await query(
@@ -78,7 +67,6 @@ router.get('/seasons', async (_req: Request, res: Response): Promise<void> => {
   }
 });
 
-/** One season's players, highest scoring first, with an optional name filter. */
 router.get('/players', async (req: Request, res: Response): Promise<void> => {
   const { season } = req.query;
   if (!isValidSeason(season)) {
@@ -101,8 +89,6 @@ router.get('/players', async (req: Request, res: Response): Promise<void> => {
   const offsetPlaceholder = params.length + 2;
 
   try {
-    // count first, then the page — the mocked query in tests resolves in call
-    // order, and Promise.all preserves it.
     const [countResult, pageResult] = await Promise.all([
       query(`SELECT COUNT(*)::int AS total FROM player_season_stats ${where}`, params),
       query(
@@ -125,7 +111,6 @@ router.get('/players', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-/** A single player's full career, oldest season first. */
 router.get('/players/:nbaPlayerId/seasons', async (req: Request, res: Response): Promise<void> => {
   const { nbaPlayerId } = req.params;
 
@@ -143,8 +128,6 @@ router.get('/players/:nbaPlayerId/seasons', async (req: Request, res: Response):
       return;
     }
 
-    // names get respelled over a career (accents added, suffixes dropped), so
-    // report the most recent spelling.
     const latest = result.rows[result.rows.length - 1];
 
     res.json({
@@ -157,7 +140,6 @@ router.get('/players/:nbaPlayerId/seasons', async (req: Request, res: Response):
   }
 });
 
-/** One season's teams, highest scoring first. */
 router.get('/teams', async (req: Request, res: Response): Promise<void> => {
   const { season } = req.query;
   if (!isValidSeason(season)) {

@@ -22,14 +22,6 @@ function escapeHtml(value: string): string {
   });
 }
 
-/**
- * Sends an email via AWS SES.
- *
- * Required env vars:
- *   FROM_EMAIL — a verified sender identity in SES (e.g. "noreply@cameronjim.com")
- *
- * Required IAM: the Lambda execution role needs ses:SendEmail (set in serverless.yml).
- */
 export async function sendEmail({ to, subject, html, text }: SendEmailArgs): Promise<void> {
   const from = process.env.FROM_EMAIL;
   if (!from) {
@@ -53,7 +45,6 @@ export async function sendEmail({ to, subject, html, text }: SendEmailArgs): Pro
   );
 }
 
-/** Builds the password-reset email content (subject + html + plain text). */
 export function passwordResetEmail(resetUrl: string, username: string): {
   subject: string;
   html: string;

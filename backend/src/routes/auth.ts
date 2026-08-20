@@ -12,10 +12,6 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const router = Router();
 
-// per-IP limits on the unauthenticated auth endpoints. login is the tightest
-// (brute-force target); forgot-password is capped to stop using us as a
-// spam/SES-abuse relay. tokens last 7 days — short enough to bound a leaked
-// token's window without nagging the user to re-login constantly.
 const TOKEN_TTL = '7d';
 const loginLimiter = rateLimit({ scope: 'login', limit: 5, windowSeconds: 900 });
 const registerLimiter = rateLimit({ scope: 'register', limit: 5, windowSeconds: 3600 });
@@ -28,8 +24,6 @@ const MAX_PASSWORD_LENGTH = 200;
 
 function validatePassword(password: string): string | null {
   if (password.length < 8) return 'Password must be at least 8 characters';
-  // bcrypt only hashes the first 72 bytes, but a multi-megabyte input is still
-  // a cheap CPU-DoS vector — cap it well before that.
   if (password.length > MAX_PASSWORD_LENGTH) {
     return `Password must be ${MAX_PASSWORD_LENGTH} characters or fewer`;
   }
@@ -41,11 +35,9 @@ function validatePassword(password: string): string | null {
 }
 
 function isValidEmail(email: string): boolean {
-  // Lightweight RFC-ish check. Real validation happens when SES bounces.
   return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-/** Pull primary frontend URL from the comma-separated FRONTEND_URL env var. */
 function getFrontendUrl(): string {
   const raw = (process.env.FRONTEND_URL ?? '').split(',')[0]?.trim();
   return raw || 'http://localhost:5173';
@@ -117,7 +109,6 @@ router.post('/login', loginLimiter, async (req: Request, res: Response): Promise
     return;
   }
   try {
-    // Allow login by username OR email (lowercase compare for email).
     const result = await query(
       'SELECT id, password_hash FROM users WHERE username = $1 OR LOWER(email) = LOWER($1)',
       [username]
@@ -126,8 +117,6 @@ router.post('/login', loginLimiter, async (req: Request, res: Response): Promise
       res.status(401).json({ error: 'Invalid username or password' });
       return;
     }
-    // Google-only accounts have no password hash — tell the user clearly
-    // instead of returning a generic auth failure.
     if (!result.rows[0].password_hash) {
       res.status(401).json({ error: 'This account uses Google Sign-In. Please use the Google button instead.' });
       return;
@@ -148,22 +137,7 @@ router.post('/login', loginLimiter, async (req: Request, res: Response): Promise
   }
 });
 
-/**
- * Sign in (or sign up) via Google. The frontend submits the credential
- * (an ID token JWT from Google Identity Services); we verify it against
- * Google's public keys, then match-or-create the user account.
- *
- * Three branches:
- *   1. Existing google_id  -> log in
- *   2. Existing email      -> link google_id to that account, log in
- *   3. Brand new           -> create user (username derived from email)
- */
 router.post('/google', async (req: Request, res: Response): Promise<void> => {
-  // Two flows supported:
-  //   `credential`   — ID token from the GoogleLogin button (one-tap / default)
-  //   `access_token` — from useGoogleLogin implicit flow with select_account
-  //                    prompt, used when the user wants to pick a different
-  //                    Google account on a device where they're already logged in.
   const { credential, access_token: accessToken } = req.body;
   if (!credential && !accessToken) {
     res.status(400).json({ error: 'credential or access_token is required' });
@@ -184,10 +158,7 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
         audience: process.env.GOOGLE_CLIENT_ID,
       });
       const payload = ticket.getPayload();
-      // Require a verified email, matching the access_token path below. This
-      // matters because the account-linking branch below matches an existing
-      // account BY EMAIL: without this check, an account holding an
-      // unverified address could be used to link into someone else's account.
+      // account linking below matches by email, so an unverified email must be rejected here
       if (payload && String(payload.email_verified) !== 'true') {
         res.status(401).json({ error: 'Google email is not verified' });
         return;
@@ -195,9 +166,6 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
       googleId = payload?.sub;
       email = payload?.email?.toLowerCase();
     } else if (accessToken) {
-      // Verify the access_token came from our client by hitting Google's
-      // tokeninfo endpoint. The response includes sub and email so we don't
-      // need a second userinfo call.
       const tokenInfoRes = await fetch(
         `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(accessToken)}`
       );
@@ -211,8 +179,6 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
         email?: string;
         email_verified?: string | boolean;
       };
-      // Critical: only trust tokens issued for OUR client. Otherwise anyone
-      // with a valid Google token from any app could log in as that user here.
       if (info.aud !== process.env.GOOGLE_CLIENT_ID) {
         res.status(401).json({ error: 'Access token was not issued for this app' });
         return;
@@ -235,12 +201,8 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
   }
 
   try {
-    // Branch 1: already linked to this google_id?
     let result = await query('SELECT id FROM users WHERE google_id = $1', [googleId]);
 
-    // Branch 2: existing user by email — attach the google_id, unless that
-    // user already has a *different* google_id linked (rare edge case but
-    // we don't want to silently overwrite a real link).
     if (result.rows.length === 0) {
       const byEmail = await query(
         'SELECT id, google_id FROM users WHERE LOWER(email) = $1',
@@ -260,13 +222,10 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
       }
     }
 
-    // Branch 3: brand new — create the user. Username = email prefix with
-    // numeric suffix if needed to dodge the username UNIQUE constraint.
     if (result.rows.length === 0) {
       const base = email.split('@')[0].replace(/[^a-z0-9]/g, '') || 'user';
       let username = base;
       let suffix = 0;
-      // 20 tries is plenty for any reasonable collision.
       for (let i = 0; i < 20; i++) {
         const taken = await query('SELECT 1 FROM users WHERE username = $1', [username]);
         if (taken.rows.length === 0) break;
@@ -292,10 +251,6 @@ router.post('/google', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-// change password for existing-password users, OR set initial password for
-// google-signin users who have none. currentPassword is only required when
-// the user already has a password — the check uses the hash on disk, not
-// what the client claims.
 router.patch('/change-password', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const { currentPassword, newPassword } = req.body;
   const userId = (req as AuthRequest).userId;
@@ -317,8 +272,6 @@ router.patch('/change-password', requireAuth, async (req: Request, res: Response
     }
     const existingHash: string | null = result.rows[0].password_hash;
 
-    // existing-password users must prove they know the current one before
-    // overwriting it (defense against session hijacking).
     if (existingHash) {
       if (!currentPassword) {
         res.status(400).json({ error: 'Current password is required' });
@@ -330,8 +283,6 @@ router.patch('/change-password', requireAuth, async (req: Request, res: Response
         return;
       }
     }
-    // google-only users with no existing password skip the check and set
-    // one for the first time.
 
     const newHash = await bcrypt.hash(newPassword, 10);
     await query('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, userId]);
@@ -341,7 +292,6 @@ router.patch('/change-password', requireAuth, async (req: Request, res: Response
   }
 });
 
-/** Lets existing users (registered before the email requirement) attach an email. */
 router.patch('/set-email', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const { email } = req.body;
   const userId = (req as AuthRequest).userId;
@@ -363,15 +313,10 @@ router.patch('/set-email', requireAuth, async (req: Request, res: Response): Pro
   }
 });
 
-/** Returns the current logged-in user's profile fields (powers the /profile page). */
 router.get('/me', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const userId = (req as AuthRequest).userId;
   try {
     const result = await query(
-      // has_password is computed so the client can decide whether to show the
-      // "current password" field on the change-password form. raw password_hash
-      // never leaves the server. is_admin only gates UI (the nav link to
-      // /admin) — the admin api re-checks it server-side on every request.
       `SELECT id, username, email, name, phone, is_admin,
               (password_hash IS NOT NULL) AS has_password
        FROM users WHERE id = $1`,
@@ -387,21 +332,12 @@ router.get('/me', requireAuth, async (req: Request, res: Response): Promise<void
   }
 });
 
-// lightweight phone validation: digits, spaces, dashes, parens, leading +.
-// strict format check happens client-side and via real-world SMS delivery —
-// here we just reject obviously-broken inputs.
 function isValidPhone(phone: string): boolean {
   if (typeof phone !== 'string') return false;
   if (phone.trim() === '') return true; // empty means "clear the field"
   return /^[+0-9 ().-]{7,30}$/.test(phone.trim());
 }
 
-/**
- * Update profile fields. Each field is optional in the body — fields that
- * aren't sent stay unchanged. Sending an empty string clears the field
- * (for name and phone; email cannot be cleared because it's needed for
- * password reset).
- */
 router.patch('/profile', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const userId = (req as AuthRequest).userId;
   const { username, name, email, phone } = req.body as {
@@ -411,10 +347,6 @@ router.patch('/profile', requireAuth, async (req: Request, res: Response): Promi
     phone?: string;
   };
 
-  // reject explicit nulls and non-string types up front. without this guard
-  // each branch below would either crash (e.g. `null.trim()` throws a
-  // typeerror) or silently coerce. require a string per field that's
-  // actually being updated.
   for (const [key, value] of [
     ['username', username],
     ['name', name],
@@ -451,9 +383,6 @@ router.patch('/profile', requireAuth, async (req: Request, res: Response): Promi
     return;
   }
 
-  // build the dynamic SET clause so we only touch fields the client sent.
-  // null gets stored when the value is an empty string (for name and phone;
-  // username and email can't be cleared).
   const sets: string[] = [];
   const params: unknown[] = [];
   let i = 1;
@@ -495,9 +424,6 @@ router.patch('/profile', requireAuth, async (req: Request, res: Response): Promi
     res.json(result.rows[0]);
   } catch (err: unknown) {
     if (err instanceof Error && 'code' in err && (err as { code: string }).code === '23505') {
-      // distinguish which unique constraint blew up so the user knows which
-      // field to change. pg's `detail` includes the column name when the
-      // constraint targets a single column.
       const detail = ((err as { detail?: string }).detail ?? '').toLowerCase();
       if (detail.includes('username')) {
         res.status(409).json({ error: 'That username is already taken' });
@@ -510,10 +436,6 @@ router.patch('/profile', requireAuth, async (req: Request, res: Response): Promi
   }
 });
 
-/**
- * Forgot-password — always returns 200 with the same message, regardless of whether
- * the email exists. Prevents email enumeration attacks.
- */
 router.post('/forgot-password', forgotPasswordLimiter, async (req: Request, res: Response): Promise<void> => {
   const { email } = req.body;
   const genericResponse = { message: 'If that email is registered, a reset link has been sent.' };
@@ -532,12 +454,10 @@ router.post('/forgot-password', forgotPasswordLimiter, async (req: Request, res:
     if (userResult.rows.length > 0) {
       const { id: userId, username } = userResult.rows[0];
 
-      // Generate token, store the SHA-256 hash only.
       const rawToken = crypto.randomBytes(32).toString('hex');
       const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
       const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
-      // Invalidate any prior unused tokens for this user (only one active at a time).
       await query(
         'UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL',
         [userId]

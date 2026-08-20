@@ -10,13 +10,6 @@ const { clearAnalyticsCache, ANALYTICS_STATS, POOL_DEFINITION } = await import(
 const { clearPredictionsCache } = await import('../../src/services/predictions.js');
 const queryMock = vi.mocked(query);
 
-// the analytics routes issue their queries in a fixed order:
-//   1. the player row
-//   2. pool season averages, pool game-log totals, team abbreviations
-//   3. the player's own game logs
-//   4. the newest stored prediction for their next game
-// step 2 is skipped once the pool snapshot is cached; step 4 is skipped for the
-// five minutes that player's prediction stays cached.
 
 const lebronRow = {
   id: 5,
@@ -70,7 +63,6 @@ function logRow(overrides: Record<string, unknown> = {}): Record<string, unknown
   };
 }
 
-// 20 games so the z-score threshold (15) is cleared
 const logRows = Array.from({ length: 20 }, (_, i) =>
   logRow({
     game_date: `2026-01-${String(i + 1).padStart(2, '0')}`,
@@ -79,9 +71,6 @@ const logRows = Array.from({ length: 20 }, (_, i) =>
   })
 );
 
-// one long-format row per (stat, quantile) of the newest complete run. empty by
-// default: most of these tests predate the prediction store and must keep
-// passing with `prediction: null`.
 function predictionRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     model_version: '2026-02-28',
@@ -117,21 +106,16 @@ function mockPoolQueries(): void {
 
 beforeEach(() => {
   queryMock.mockReset();
-  // the pool snapshot is cached for an hour and predictions for five minutes;
-  // each test starts from cold
   clearAnalyticsCache();
   clearPredictionsCache();
 });
 
 describe('GET /api/players/:id/analytics', () => {
   it('returns the player, pool, percentiles, distributions and trends', async () => {
-    // arrange
     mockPlayerAnalyticsQueries();
 
-    // act
     const res = await request(app).get('/api/players/5/analytics');
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.player).toEqual({
       id: 5,
@@ -155,13 +139,10 @@ describe('GET /api/players/:id/analytics', () => {
   });
 
   it('covers every whitelisted stat in percentiles and distributions', async () => {
-    // arrange
     mockPlayerAnalyticsQueries();
 
-    // act
     const res = await request(app).get('/api/players/5/analytics');
 
-    // assert
     expect(res.body.percentiles.map((p: { stat: string }) => p.stat)).toEqual([
       ...ANALYTICS_STATS,
     ]);
@@ -170,30 +151,23 @@ describe('GET /api/players/:id/analytics', () => {
     ]);
     const points = res.body.percentiles.find((p: { stat: string }) => p.stat === 'pts');
     expect(points.value).toBe(25.4);
-    // lowest scorer of the three -> bottom of the pool
     expect(points.percentile).toBeLessThan(50);
   });
 
   it('ranks turnovers in reverse, so the lowest-turnover player scores highest', async () => {
-    // arrange — LeBron's 3.4 is the middle of 3.1 / 3.4 / 3.9
     mockPlayerAnalyticsQueries();
 
-    // act
     const res = await request(app).get('/api/players/5/analytics');
 
-    // assert
     const turnovers = res.body.percentiles.find((p: { stat: string }) => p.stat === 'tov');
     expect(turnovers.percentile).toBe(50);
   });
 
   it('marks each distribution with the player value and equal-width buckets', async () => {
-    // arrange
     mockPlayerAnalyticsQueries();
 
-    // act
     const res = await request(app).get('/api/players/5/analytics');
 
-    // assert
     const points = res.body.distributions.find((d: { stat: string }) => d.stat === 'pts');
     expect(points.player_value).toBe(25.4);
     expect(points.mean).toBeCloseTo(28.233, 3);
@@ -206,16 +180,13 @@ describe('GET /api/players/:id/analytics', () => {
   });
 
   it('returns the last 20 games oldest first with the opponent abbreviation', async () => {
-    // arrange — 24 logged games, only the last 20 are returned
     const many = Array.from({ length: 24 }, (_, i) =>
       logRow({ game_date: `2026-02-${String(i + 1).padStart(2, '0')}`, pts: i })
     );
     mockPlayerAnalyticsQueries(many);
 
-    // act
     const res = await request(app).get('/api/players/5/analytics');
 
-    // assert
     expect(res.body.trends.games).toHaveLength(20);
     expect(res.body.trends.games[0].game_date).toBe('2026-02-05');
     expect(res.body.trends.games[19].game_date).toBe('2026-02-24');
@@ -224,34 +195,26 @@ describe('GET /api/players/:id/analytics', () => {
   });
 
   it('aligns the rolling series with the returned games, using history before the window', async () => {
-    // arrange — 24 games scoring 20..43, so the 20-game window starts at game 5
     const many = Array.from({ length: 24 }, (_, i) =>
       logRow({ game_date: `2026-02-${String(i + 1).padStart(2, '0')}`, pts: 20 + i })
     );
     mockPlayerAnalyticsQueries(many);
 
-    // act
     const res = await request(app).get('/api/players/5/analytics');
 
-    // assert
     const { games, rolling } = res.body.trends;
     expect(rolling).toHaveLength(games.length);
     expect(rolling[0].game_date).toBe(games[0].game_date);
-    // the first charted game already has four earlier games behind it, so the
-    // 5-game line starts populated rather than null
     expect(rolling[0].pts_r5).toBe(22);
     expect(rolling[0].pts_r10).toBeNull();
     expect(rolling[5].pts_r10).toBe(24.5);
   });
 
   it('compares the last ten games to the season with a volatility-scaled z', async () => {
-    // arrange
     mockPlayerAnalyticsQueries();
 
-    // act
     const res = await request(app).get('/api/players/5/analytics');
 
-    // assert
     const points = res.body.trends.last10_vs_season.find(
       (c: { stat: string }) => c.stat === 'pts'
     );
@@ -260,39 +223,31 @@ describe('GET /api/players/:id/analytics', () => {
   });
 
   it('nulls the z-score for a player with fewer than 15 logged games', async () => {
-    // arrange
     const few = Array.from({ length: 8 }, (_, i) =>
       logRow({ game_date: `2026-03-0${i + 1}`, pts: 10 + i })
     );
     mockPlayerAnalyticsQueries(few);
 
-    // act
     const res = await request(app).get('/api/players/5/analytics');
 
-    // assert
     const points = res.body.trends.last10_vs_season.find(
       (c: { stat: string }) => c.stat === 'pts'
     );
     expect(points.z).toBeNull();
-    // the 10-game rolling line has no data to stand on yet
     expect(res.body.trends.rolling.every((r: { pts_r10: number | null }) => r.pts_r10 === null))
       .toBe(true);
   });
 
   it('still returns percentiles and distributions for a player with no game logs', async () => {
-    // arrange
     mockPlayerAnalyticsQueries([]);
 
-    // act
     const res = await request(app).get('/api/players/5/analytics');
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.as_of.logs).toBeNull();
     expect(res.body.trends).toEqual({ games: [], rolling: [], last10_vs_season: [] });
     expect(res.body.percentiles).toHaveLength(ANALYTICS_STATS.length);
     expect(res.body.distributions).toHaveLength(ANALYTICS_STATS.length);
-    // no attempts logged means no measurable shooting impact, not a penalty
     const fgImpact = res.body.percentiles.find(
       (p: { stat: string }) => p.stat === 'fg_impact'
     );
@@ -300,20 +255,16 @@ describe('GET /api/players/:id/analytics', () => {
   });
 
   it('binds the player id as a query parameter rather than interpolating it', async () => {
-    // arrange
     mockPlayerAnalyticsQueries();
 
-    // act
     await request(app).get('/api/players/5/analytics');
 
-    // assert
     const [sql, params] = queryMock.mock.calls[0];
     expect(params).toEqual([5]);
     expect(sql).toContain('$1');
   });
 
   it('reuses the cached pool snapshot on the next request', async () => {
-    // arrange
     mockPlayerAnalyticsQueries();
     await request(app).get('/api/players/5/analytics');
     const afterFirst = queryMock.mock.calls.length;
@@ -321,11 +272,8 @@ describe('GET /api/players/:id/analytics', () => {
       .mockResolvedValueOnce(pgResult([lebronRow]))
       .mockResolvedValueOnce(pgResult(logRows));
 
-    // act
     const res = await request(app).get('/api/players/5/analytics');
 
-    // assert — only the player row and their logs. no pool aggregates, and no
-    // second prediction read either: that one is cached per player.
     expect(res.status).toBe(200);
     expect(afterFirst).toBe(6);
     expect(queryMock.mock.calls.length - afterFirst).toBe(2);
@@ -333,41 +281,32 @@ describe('GET /api/players/:id/analytics', () => {
   });
 
   it('returns 404 when no player has that id', async () => {
-    // arrange
     queryMock.mockResolvedValueOnce(pgResult([]));
 
-    // act
     const res = await request(app).get('/api/players/999999/analytics');
 
-    // assert
     expect(res.status).toBe(404);
     expect(res.body.error).toBe('Player not found');
   });
 
   it('returns 400 for a non-numeric player id', async () => {
-    // act
     const res = await request(app).get('/api/players/lebron/analytics');
 
-    // assert
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/numeric player id/i);
     expect(queryMock).not.toHaveBeenCalled();
   });
 
   it('returns 500 when the database query fails', async () => {
-    // arrange
     queryMock.mockRejectedValue(new Error('db down'));
 
-    // act
     const res = await request(app).get('/api/players/5/analytics');
 
-    // assert
     expect(res.status).toBe(500);
     expect(res.body.error).toBe('Failed to fetch player analytics');
   });
 
   it('serves the newest stored prediction alongside the history', async () => {
-    // arrange
     mockPlayerAnalyticsQueries(logRows, [
       predictionRow({ stat: 'prob_active', value: 0.82, conditional: false }),
       predictionRow({ stat: 'ast', value: 8 }),
@@ -380,10 +319,8 @@ describe('GET /api/players/:id/analytics', () => {
       predictionRow({ stat: 'pts', quantile: 0.9, value: 37 }),
     ]);
 
-    // act
     const res = await request(app).get('/api/players/5/analytics');
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.prediction).toMatchObject({
       as_of: '2026-03-01T13:30:00.000Z',
@@ -399,21 +336,16 @@ describe('GET /api/players/:id/analytics', () => {
   });
 
   it('binds the nba player id to the prediction query rather than the row id', async () => {
-    // arrange — predictions key on players.nba_id, not players.id
     mockPlayerAnalyticsQueries(logRows, [predictionRow()]);
 
-    // act
     await request(app).get('/api/players/5/analytics');
 
-    // assert
     const [sql, params] = queryMock.mock.calls[5];
     expect(sql).toContain('player_game_predictions');
     expect(params).toEqual(['2544']);
   });
 
   it('keeps the rest of the page when the prediction tables are missing', async () => {
-    // arrange — migration 014 is applied by hand, so there is a real window in
-    // which the analytics query works and the prediction query does not
     queryMock
       .mockResolvedValueOnce(pgResult([lebronRow]))
       .mockResolvedValueOnce(pgResult(poolRows))
@@ -422,10 +354,8 @@ describe('GET /api/players/:id/analytics', () => {
       .mockResolvedValueOnce(pgResult(logRows))
       .mockRejectedValueOnce(new Error('relation "player_game_predictions" does not exist'));
 
-    // act
     const res = await request(app).get('/api/players/5/analytics');
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.prediction).toBeNull();
     expect(res.body.percentiles).toHaveLength(ANALYTICS_STATS.length);
@@ -434,13 +364,10 @@ describe('GET /api/players/:id/analytics', () => {
 
 describe('GET /api/analytics/distributions', () => {
   it('returns the pool shape and every player value for one stat', async () => {
-    // arrange
     mockPoolQueries();
 
-    // act
     const res = await request(app).get('/api/analytics/distributions').query({ stat: 'pts' });
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.stat).toBe('pts');
     expect(res.body.pool).toEqual({
@@ -461,88 +388,70 @@ describe('GET /api/analytics/distributions', () => {
   });
 
   it('accepts an explicit rotation pool', async () => {
-    // arrange
     mockPoolQueries();
 
-    // act
     const res = await request(app)
       .get('/api/analytics/distributions')
       .query({ stat: 'blk', pool: 'rotation' });
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.stat).toBe('blk');
   });
 
   it('orders turnovers best-first, so the fewest turnovers lead', async () => {
-    // arrange
     mockPoolQueries();
 
-    // act
     const res = await request(app).get('/api/analytics/distributions').query({ stat: 'tov' });
 
-    // assert
     expect(res.body.players[0].name).toBe('Stephen Curry');
     expect(res.body.players[0].percentile).toBe(83.3);
     expect(res.body.players[2].name).toBe('Giannis Antetokounmpo');
   });
 
   it('returns the attempt-weighted shooting impact as a stat', async () => {
-    // arrange
     mockPoolQueries();
 
-    // act
     const res = await request(app)
       .get('/api/analytics/distributions')
       .query({ stat: 'fg_impact' });
 
-    // assert — 230/400 against a pool rate of 620/1220 beats it on volume
     expect(res.status).toBe(200);
     expect(res.body.players[0].name).toBe('Giannis Antetokounmpo');
     expect(res.body.players[0].value).toBeGreaterThan(0);
   });
 
   it('returns 400 for a stat outside the whitelist', async () => {
-    // act
     const res = await request(app)
       .get('/api/analytics/distributions')
       .query({ stat: 'points_per_game' });
 
-    // assert
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/stat must be one of/i);
     expect(queryMock).not.toHaveBeenCalled();
   });
 
   it('returns 400 when stat is missing', async () => {
-    // act
     const res = await request(app).get('/api/analytics/distributions');
 
-    // assert
     expect(res.status).toBe(400);
     expect(queryMock).not.toHaveBeenCalled();
   });
 
   it('returns 400 for an unknown pool', async () => {
-    // act
     const res = await request(app)
       .get('/api/analytics/distributions')
       .query({ stat: 'pts', pool: 'starters' });
 
-    // assert
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/pool must be/i);
     expect(queryMock).not.toHaveBeenCalled();
   });
 
   it('returns 500 when the database query fails', async () => {
-    // arrange
     queryMock.mockRejectedValue(new Error('db down'));
 
-    // act
     const res = await request(app).get('/api/analytics/distributions').query({ stat: 'pts' });
 
-    // assert
     expect(res.status).toBe(500);
     expect(res.body.error).toBe('Failed to fetch stat distribution');
   });

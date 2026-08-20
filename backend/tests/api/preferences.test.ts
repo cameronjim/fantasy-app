@@ -13,31 +13,23 @@ beforeEach(() => {
 
 describe('PATCH /api/preferences', () => {
   it('rejects requests without a token', async () => {
-    // act
     const res = await request(app).patch('/api/preferences').send({});
 
-    // assert
     expect(res.status).toBe(401);
   });
 
   it('merges a betting-only patch over existing fantasy preferences', async () => {
-    // arrange — stored prefs have fantasy answers but no betting key
     const stored = { risk_tolerance: 'balanced', league_size: 12 };
     queryMock
-      // setUserPreferences → getUserPreferences (load existing)
       .mockResolvedValueOnce(pgResult([{ ai_preferences: stored }]))
-      // setUserPreferences → UPDATE
       .mockResolvedValueOnce(pgResult([]))
-      // route → getUserPreferences (return updated)
       .mockResolvedValueOnce(pgResult([{ ai_preferences: {} }]));
 
-    // act
     const res = await request(app)
       .patch('/api/preferences')
       .set('Authorization', bearerFor(7))
       .send({ betting: { risk_appetite: 'aggressive' } });
 
-    // assert — the UPDATE payload keeps the fantasy keys and adds betting
     expect(res.status).toBe(200);
     const updateCall = queryMock.mock.calls.find(([sql]) =>
       (sql as string).includes('UPDATE users SET ai_preferences')
@@ -52,20 +44,17 @@ describe('PATCH /api/preferences', () => {
   });
 
   it('preserves stored betting prefs when a fantasy-only patch arrives', async () => {
-    // arrange
     const stored = { betting: { risk_appetite: 'conservative' } };
     queryMock
       .mockResolvedValueOnce(pgResult([{ ai_preferences: stored }]))
       .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult([{ ai_preferences: {} }]));
 
-    // act
     const res = await request(app)
       .patch('/api/preferences')
       .set('Authorization', bearerFor(7))
       .send({ risk_tolerance: 'high_upside' });
 
-    // assert
     expect(res.status).toBe(200);
     const updateCall = queryMock.mock.calls.find(([sql]) =>
       (sql as string).includes('UPDATE users SET ai_preferences')
@@ -76,13 +65,11 @@ describe('PATCH /api/preferences', () => {
   });
 
   it('strips junk from the betting sub-object', async () => {
-    // arrange
     queryMock
       .mockResolvedValueOnce(pgResult([{ ai_preferences: {} }]))
       .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult([{ ai_preferences: {} }]));
 
-    // act
     const res = await request(app)
       .patch('/api/preferences')
       .set('Authorization', bearerFor(7))
@@ -95,7 +82,6 @@ describe('PATCH /api/preferences', () => {
         },
       });
 
-    // assert
     expect(res.status).toBe(200);
     const updateCall = queryMock.mock.calls.find(([sql]) =>
       (sql as string).includes('UPDATE users SET ai_preferences')
