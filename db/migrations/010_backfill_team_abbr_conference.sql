@@ -1,19 +1,7 @@
--- Backfill teams.abbreviation / conference / division.
---
--- Why this is needed: NBA's leaguedashteamstats endpoint (Base measure type)
--- returns TEAM_ID and TEAM_NAME but NOT TEAM_ABBREVIATION. The scraper read
--- row["TEAM_ABBREVIATION"], got "", then looked up TEAM_META[""] -> {} and wrote
--- empty strings for all three columns on every run. The scraper now resolves the
--- abbreviation from the permanent nba_id, so this backfill is a one-time repair
--- for existing rows (the next scrape would also fix them).
---
--- Keyed on nba_id rather than name because NBA team ids never change, while the
--- Clippers' display name varies between "LA Clippers" and "Los Angeles Clippers"
--- across endpoints.
---
--- Idempotent: safe to run more than once.
--- Run against EACH environment's database (prod and dev) — migration 002 was
--- only ever applied to the older stack.
+-- Backfill teams.abbreviation/conference/division: the scraper used to read
+-- an endpoint field that comes back empty and wrote blanks for all three.
+-- Keyed on nba_id, not name, since team ids never change. Idempotent; run
+-- against both prod and dev.
 
 UPDATE teams SET
   abbreviation = m.abbr,

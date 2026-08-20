@@ -235,13 +235,8 @@ CREATE TABLE IF NOT EXISTS team_season_stats (
     UNIQUE (nba_team_id, season)
 );
 
--- NBA 2K ratings, via the public nba2kapi.com endpoint (data from
--- 2kratings.com). Key-value rather than wide because 2K reshuffles its
--- attribute and badge sets every game year and there is no migration runner —
--- a wide table would need a new migration every September. Not foreign-keyed to
--- players: 2K publishes no NBA player id (the only link is normalized_name),
--- and most rows are classic/all-time cards with no current roster spot. slug is
--- 2K's own identifier and is globally unique across all three roster types.
+-- NBA 2K ratings, via nba2kapi.com. key-value: 2K reshuffles its attribute
+-- and badge sets every year. not foreign-keyed to players, no shared id.
 CREATE TABLE IF NOT EXISTS nba_2k_players (
     id SERIAL PRIMARY KEY,
     slug VARCHAR(120) UNIQUE NOT NULL,
@@ -298,20 +293,11 @@ CREATE TABLE IF NOT EXISTS nba_2k_rating_history (
     PRIMARY KEY (player_slug, game_version)
 );
 
--- ---------------------------------------------------------------------------
--- Data truth layer (migration 013): the schedule, per-game logs, and one status
--- row per scheduled player-game — the training universe for availability
--- prediction. See db/migrations/013_truth_layer.sql for the full rationale.
---
--- Ids are TEXT because NBA game ids carry leading zeros ("0022300061"). Nothing
--- here is foreign-keyed to players/teams: those hold only the current roster and
--- are churned on every scrape, while these hold every player ever scheduled.
--- Stat columns are nullable — NULL records "the source did not report this",
--- which is a different fact from a real 0.
--- ---------------------------------------------------------------------------
+-- data truth layer (migration 013): schedule, per-game logs, and one status
+-- row per scheduled player-game, the training universe for availability
+-- prediction. ids are TEXT (NBA game ids carry leading zeros).
 
--- migrations are applied by hand against two databases, so this records which
--- ones actually landed here. Read by scraper/check_migrations.py.
+-- read by scraper/check_migrations.py
 CREATE TABLE IF NOT EXISTS schema_migrations (
     filename TEXT PRIMARY KEY,
     checksum TEXT NOT NULL,
@@ -473,21 +459,9 @@ CREATE TABLE IF NOT EXISTS player_injury_reports (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- ---------------------------------------------------------------------------
--- Prediction store (migration 014): what the model said, when it said it, and
--- what it knew at the time. See db/migrations/014_predictions.sql for the full
--- rationale.
---
--- APPEND-ONLY. A prediction is a claim made at an instant; updating one in
--- place turns every later backtest into a measure of hindsight. New runs write
--- new rows and never touch old ones.
--- ---------------------------------------------------------------------------
-
--- one row per prediction run: which model, which features, which commit, and
--- the information boundary it respected. predicted_at is wall clock;
--- forecast_cutoff_at is the last instant the run was allowed to see. A backtest
--- re-run today has today's predicted_at and last season's forecast_cutoff_at,
--- and only the second one is honest about what the model could know.
+-- prediction store (migration 014), append-only: a run writes new rows,
+-- never edits old ones, so a backtest measures foresight not hindsight.
+-- forecast_cutoff_at is the last instant the run was allowed to see.
 CREATE TABLE IF NOT EXISTS prediction_runs (
     id SERIAL PRIMARY KEY,
     model_version TEXT NOT NULL,

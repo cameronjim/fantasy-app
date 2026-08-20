@@ -1,18 +1,7 @@
--- Historical season-by-season player and team stats.
---
--- Deliberately NOT foreign-keyed to players/teams. Those tables hold only the
--- current roster and are churned on every scrape (rows with a null nba_id are
--- deleted), while these tables hold retired players and defunct franchises
--- (Vancouver Grizzlies, Seattle SuperSonics, New Jersey Nets, Kansas City
--- Kings). Join at query time on nba_player_id = players.nba_id when a current
--- player needs linking.
---
--- Every stat column is nullable: the NBA API's coverage thins out the further
--- back you go, and advanced measures (off/def/net rating) only exist from
--- 1996-97 onward. Writing NULL is how we record "the API did not report this",
--- which is different from a real 0.
---
--- Idempotent: safe to run more than once.
+-- Historical season-by-season player and team stats. Not foreign-keyed to
+-- players/teams -- those churn on every scrape, these hold retired players
+-- and defunct franchises. Join on nba_player_id = players.nba_id at query
+-- time. All stat columns nullable: NBA API coverage thins with age.
 
 CREATE TABLE IF NOT EXISTS player_season_stats (
     id SERIAL PRIMARY KEY,
