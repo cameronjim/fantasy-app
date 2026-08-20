@@ -81,7 +81,7 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
       <div className="card bg-base-200 w-full max-w-sm shadow-xl">
         <div className="card-body">
           <h2 className="card-title text-2xl mb-1">Sign In</h2>
-          <p className="text-sm opacity-50 mb-4">Welcome back to Fantasy NBA</p>
+          <p className="text-sm opacity-50 mb-4">Welcome back to NBA IQ</p>
 
           <div className="flex flex-col items-center gap-2 mb-4">
             <GoogleLogin
