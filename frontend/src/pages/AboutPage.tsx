@@ -19,7 +19,7 @@ const Hero = () => (
   <section>
     <p className="text-xs uppercase tracking-widest opacity-50 mb-2">About this project</p>
     <h1 className="text-3xl md:text-4xl font-bold mb-3">
-      Fantasy NBA, a full-stack app with AI assist
+      NBA IQ, a full-stack app with AI assist
     </h1>
     <p className="text-base opacity-70 leading-relaxed max-w-2xl">
       This is a personal full-stack basketball app that combines real NBA
