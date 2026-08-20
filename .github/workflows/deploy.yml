@@ -135,7 +135,9 @@ jobs:
           curl -fsS --max-time 10 "${{ vars.PROD_API_URL }}/api/health" \
             | jq -e '.status == "ok"'
 
+      # PROD_FRONTEND_URL can be a comma-separated CORS allow-list, so take the
+      # first entry as the canonical url (same rule auth.ts uses for email links)
       - name: Fetch index.html
         run: |
-          curl -fsS --max-time 10 "${{ vars.PROD_FRONTEND_URL }}/" \
-            | grep -q '<div id="root">'
+          url="$(echo "${{ vars.PROD_FRONTEND_URL }}" | cut -d, -f1)"
+          curl -fsS --max-time 10 "$url/" | grep -q '<div id="root">'
