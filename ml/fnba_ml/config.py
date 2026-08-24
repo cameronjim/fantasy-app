@@ -1284,8 +1284,18 @@ def rate_estimator(target: str) -> str:
 # must not be the same object.
 PROSPECTIVE_PROTOCOL_VERSION = "prospective_2026_27_v1"
 
-# the frozen artifact, by content. sha256 of every file in ``models/20260818/``,
-# copied from ``models/registry.json``. the test recomputes them from disk.
+# the frozen artifact, by content. sha256 of every file in ``models/20260818/``.
+# the test recomputes them from disk.
+#
+# CORRECTED 2026-08-24, and this is a record fix, not a re-freeze. the original
+# feature_gain.csv / metadata.json values were copied from a registry snapshot
+# taken before those two files reached the bytes the freeze commit (6450c32)
+# actually pinned, so they never described anything in git and the daily
+# predictions preflight refused every run. the four model/state files matched
+# all along, metadata.json's own artifact checksums name exactly the pinned
+# joblib bytes, and every content assertion in test_prospective_freeze.py
+# passes against the protocol - the served configuration never moved, so no
+# emitted number changes and MODEL.md 13.2 does not require a version bump.
 PROSPECTIVE_ARTIFACT_CHECKSUMS: dict[str, str] = {
     "availability_model.joblib":
         "aa62f880f6774537ab58ba52d0aa4e641c96964ca3d26691e9ab7dd52180f06c",
@@ -1294,9 +1304,9 @@ PROSPECTIVE_ARTIFACT_CHECKSUMS: dict[str, str] = {
     "ewma_state.parquet":
         "bcc83dec9e55375645f80165df6f490c6056d9659215bde497d31ced99943328",
     "feature_gain.csv":
-        "c72a76ed319ddd72fa8d752b3c0fe2b96eeff119ec851d32b90a1c590d017241",
+        "f2765c542b452e1ff8726be27e556c0a1a4a7b323b503ca2cdd01dc191728b94",
     "metadata.json":
-        "5f54e4c6a8ae176477390a51ba87a365eb2e2668e21be23f2ef3c7c1646936bb",
+        "24978b3261261ad52d28cae7e7fceee6378655d20e515c26882391545adae3fe",
     "minutes_model.joblib":
         "2fd13615d64ba1d62e33bc903cfa4851ff63b602f2a2dec4e96af9343f28115a",
 }

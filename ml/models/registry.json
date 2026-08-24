@@ -1280,13 +1280,13 @@
         },
         {
           "path": "feature_gain.csv",
-          "bytes": 1647,
-          "sha256": "c72a76ed319ddd72fa8d752b3c0fe2b96eeff119ec851d32b90a1c590d017241"
+          "bytes": 1595,
+          "sha256": "f2765c542b452e1ff8726be27e556c0a1a4a7b323b503ca2cdd01dc191728b94"
         },
         {
           "path": "metadata.json",
-          "bytes": 10435,
-          "sha256": "5f54e4c6a8ae176477390a51ba87a365eb2e2668e21be23f2ef3c7c1646936bb"
+          "bytes": 9952,
+          "sha256": "24978b3261261ad52d28cae7e7fceee6378655d20e515c26882391545adae3fe"
         },
         {
           "path": "minutes_model.joblib",
