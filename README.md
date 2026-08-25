@@ -1,8 +1,8 @@
 # NBA IQ
 
-[![CI](https://github.com/cameronjim/fantasy-app/actions/workflows/ci.yml/badge.svg)](https://github.com/cameronjim/fantasy-app/actions/workflows/ci.yml)
-[![Deploy](https://github.com/cameronjim/fantasy-app/actions/workflows/deploy.yml/badge.svg)](https://github.com/cameronjim/fantasy-app/actions/workflows/deploy.yml)
-[![NBA Scraper](https://github.com/cameronjim/fantasy-app/actions/workflows/scraper.yml/badge.svg)](https://github.com/cameronjim/fantasy-app/actions/workflows/scraper.yml)
+[![CI](https://github.com/cameronjim/nba-iq/actions/workflows/ci.yml/badge.svg)](https://github.com/cameronjim/nba-iq/actions/workflows/ci.yml)
+[![Deploy](https://github.com/cameronjim/nba-iq/actions/workflows/deploy.yml/badge.svg)](https://github.com/cameronjim/nba-iq/actions/workflows/deploy.yml)
+[![NBA Scraper](https://github.com/cameronjim/nba-iq/actions/workflows/scraper.yml/badge.svg)](https://github.com/cameronjim/nba-iq/actions/workflows/scraper.yml)
 
 A full-stack fantasy basketball app built on real NBA stats, with AI-powered team
 analysis, waiver wire suggestions, game predictions, and a betting picks tab.
