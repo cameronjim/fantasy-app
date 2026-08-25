@@ -77,6 +77,8 @@ fantasy roster, the Claude-powered analysis surfaces, and the bet tracker.
   prediction system
 - **[AGENTS.md](AGENTS.md)** — contribution conventions, testing, pre-commit
   checklist
+- **MCP server** — query your slate, watchlist, and player projections from
+  Claude Desktop / Claude Code; see [TECHNICAL.md](TECHNICAL.md#mcp-server)
 
 ## Contributing
 
