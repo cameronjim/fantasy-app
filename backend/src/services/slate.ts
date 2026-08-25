@@ -237,6 +237,32 @@ export interface SlatePlayer {
   spotlight: boolean;
   /** Top `SLATE_SPOTLIGHT_COUNT` by impact across the whole pool. */
   slate_spotlight: boolean;
+  /**
+   * ===================== THE INJURY OVERLAY =====================
+   * The CURRENT injury-report designation, layered on top of a projection that
+   * was published hours earlier. The projection already prices in availability
+   * as of the run's information boundary; these fields say what the report says
+   * NOW, so a designation that moved after publication is visible instead of
+   * silently contradicting a stale number.
+   *
+   * `injury_status` is the normalized bucket (out, doubtful, questionable,
+   * probable, day_to_day, available, unknown), null when the player is not on
+   * the report right now. `injury_changed_after_run` compares that bucket
+   * against the latest designation captured BEFORE the run was published — not
+   * against capture times, because the scraper appends a row every pass even
+   * when nothing changed. It is true in both directions: a new OUT after the
+   * run, and a clearance of a designation the run priced in.
+   * ==============================================================
+   */
+  injury_status: string | null;
+  /** Verbatim source wording, e.g. "Game Time Decision". */
+  injury_status_raw: string | null;
+  /** The reason column, e.g. "Knee". */
+  injury_detail: string | null;
+  /** ISO timestamp the current designation was captured at. */
+  injury_as_of: string | null;
+  /** The designation bucket differs from the one the run knew. */
+  injury_changed_after_run: boolean;
 }
 
 export interface SlateGame {
@@ -418,6 +444,121 @@ async function fetchTeamAbbrs(): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   for (const row of rows) map.set(String(row.team_id), String(row.team_abbr));
   return map;
+}
+
+/**
+ * How far before the run's `predicted_at` a captured report still counts as
+ * "what the run knew". The report log is append-only and only holds rows while
+ * a player is LISTED, so "not listed as of time T" has no row of its own — a
+ * designation from last March would otherwise read as the run's knowledge for a
+ * player long since cleared. The scraper passes every 6 hours (hourly around
+ * game windows), so 48 hours is generous headroom for a missed pass without
+ * reaching back into a previous injury.
+ */
+export const RUN_KNOWLEDGE_WINDOW_HOURS = 48;
+
+interface InjuryOverlayRow {
+  nba_id: unknown;
+  status_raw: unknown;
+  detail: unknown;
+  current_normalized: unknown;
+  current_captured_at: unknown;
+  run_normalized: unknown;
+}
+
+/**
+ * The current designation plus the one the run knew, per player, in ONE round
+ * trip. `players.injury_status` is the "listed right now" snapshot (the scraper
+ * nulls it and rewrites it every pass), so it gates the whole overlay; the two
+ * LATERAL reads ride `idx_player_injury_reports_player_captured`.
+ */
+async function fetchInjuryOverlay(
+  playerIds: string[],
+  predictedAt: string | null
+): Promise<Map<string, InjuryOverlayRow>> {
+  const rows = await rowsOrEmpty<InjuryOverlayRow>(() =>
+    query(
+      `SELECT p.nba_id,
+              p.injury_status AS status_raw,
+              p.injury_detail AS detail,
+              cur.status_normalized AS current_normalized,
+              cur.captured_at       AS current_captured_at,
+              at_run.status_normalized AS run_normalized
+       FROM players p
+       LEFT JOIN LATERAL (
+         SELECT r.status_normalized, r.captured_at
+         FROM player_injury_reports r
+         WHERE r.nba_player_id = p.nba_id
+         ORDER BY r.captured_at DESC
+         LIMIT 1
+       ) cur ON true
+       LEFT JOIN LATERAL (
+         SELECT r.status_normalized
+         FROM player_injury_reports r
+         WHERE r.nba_player_id = p.nba_id
+           AND r.captured_at <= $2::timestamptz
+           AND r.captured_at > $2::timestamptz - make_interval(hours => $3::int)
+         ORDER BY r.captured_at DESC
+         LIMIT 1
+       ) at_run ON true
+       WHERE p.nba_id = ANY($1)`,
+      [playerIds, predictedAt, RUN_KNOWLEDGE_WINDOW_HOURS]
+    )
+  );
+
+  const map = new Map<string, InjuryOverlayRow>();
+  for (const row of rows) map.set(String(row.nba_id), row);
+  return map;
+}
+
+/** The five overlay fields `SlatePlayer` carries. */
+export type SlatePlayerInjury = Pick<
+  SlatePlayer,
+  | 'injury_status'
+  | 'injury_status_raw'
+  | 'injury_detail'
+  | 'injury_as_of'
+  | 'injury_changed_after_run'
+>;
+
+const NO_INJURY: SlatePlayerInjury = {
+  injury_status: null,
+  injury_status_raw: null,
+  injury_detail: null,
+  injury_as_of: null,
+  injury_changed_after_run: false,
+};
+
+/**
+ * The overlay for one player. "Listed" is `players.injury_status` being set —
+ * the snapshot the scraper rewrites every pass — and everything current is
+ * gated on it, so a stale history row can never present as a live designation.
+ *
+ * The changed flag compares normalized BUCKETS, current vs known-at-run, with
+ * "not listed" as its own bucket — so it fires for a new designation, a
+ * changed one, and a clearance alike. Without a `predicted_at` there is no
+ * boundary to compare against and the flag stays false rather than guessing.
+ */
+export function injuryOverlayFields(
+  row: InjuryOverlayRow | undefined,
+  runPredictedAt: string | null
+): SlatePlayerInjury {
+  if (!row) return NO_INJURY;
+
+  const listed = row.status_raw !== null && row.status_raw !== undefined;
+  const current = listed ? (text(row.current_normalized) ?? 'unknown') : null;
+  const knownAtRun = text(row.run_normalized);
+  const changed =
+    runPredictedAt !== null && (current ?? 'none') !== (knownAtRun ?? 'none');
+
+  if (!listed && !changed) return NO_INJURY;
+  return {
+    injury_status: current,
+    injury_status_raw: listed ? text(row.status_raw) : null,
+    injury_detail: listed ? text(row.detail) : null,
+    injury_as_of: listed ? toIsoTimestamp(row.current_captured_at) : null,
+    injury_changed_after_run: changed,
+  };
 }
 
 /** One pivoted (game, player) row: fixed columns plus one per projected stat. */
@@ -709,6 +850,15 @@ export async function getSlate(date: string): Promise<SlateResponse> {
   // projections there is no deviation to describe.
   const baselines =
     predictions.length > 0 ? await fetchBaselines(date) : new Map<string, PlayerBaseline>();
+  // same rule as the baselines: one extra round trip, only when there are
+  // projections to overlay it on.
+  const injuries =
+    predictions.length > 0
+      ? await fetchInjuryOverlay(
+          [...new Set(predictions.map((row) => String(row.nba_player_id)))],
+          runSummary?.predicted_at ?? null
+        )
+      : new Map<string, InjuryOverlayRow>();
 
   // the pool is every player-game the run has for this date — see THE POOL.
   const inputs: ImpactInput[] = predictions.map((row) => {
@@ -746,6 +896,7 @@ export async function getSlate(date: string): Promise<SlateResponse> {
       impact: impacts[i],
       spotlight: false,
       slate_spotlight: false,
+      ...injuryOverlayFields(injuries.get(nbaPlayerId), runSummary?.predicted_at ?? null),
     };
   });
 

@@ -157,6 +157,64 @@ const VsUsualChip = ({
   );
 };
 
+/**
+ * daisyUI tone for a normalized injury bucket. Null is the "cleared" case —
+ * a designation the run priced in that has since come off the report, which
+ * is good news and reads as such.
+ */
+function injuryTone(bucket: string | null): string {
+  switch (bucket) {
+    case 'out':
+    case 'doubtful':
+      return 'badge-error';
+    case 'probable':
+    case 'available':
+    case null:
+      return 'badge-success badge-outline';
+    default:
+      // questionable, day_to_day, unknown — a real question mark, not a verdict.
+      return 'badge-warning';
+  }
+}
+
+/**
+ * The CURRENT injury-report designation, which can be newer than the
+ * projection. The projection already prices in availability as of when it was
+ * published; this chip is what the report says NOW. The "· new" marker means
+ * the designation moved after publication — a late OUT, an upgrade, or a
+ * clearance — and the projected numbers do not reflect it.
+ *
+ * Rendered from the server's normalized bucket and raw wording; nothing is
+ * inferred here. Absent fields (an older server) render nothing.
+ */
+const InjuryChip = ({ player }: { player: SlatePlayer }): JSX.Element | null => {
+  const status = player.injury_status ?? null;
+  const changed = player.injury_changed_after_run === true;
+  if (status === null && !changed) return null;
+
+  const label = status === null ? 'Cleared' : (player.injury_status_raw ?? status);
+  const asOf = formatTimestamp(player.injury_as_of ?? null);
+  const detailPart = player.injury_detail ? ` (${player.injury_detail})` : '';
+  const title =
+    status === null
+      ? 'Was on the injury report when this projection was published and has since cleared. The projection does not reflect it.'
+      : `Current injury report: ${label}${detailPart}${asOf ? `, as of ${asOf}` : ''}.` +
+        (changed
+          ? ' Reported after this projection was published, so the numbers do not reflect it.'
+          : '');
+
+  return (
+    <span
+      className={`badge badge-xs uppercase tracking-wide ${injuryTone(status)}`}
+      title={title}
+      data-testid="injury-chip"
+    >
+      {label}
+      {changed && <span className="font-bold normal-case">&nbsp;· new</span>}
+    </span>
+  );
+};
+
 const PlayerRow = ({
   player,
   notableMinDelta,
@@ -216,6 +274,7 @@ const PlayerRow = ({
         {formatStat(player.proj_min_p50)} min
       </span>
       <CategoryLine player={player} />
+      <InjuryChip player={player} />
       <VsUsualChip player={player} threshold={notableMinDelta} />
     </div>
   </li>
@@ -368,6 +427,12 @@ export const SlatePage = (): JSX.Element => {
                     <Flame size={13} className="text-primary" />
                     <span>slate standout</span>
                   </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="badge badge-xs badge-error uppercase tracking-wide">
+                      Out<span className="font-bold normal-case">&nbsp;· new</span>
+                    </span>
+                    <span>injury report now; &quot;new&quot; = changed after this projection</span>
+                  </span>
                 </div>
               )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -389,7 +454,10 @@ export const SlatePage = (): JSX.Element => {
           Players and games are ordered by projected impact across all nine categories. 0 is an
           average night.
         </span>
-        <span>Every projection already accounts for the chance he sits.</span>
+        <span>
+          Every projection already accounts for the chance he sits, as of when it was
+          published. The injury chip is the report right now.
+        </span>
       </footer>
     </div>
   );
