@@ -1,6 +1,6 @@
 # Technical Reference
 
-Deep-dive documentation for `fantasy-app`. Start with [README.md](README.md) for
+Deep-dive documentation for `nba-iq`. Start with [README.md](README.md) for
 what the app is; this file covers how it actually works. For contribution
 conventions (style, testing, pre-commit checklist), see [AGENTS.md](AGENTS.md).
 
@@ -332,7 +332,7 @@ unused stage so it doesn't fight the workflow over Lambda environment variables.
 ## Project Layout
 
 ```
-fantasy-app/
+nba-iq/
 ├── .env.example                  # env template (backend + scraper + seed)
 ├── AGENTS.md                     # contributor/AI-agent style guide
 ├── TECHNICAL.md                  # this file
