@@ -626,6 +626,24 @@ export interface SlatePlayer {
   spotlight: boolean;
   /** Among the best impact players anywhere on the slate. */
   slate_spotlight: boolean;
+  /**
+   * The CURRENT injury-report designation, which can be newer than the
+   * projection. Normalized bucket (out, doubtful, questionable, probable,
+   * day_to_day, available, unknown); null when not on the report right now.
+   * Absent entirely from an older server, so every read is optional.
+   */
+  injury_status?: string | null;
+  /** Verbatim source wording, e.g. "Game Time Decision". */
+  injury_status_raw?: string | null;
+  /** The reason, e.g. "Knee". */
+  injury_detail?: string | null;
+  /** ISO timestamp the current designation was captured at. */
+  injury_as_of?: string | null;
+  /**
+   * The designation bucket moved after the projection was published — a new
+   * OUT, an upgrade, or a clearance. The projection does not reflect it.
+   */
+  injury_changed_after_run?: boolean;
 }
 
 export interface SlateGame {
