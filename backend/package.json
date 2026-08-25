@@ -16,11 +16,14 @@
     "test:watch": "vitest",
     "test:unit": "vitest run tests/unit",
     "test:api": "vitest run tests/api",
-    "backtest:watchlist": "tsx scripts/watchlistBacktest.ts"
+    "backtest:watchlist": "tsx scripts/watchlistBacktest.ts",
+    "mcp": "node dist/mcp/index.js",
+    "mcp:dev": "tsx src/mcp/index.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@aws-sdk/client-sesv2": "^3.1053.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
@@ -29,7 +32,8 @@
     "helmet": "^8.2.0",
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.13.1",
-    "serverless-http": "^4.0.0"
+    "serverless-http": "^4.0.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
