@@ -4046,6 +4046,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--injuries-only",
+        dest="injuries_only",
+        action="store_true",
+        help=(
+            "run ONLY the injury-report scrape (players.injury_status snapshot "
+            "plus the append-only player_injury_reports log), skipping every "
+            "other phase. this is the hourly game-window pass: one CBS page "
+            "fetch, so status changes reach the slate overlay near game time "
+            "without re-running the full scrape"
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         dest="dry_run",
         action="store_true",
@@ -4151,6 +4163,8 @@ def main(argv: list[str] | None = None) -> None:
             )
         elif args.sync_truth:
             _truth_layer_phases(conn, args.season, args.dry_run)
+        elif args.injuries_only:
+            scrape_injuries(conn, dry_run=args.dry_run)
         else:
             scrape_players(conn, dry_run=args.dry_run)
             scrape_teams(conn, dry_run=args.dry_run)

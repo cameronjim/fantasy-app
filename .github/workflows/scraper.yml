@@ -2,12 +2,24 @@ name: NBA Scraper
 
 on:
   schedule:
-    - cron: "0 */6 * * *"   # every 6 hours
+    # the full scrape, every 6 hours.
+    - cron: "0 */6 * * *"
+    # injuries only. 15:30 lands 30 minutes before the 16:00 predictions run,
+    # so the model publishes against the freshest designations a scrape can
+    # give it; 19:00-03:00 hourly covers 3pm ET afternoon tips through the last
+    # west-coast pregame in both halves of the DST year, keeping the slate
+    # page's CURRENT-status overlay near game-time fresh. One CBS page fetch,
+    # no nba_api calls. offset to :30 so the 00:00/18:00 full scrapes never
+    # overlap this lane.
+    - cron: "30 15,19,20,21,22,23,0,1,2 * * *"
   workflow_dispatch:          # also allows manual trigger from GitHub UI
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    # the full scrape finishes in a few minutes; the injuries-only lane in
+    # seconds. either way a hang must not burn the 6-hour default.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -20,7 +32,11 @@ jobs:
       - name: Install dependencies
         run: pip install -r scraper/requirements.txt
 
+      # github.event.schedule carries the cron expression that fired, which is
+      # how one workflow runs two cadences. a manual dispatch runs the full
+      # scrape (schedule is empty, the flag is omitted).
       - name: Run scraper
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python scraper/run_scraper.py
+        run: |
+          python scraper/run_scraper.py ${{ github.event.schedule == '30 15,19,20,21,22,23,0,1,2 * * *' && '--injuries-only' || '' }}
