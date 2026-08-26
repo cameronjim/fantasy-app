@@ -1,0 +1,29 @@
+import { Flame } from 'lucide-react';
+
+export const SlateLegend = (): JSX.Element => (
+  <div
+    className="text-[11px] opacity-70 flex items-center gap-x-4 gap-y-1 flex-wrap"
+    data-testid="slate-legend"
+  >
+    <span className="flex items-center gap-1.5">
+      <span className="badge badge-primary badge-sm tabular-nums font-semibold">
+        +11.2
+      </span>
+      <span>projected impact, 0 = average night</span>
+    </span>
+    <span className="flex items-center gap-1.5">
+      <span className="badge badge-success badge-sm tabular-nums">87%</span>
+      <span>chance he plays</span>
+    </span>
+    <span className="flex items-center gap-1.5">
+      <Flame size={13} className="text-primary" />
+      <span>slate standout</span>
+    </span>
+    <span className="flex items-center gap-1.5">
+      <span className="badge badge-xs badge-error uppercase tracking-wide">
+        Out<span className="font-bold normal-case">&nbsp;· new</span>
+      </span>
+      <span>injury report now; &quot;new&quot; = changed after this projection</span>
+    </span>
+  </div>
+);

@@ -7,10 +7,6 @@ import type {
   PlayerAnalytics, PlayerPredictionsResponse, WatchlistResponse,
 } from '../../src/types';
 
-// route handlers that satisfy the api calls the app makes on first paint.
-// tests opt in to richer responses by passing overrides; we never hit a
-// real backend or anthropic key during e2e.
-
 export interface DataStatus {
   players_updated_at: string | null;
   teams_updated_at: string | null;
@@ -31,12 +27,7 @@ export interface MockOptions {
   teams?: Team[];
   games?: Game[];
   status?: DataStatus;
-  // payload for /api/players/:id/analytics; omitted means the endpoint 404s,
-  // which is what a player with no computed analytics looks like.
   playerAnalytics?: PlayerAnalytics;
-  // payload for /api/players/:id/predictions. omitted means "no run has
-  // completed", which is production's state today and the section's own empty
-  // state — never a 404, because the endpoint answers 200 with a null run.
   playerPredictions?: PlayerPredictionsResponse;
   rosterRequiresAuth?: boolean;
   teamAnalysis?: TeamAnalysis;
@@ -44,14 +35,7 @@ export interface MockOptions {
   bettingOdds?: BettingGame[];
   bettingPicks?: BettingPicksResponse;
   bets?: { bets: Bet[]; summary: LedgerSummary };
-  /**
-   * Payload for /api/watchlist. A function receives the request's own query
-   * params, which is how a spec drives the window and position controls and gets
-   * an answer that actually reflects them. Omitted means `watchlistFixture`.
-   */
   watchlist?: WatchlistResponse | ((params: URLSearchParams) => WatchlistResponse);
-  // extra handlers applied before the defaults — useful for forcing a
-  // specific status code or asserting that a particular call was made.
   custom?: Array<{ url: RegExp | string; handler: (route: Route) => Promise<void> | void }>;
 }
 
@@ -67,10 +51,7 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<void>
   const games = opts.games ?? [];
   const status = opts.status ?? DEFAULT_STATUS;
 
-  // block all third-party origins so e2e tests don't depend on network
-  // weather. in particular, GoogleLogin loads scripts from accounts.google.com
-  // when LoginPage mounts — left alone, that races with assertions on the
-  // login page and intermittently fails the suite.
+  // aborting third-party origins keeps the google login script from racing login page assertions.
   await page.route(/https:\/\/(accounts\.google\.com|cdn\.nba\.com|.*\.nba\.com)/, (route) => {
     route.abort();
   });
@@ -82,7 +63,6 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<void>
   await page.route('**/api/status', (route) => {
     route.fulfill({ json: status });
   });
-  // catch-all sub-route under /api/status (e.g. /benchmarks).
   await page.route('**/api/status/**', (route) => route.fulfill({ json: {} }));
 
   await page.route('**/api/players*', (route) => {
@@ -94,8 +74,7 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<void>
     route.fulfill({ json: filtered });
   });
 
-  // registered after the players list route because `**/api/players*` stops at
-  // the next slash and would otherwise leave this path unhandled.
+  // these two must stay after the players list route: `**/api/players*` stops at the next slash.
   await page.route('**/api/players/*/analytics', (route) => {
     if (!opts.playerAnalytics) {
       route.fulfill({ status: 404, json: { error: 'Not found' } });
@@ -104,8 +83,6 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<void>
     route.fulfill({ json: opts.playerAnalytics });
   });
 
-  // same reason this sits after the players list route: `**/api/players*` does
-  // not cross a slash, so this path would otherwise go unhandled.
   await page.route('**/api/players/*/predictions*', (route) => {
     const fallback: PlayerPredictionsResponse = {
       player_id: 0,
@@ -117,8 +94,6 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<void>
     route.fulfill({ json: opts.playerPredictions ?? fallback });
   });
 
-  // the watchlist answers from the request's own window and position, so a spec
-  // clicking a chip gets back what that chip actually asked for.
   await page.route('**/api/watchlist*', (route) => {
     const params = new URL(route.request().url()).searchParams;
     const payload =
@@ -159,11 +134,6 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<void>
     route.fulfill({ json: opts.waiverSuggestions ?? fallback });
   });
 
-  // historical seasons default to "not imported yet", the same as production
-  // before the manual backfill: the season list is empty (the History page
-  // shows its own empty state) and a career lookup 404s, which is exactly what
-  // `PlayerCareerSection` treats as "render nothing". One handler rather than
-  // two routes so this never depends on Playwright's route precedence.
   await page.route('**/api/history/**', (route) => {
     if (new URL(route.request().url()).pathname.endsWith('/history/seasons')) {
       route.fulfill({ json: { seasons: [] } });
@@ -172,8 +142,6 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<void>
     route.fulfill({ status: 404, json: { error: 'Not found' } });
   });
 
-  // 2K ratings surfaces default to "not imported yet": the ratings page shows
-  // its empty state and the player modal's 2K badge stays hidden.
   await page.route('**/api/ratings2k/by-player-name*', (route) =>
     route.fulfill({ json: { player: null } }),
   );
@@ -186,14 +154,10 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<void>
     route.fulfill({ status: 401, json: { error: 'Unauthorized' } }),
   );
 
-  // pageview beacon fires on every route change — ack it so specs never
-  // depend on an unmocked request hitting a real backend.
   await page.route('**/api/track/pageview', (route) =>
     route.fulfill({ status: 204, body: '' }),
   );
 
-  // betting page first-paint endpoints. defaults are safe empties; tests opt
-  // into picks/odds/ledger content via the options above.
   await page.route('**/api/betting/odds', (route) =>
     route.fulfill({ json: { games: opts.bettingOdds ?? [], fetched_at: '2026-05-24T12:00:00Z' } }),
   );
@@ -241,8 +205,6 @@ export async function mockApi(page: Page, opts: MockOptions = {}): Promise<void>
     route.fulfill({ json: opts.bets ?? emptyLedger });
   });
 
-  // the betting prefs panel (and PreferencesPrompt) read these; PATCH echoes
-  // the payload back like the real route returns the updated prefs.
   await page.route('**/api/preferences', (route) => {
     if (route.request().method() === 'PATCH') {
       route.fulfill({ json: route.request().postDataJSON() ?? {} });

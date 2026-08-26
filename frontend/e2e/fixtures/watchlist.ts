@@ -5,16 +5,6 @@ import type {
   WatchlistResponse,
 } from '../../src/types';
 
-/**
- * A watchlist payload built from the request's own `days` and `position`, so an
- * e2e spec can drive the real controls and get a real-shaped answer back.
- *
- * The two candidates are chosen to make the page's central claim visible in the
- * browser: the guard is WORSE per game than the forward and plays twice as often,
- * so over a week he outranks him. If the page ever renders a per-game average as
- * though it were the ranking, this fixture makes that a visibly wrong order.
- */
-
 const BASELINE = {
   window_games: 15,
   min_games: 5,
@@ -23,7 +13,6 @@ const BASELINE = {
   definition: 'per-game averages over his last 15 games played before this date, requiring at least 5',
 };
 
-/** `n` days after `from`, in UTC — the same arithmetic the server does. */
 function shift(from: string, days: number): string {
   return new Date(Date.parse(`${from}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 }
@@ -40,7 +29,6 @@ function game(date: string, opponent: string, minutes: number, pts: number, scor
   };
 }
 
-/** The four-games-a-week guard: lower per game, higher over the window. */
 function busyGuard(from: string, days: number): WatchlistPlayer {
   const games =
     days === 1
@@ -80,7 +68,6 @@ function busyGuard(from: string, days: number): WatchlistPlayer {
   };
 }
 
-/** The two-games-a-week forward: better per game, fewer of them. */
 function restedForward(from: string, days: number): WatchlistPlayer {
   const games =
     days === 1
@@ -117,7 +104,6 @@ function restedForward(from: string, days: number): WatchlistPlayer {
 
 const POSITION_OPTIONS: WatchlistPositionFilter[] = ['G', 'F', 'C', 'PG', 'SG', 'SF', 'PF'];
 
-/** Which of the two candidates a filter keeps. */
 function matches(player: WatchlistPlayer, filter: string | null): boolean {
   if (!filter) return true;
   const positions = (player.position ?? '').split('/');

@@ -5,8 +5,7 @@ interface CategoryDef {
   isPercent?: boolean;
 }
 
-// Order matches the roster table columns so the averages row lines up under
-// each stat without any custom layout work.
+// order matches the roster table columns so the averages row lines up.
 export const AVG_CATEGORIES: CategoryDef[] = [
   { key: 'points_per_game' },
   { key: 'rebounds_per_game' },

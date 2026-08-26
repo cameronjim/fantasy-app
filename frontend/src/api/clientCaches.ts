@@ -1,15 +1,6 @@
 import type { TeamAnalysis, BettingPicksResponse } from '../types';
 
-/**
- * Client-side caches for the two slow AI endpoints. Module-level so they
- * survive route changes (React component unmounts won't drop the data).
- *
- * The server also caches these by (rosterHash + prefsHash), so this client
- * cache is purely an optimization to skip the HTTP round trip on tab switches.
- *
- * Invalidate explicitly on any mutation that would change the server's cache
- * key — adding/dropping a roster player, or saving new preferences.
- */
+// invalidate on roster or prefs mutations: the server keys its own cache by roster and prefs hash.
 
 interface CacheEntry<T> {
   data: T;
@@ -28,8 +19,6 @@ let analysis: CacheEntry<TeamAnalysis> | null = null;
 let suggestions: CacheEntry<Suggestions> | null = null;
 let bettingPicks: CacheEntry<BettingPicksResponse> | null = null;
 
-// 30 minutes — generous because we explicitly invalidate on the events that
-// actually matter (roster mutation, prefs save). The TTL is just a safety net.
 const TTL_MS = 30 * 60_000;
 
 function isFresh<T>(entry: CacheEntry<T> | null): boolean {
@@ -60,12 +49,10 @@ export function setCachedBettingPicks(data: BettingPicksResponse): void {
   bettingPicks = { data, fetchedAt: Date.now() };
 }
 
-/** Wipe just the betting picks — call after a betting-prefs save or refresh. */
 export function invalidateBettingClientCache(): void {
   bettingPicks = null;
 }
 
-/** Wipe both caches. Call when the underlying data definitely changed. */
 export function invalidateAIClientCaches(): void {
   analysis = null;
   suggestions = null;

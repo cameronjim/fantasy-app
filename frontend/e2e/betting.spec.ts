@@ -3,9 +3,6 @@ import { BettingPage } from './pages';
 import { mockApi } from './fixtures/apiMock';
 import type { BettingGame, BettingPicksResponse } from '../src/types';
 
-// the betting page never hits real ESPN or anthropic in e2e — fixtures return
-// canned odds and picks so every ui branch is deterministic.
-
 const makeGame = (id: string, home: string, away: string): BettingGame => ({
   nba_game_id: id,
   home_team: home,
@@ -26,7 +23,6 @@ const ODDS_FIXTURE: BettingGame[] = [
   makeGame('401859966', 'New York Knicks', 'San Antonio Spurs'),
 ];
 
-// five games so the board collapses behind the See more button.
 const MANY_GAMES: BettingGame[] = [
   makeGame('1', 'New York Knicks', 'San Antonio Spurs'),
   makeGame('2', 'Boston Celtics', 'Miami Heat'),
@@ -85,7 +81,6 @@ test.describe('Betting page', () => {
     await expect(betting.oddsBoardHeading()).toBeVisible();
     await expect(betting.glossaryHeading()).toBeVisible();
     await expect(betting.chatHeading()).toBeVisible();
-    // odds render with implied-probability badges
     await expect(page.getByText('New York Knicks').first()).toBeVisible();
     await expect(page.getByText('56.5%').first()).toBeVisible();
   });
@@ -96,7 +91,6 @@ test.describe('Betting page', () => {
     const betting = new BettingPage(page);
     await betting.goto();
 
-    // three of five games visible before expanding
     await expect(page.getByText('Denver Nuggets')).toBeVisible();
     await expect(page.getByText('Orlando Magic')).not.toBeVisible();
 
@@ -126,8 +120,7 @@ test.describe('Betting page', () => {
     await mockApi(page, { bettingOdds: ODDS_FIXTURE, bettingPicks: PICKS_FIXTURE });
     await signIn(page);
 
-    // stateful ledger mock registered after mockApi so it takes precedence:
-    // POSTs append, GETs return what's been tracked so far.
+    // registered after mockApi so this stateful handler takes precedence over the default one.
     const tracked: Array<Record<string, unknown>> = [];
     await page.route('**/api/betting/bets**', (route) => {
       if (route.request().method() === 'POST') {
@@ -158,7 +151,6 @@ test.describe('Betting page', () => {
     await page.getByLabel('Bet type').selectOption('custom');
     await page.getByLabel('Describe the bet').fill('First basket: Wembanyama');
     await page.getByLabel('Odds', { exact: true }).fill('+900');
-    // stake is mandatory — the add button stays disabled until it's filled
     await expect(page.getByRole('button', { name: 'Add bet' })).toBeDisabled();
     await page.getByLabel('Stake', { exact: true }).fill('10');
     await page.getByRole('button', { name: 'Add bet' }).click();

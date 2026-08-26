@@ -1,6 +1,3 @@
-// NBA team IDs are stable and let us build CDN URLs for logos without
-// needing the backend to ship logo_url for every player record.
-
 const TEAM_IDS: Record<string, string> = {
   ATL: '1610612737', BOS: '1610612738', BKN: '1610612751', CHA: '1610612766',
   CHI: '1610612741', CLE: '1610612739', DAL: '1610612742', DEN: '1610612743',
@@ -12,7 +9,6 @@ const TEAM_IDS: Record<string, string> = {
   UTA: '1610612762', WAS: '1610612764',
 };
 
-// Some scrapers return full names — map those back to abbreviations.
 const NAME_TO_ABBR: Record<string, string> = {
   'atlanta hawks': 'ATL', 'boston celtics': 'BOS', 'brooklyn nets': 'BKN',
   'charlotte hornets': 'CHA', 'chicago bulls': 'CHI', 'cleveland cavaliers': 'CLE',
@@ -27,11 +23,9 @@ const NAME_TO_ABBR: Record<string, string> = {
   'washington wizards': 'WAS',
 };
 
-/** Returns the NBA CDN logo URL for a team abbreviation or full name, or null if unknown. */
 export function getTeamLogoUrl(teamId: string | null | undefined): string | null {
   if (!teamId) return null;
   const key = teamId.trim();
-  // Already an abbreviation?
   const abbr = TEAM_IDS[key.toUpperCase()] ? key.toUpperCase() : NAME_TO_ABBR[key.toLowerCase()];
   if (!abbr) return null;
   const id = TEAM_IDS[abbr];

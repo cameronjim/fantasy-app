@@ -19,9 +19,6 @@ const CAT_COLORS: Record<string, string> = {
   weak: 'badge-error',
 };
 
-// Column definitions for the My Roster table. `key` is the sort field; columns
-// without a key (like the bare "Player" column header) are not sortable.
-// `full` powers the native browser hover tooltip on each header.
 const ROSTER_COLUMNS: Array<{ key: keyof RosterPlayer | null; label: string; full: string }> = [
   { key: 'name',                     label: 'Player', full: 'Player Name' },
   { key: 'position',                 label: 'Pos',    full: 'Position' },
@@ -48,8 +45,6 @@ interface FantasyPageProps {
 }
 
 export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
-  // hydrate from the shared cache so tab returns render the roster instantly;
-  // the mount effect still revalidates silently behind it.
   const [roster, setRoster] = useState<RosterPlayer[]>(
     () => getCached<RosterPlayer[]>(CACHE_KEYS.roster) ?? []
   );
@@ -64,9 +59,7 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
   const [toast, setToast] = useState<{ message: string; variant: ToastVariant } | null>(null);
   const [sortKey, setSortKey] = useState<keyof RosterPlayer>('points_per_game');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
-  // Monotonic counter — each loadAnalysis() call captures its own ID and only
-  // commits its result if that ID is still the latest. Mutations that change
-  // the roster bump the counter, invalidating any in-flight request.
+  // each loadAnalysis captures this id and commits only while it is still the latest.
   const analysisRequestIdRef = useRef(0);
 
   const loadRoster = useCallback(async (): Promise<void> => {
@@ -81,9 +74,7 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
     }
   }, []);
 
-  // mirror the rendered roster (including optimistic add/drop states) into
-  // the shared cache, so a tab switch mid-mutation never resurrects a
-  // dropped player or loses an added one.
+  // includes optimistic states, so a tab switch mid-mutation cannot resurrect a dropped player.
   useEffect(() => {
     if (isLoggedIn && !rosterLoading) setCached(CACHE_KEYS.roster, roster);
   }, [roster, rosterLoading, isLoggedIn]);
@@ -93,8 +84,6 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
     setAnalysisLoading(true);
     try {
       const data = await getTeamAnalysis();
-      // If another mutation/load has fired since we started, ignore our result —
-      // the newer one will (or already did) handle it.
       if (requestId !== analysisRequestIdRef.current) return;
       setAnalysis(data);
       if (!data.stale) {
@@ -110,24 +99,18 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
         setAnalysisLoading(false);
       }
     }
-    // the server handed back the previous roster's analysis — it's already
-    // on screen, so regenerate quietly and swap when ready. the requestId
-    // guard drops the result if the roster changes meanwhile.
+    // the server handed back the previous roster's analysis, so regenerate quietly.
     try {
       const fresh = await getTeamAnalysis(true);
       if (requestId !== analysisRequestIdRef.current) return;
       setAnalysis(fresh);
       setCachedAnalysis(fresh);
     } catch {
-      // regeneration failed — the previous analysis stays visible.
     }
   }, []);
 
   useEffect(() => { if (isLoggedIn) loadRoster(); }, [isLoggedIn, loadRoster]);
 
-  // Auto-load analysis when the user has a roster but no fresh cached result.
-  // Avoids the awkward "click Refresh to see anything" empty state, and
-  // re-uses cache on tab-switch so navigation feels instant.
   useEffect(() => {
     if (!isLoggedIn || roster.length === 0) return;
     if (analysis) return; // already showing cached result
@@ -151,12 +134,9 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
     return () => clearTimeout(timer);
   }, [search, roster]);
 
-  // Add/drop apply optimistically: the row appears/disappears immediately and
-  // the API call runs in the background. On failure the previous roster is
-  // restored and the toast flips to an error.
+  // add and drop apply optimistically, restoring the previous roster on failure.
   const handleAdd = (player: Player): void => {
-    // negative roster_id marks the optimistic row; the silent reload after the
-    // POST swaps in the real one without any visible loading state.
+    // a negative roster_id marks the optimistic row until the silent reload swaps it.
     const optimistic: RosterPlayer = {
       ...player,
       roster_id: -player.id,
@@ -166,9 +146,6 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
     setRoster((prev) => [...prev, optimistic]);
     setSearch('');
     setSearchResults([]);
-    // Bump the request id so any in-flight analysis call discards its result
-    // — otherwise an analysis started for the previous roster could land
-    // *after* this mutation and overwrite the cleared state with stale data.
     analysisRequestIdRef.current++;
     setAnalysis(null);
     invalidateAIClientCaches();
@@ -203,7 +180,7 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
       setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
     } else {
       setSortKey(key);
-      // Strings default to A->Z (asc), numbers default to high-to-low (desc).
+      // strings default to A->Z, numbers to high-to-low.
       setSortDir(NUMERIC_ROSTER_KEYS.has(key) ? 'desc' : 'asc');
     }
   };
@@ -380,17 +357,12 @@ export const FantasyPage = ({ isLoggedIn }: FantasyPageProps) => {
                       )}
                     </tr>
                   ))}
-                  {/* Team averages row — kept inside <tbody> so it inherits
-                      body font/size. daisyUI's <tfoot> CSS bolds and shrinks
-                      its cells, which would make the row stand out wrong.
-                      A subtle background tint is the only visual separator. */}
+                  {/* kept inside <tbody>: daisyUI's <tfoot> css bolds and shrinks
+                      its cells, which would make this row stand out wrong. */}
                   <tr className="bg-base-300/40">
                     <td className="font-medium whitespace-nowrap text-xs">
-                      {/* Spacer is w-6 h-6 — same dimensions as the avatar
-                          circles in the player rows above. Same width keeps
-                          "AVG" aligned with the first letter of names; same
-                          height keeps the row visually the same size as body
-                          rows so the text doesn't appear proportionally larger. */}
+                      {/* w-6 h-6 matches the avatar circles above, so "AVG" aligns with
+                          the names and the row keeps the same height as body rows. */}
                       <span className="flex items-center gap-2">
                         <span className="w-6 h-6 flex-shrink-0" />
                         AVG

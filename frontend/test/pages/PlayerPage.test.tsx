@@ -5,7 +5,6 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { PlayerPage } from '../../src/pages/PlayerPage';
 import type { PlayerAnalytics, PlayerPredictionsResponse } from '../../src/types';
 
-// mock the api boundary — these tests exercise the page's branches, not http.
 vi.mock('../../src/api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/api/client')>();
   return {
@@ -143,21 +142,17 @@ beforeEach(() => {
 
 describe('PlayerPage', () => {
   it('renders the header, percentiles, distribution, trends and recent games from a full payload', async () => {
-    // arrange + act
     renderPage();
 
-    // assert — header
     expect(await screen.findByRole('heading', { name: 'Test Allstar' })).toBeInTheDocument();
     expect(screen.getByText(/LAL.*PG/)).toBeInTheDocument();
     expect(analyticsMock).toHaveBeenCalledWith(1);
 
-    // percentile panel, including the impact stats' friendly labels
     expect(screen.getByRole('heading', { name: /Category Percentiles/i })).toBeInTheDocument();
     expect(screen.getByLabelText('PTS percentile')).toHaveValue(94);
     expect(screen.getByText('FG Impact')).toBeInTheDocument();
     expect(screen.getByText('FT Impact')).toBeInTheDocument();
 
-    // distribution + trends + recent games sections all present
     expect(screen.getByRole('heading', { name: /Distribution/i })).toBeInTheDocument();
     expect(screen.getByTestId('distribution-chart')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /Trends/i })).toBeInTheDocument();
@@ -168,63 +163,51 @@ describe('PlayerPage', () => {
   });
 
   it('shows the pool label, definition and sample size next to the percentile bars', async () => {
-    // arrange + act
     renderPage();
 
-    // assert
     const poolLine = await screen.findByText(/^vs rotation players/i);
     expect(poolLine).toHaveTextContent('GP >= 15 and MPG >= 12 this season');
     expect(poolLine).toHaveTextContent('n=312');
   });
 
   it('marks a last-10 swing beyond one standard deviation and flags a null z as a small sample', async () => {
-    // arrange + act
     renderPage();
 
-    // assert
     expect(await screen.findByText('+2.7')).toBeInTheDocument();
     expect(screen.getByText(/small sample/i)).toBeInTheDocument();
   });
 
   it('switches the histogram when another distribution stat is picked', async () => {
-    // arrange
     renderPage();
     await screen.findByRole('heading', { name: /Distribution/i });
     const user = userEvent.setup();
-    // both the distribution and trends sections have a REB tab — scope to one
+    // both the distribution and trends sections have a REB tab, so scope the query.
     const tablist = within(screen.getByRole('tablist', { name: 'Distribution stat' }));
 
-    // act
     await user.click(tablist.getByRole('tab', { name: 'REB' }));
 
-    // assert
     expect(tablist.getByRole('tab', { name: 'REB' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByTestId('distribution-chart')).toBeInTheDocument();
   });
 
   it('switches the trend chart when another trend stat is picked', async () => {
-    // arrange
     renderPage();
     await screen.findByRole('heading', { name: /Trends/i });
     const user = userEvent.setup();
     const tablist = within(screen.getByRole('tablist', { name: 'Trend stat' }));
 
-    // assert — every category is offered, points is the default
     for (const label of ['PTS', 'REB', 'AST', 'STL', 'BLK', '3PM', 'TOV', 'MIN']) {
       expect(tablist.getByRole('tab', { name: label })).toBeInTheDocument();
     }
     expect(tablist.getByRole('tab', { name: 'PTS' })).toHaveAttribute('aria-selected', 'true');
 
-    // act
     await user.click(tablist.getByRole('tab', { name: 'BLK' }));
 
-    // assert
     expect(tablist.getByRole('tab', { name: 'BLK' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByTestId('trend-chart')).toBeInTheDocument();
   });
 
   it('degrades to percentiles only when the player has no game logs', async () => {
-    // arrange
     analyticsMock.mockResolvedValue(
       fullPayload({
         as_of: { logs: null, distributions: '2026-02-04T13:00:00Z' },
@@ -232,10 +215,8 @@ describe('PlayerPage', () => {
       })
     );
 
-    // act
     renderPage();
 
-    // assert — percentiles still render, trend surfaces do not
     expect(await screen.findByRole('heading', { name: /Category Percentiles/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /Distribution/i })).toBeInTheDocument();
     expect(screen.getByText('No game logs yet')).toBeInTheDocument();
@@ -245,16 +226,13 @@ describe('PlayerPage', () => {
   });
 
   it('omits the prediction card while the api returns a null prediction', async () => {
-    // arrange + act
     renderPage();
     await screen.findByRole('heading', { name: 'Test Allstar' });
 
-    // assert
     expect(screen.queryByRole('heading', { name: /Projection/i })).not.toBeInTheDocument();
   });
 
   it('renders the prediction card once the api returns one', async () => {
-    // arrange
     analyticsMock.mockResolvedValue(
       fullPayload({
         prediction: {
@@ -266,10 +244,8 @@ describe('PlayerPage', () => {
       })
     );
 
-    // act
     renderPage();
 
-    // assert
     expect(await screen.findByRole('heading', { name: /Projection/i })).toBeInTheDocument();
     expect(screen.getByText(/Usage should hold/i)).toBeInTheDocument();
     expect(screen.getByText('30.1')).toBeInTheDocument();
@@ -277,7 +253,6 @@ describe('PlayerPage', () => {
   });
 
   it('renders quantile bands, play probability and the schedule-adjusted line', async () => {
-    // arrange — the shape the prediction store actually serves (migration 014)
     analyticsMock.mockResolvedValue(
       fullPayload({
         prediction: {
@@ -298,10 +273,8 @@ describe('PlayerPage', () => {
       })
     );
 
-    // act
     renderPage();
 
-    // assert — bands show median + spread, nulls are skipped, context is visible
     expect(await screen.findByRole('heading', { name: /Projection/i })).toBeInTheDocument();
     expect(screen.getByText('34.5')).toBeInTheDocument();
     expect(screen.getByText('26.0-41.0')).toBeInTheDocument();
@@ -314,17 +287,13 @@ describe('PlayerPage', () => {
   });
 
   it('asks for the upcoming games without a date filter', async () => {
-    // arrange + act — the only published run is a January backtest, so a
-    // "today onwards" default would render an empty section on a working page
     renderPage();
     await screen.findByRole('heading', { name: 'Test Allstar' });
 
-    // assert
     expect(predictionsMock).toHaveBeenCalledWith(1);
   });
 
   it('renders the upcoming-games section under the projection card', async () => {
-    // arrange
     predictionsMock.mockResolvedValue(
       predictionsPayload({
         run: {
@@ -372,57 +341,44 @@ describe('PlayerPage', () => {
       })
     );
 
-    // act
     renderPage();
 
-    // assert — the section renders both games, availability included
     expect(await screen.findByTestId('upcoming-games-section')).toBeInTheDocument();
     expect(screen.getAllByTestId('upcoming-game-row')).toHaveLength(2);
     expect(screen.getByText('Likely')).toBeInTheDocument();
     expect(screen.getByText('OUT-ish')).toBeInTheDocument();
 
-    // assert — no teaser link: the section is already directly below the card
     expect(screen.queryByRole('link', { name: /games in this run/i })).toBeNull();
   });
 
   it('shows the no-run empty state rather than hiding the section', async () => {
-    // arrange + act
     renderPage();
 
-    // assert
     expect(await screen.findByText('No prediction run published yet')).toBeInTheDocument();
   });
 
   it('leaves the page intact when the predictions call fails', async () => {
-    // arrange
     predictionsMock.mockRejectedValue(new Error('predictions down'));
 
-    // act
     renderPage();
 
-    // assert — the optional section disappears, everything else still renders
     expect(await screen.findByRole('heading', { name: 'Test Allstar' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /Category Percentiles/i })).toBeInTheDocument();
     expect(screen.queryByTestId('upcoming-games-section')).not.toBeInTheDocument();
   });
 
   it('shows an error state with a retry button when the analytics call fails', async () => {
-    // arrange
     analyticsMock.mockRejectedValue(new Error('analytics down'));
 
-    // act
     renderPage();
 
-    // assert
     expect(await screen.findByText(/Failed to load player analytics/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Try Again/i })).toBeInTheDocument();
   });
 
   it('rejects a non-numeric player id without calling the api', async () => {
-    // arrange + act
     renderPage('not-a-player');
 
-    // assert
     expect(await screen.findByText(/Unknown player/i)).toBeInTheDocument();
     expect(analyticsMock).not.toHaveBeenCalled();
   });

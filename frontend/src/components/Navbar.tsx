@@ -26,8 +26,7 @@ export function Navbar({ isLoggedIn, onLogout }: NavbarProps): JSX.Element {
   const location = useLocation();
   const [isAdmin, setIsAdmin] = useState(false);
 
-  // the flag only gates the nav link — the admin api re-checks server-side,
-  // so a failed lookup just hides the shortcut.
+  // the flag only gates the nav link; the admin api re-checks server-side.
   useEffect(() => {
     if (!isLoggedIn) {
       setIsAdmin(false);
@@ -55,9 +54,8 @@ export function Navbar({ isLoggedIn, onLogout }: NavbarProps): JSX.Element {
     navigate(path);
   };
 
-  // sign-out should always land users on the stats page. without this,
-  // signing out from a protected route (e.g. /profile, /fantasy) would
-  // either leave them on a now-broken page or bounce them to /login.
+  // without this, signing out from a protected route would leave the user on a
+  // now-broken page.
   const handleSignOut = (): void => {
     (document.activeElement as HTMLElement)?.blur();
     onLogout();
@@ -90,7 +88,6 @@ export function Navbar({ isLoggedIn, onLogout }: NavbarProps): JSX.Element {
           );
         })}
 
-        {/* theme picker is always visible, signed in or out. */}
         <ThemePicker />
 
         {isLoggedIn ? (

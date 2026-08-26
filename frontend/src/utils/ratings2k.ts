@@ -1,21 +1,12 @@
-/**
- * Pure helpers for the 2K ratings surfaces: attribute grouping, label
- * formatting, and the rating tier bands. Kept out of the components so the
- * grouping rules are unit-testable and shared by the table and the modal.
- */
-
 import type { NumericLike, Rating2kAttribute } from '../types';
 import { toStatNumber } from './stats';
 
-/** Required credit line, rendered wherever 2K data appears. */
+// required credit line, must be rendered wherever 2K data appears.
 export const RATINGS_2K_ATTRIBUTION =
   '2K ratings via nba2kapi.com (data from 2kratings.com). Not affiliated with or endorsed by 2K Sports, Take-Two, or the NBA.';
 
-/** Where attributes we don't recognize land, so a new game year's additions
- *  still render instead of silently disappearing. */
 export const OTHER_GROUP_LABEL = 'Other';
 
-// the 2K scale tops out at 99, so bar widths are a share of that.
 const MAX_RATING = 99;
 
 const GROUP_DEFINITIONS: Array<{ label: string; attributeNames: string[] }> = [
@@ -53,8 +44,7 @@ const GROUP_DEFINITIONS: Array<{ label: string; attributeNames: string[] }> = [
   },
 ];
 
-/** Comparison key that survives casing and separator changes upstream, so
- *  `three_point_shot` still groups with `threePointShot`. */
+// survives upstream casing and separator changes: `three_point_shot` groups with `threePointShot`.
 function canonicalKey(attributeName: string): string {
   return attributeName.replace(/[^a-z0-9]/gi, '').toLowerCase();
 }
@@ -74,11 +64,6 @@ export interface Rating2kAttributeGroup {
   attributes: Rating2kAttribute[];
 }
 
-/**
- * Buckets flat attribute pairs into readable sections. Known attributes keep
- * their in-group order regardless of the order the api sent them; anything
- * unknown is collected into a trailing "Other" group. Empty groups are dropped.
- */
 export function groupRating2kAttributes(attributes: Rating2kAttribute[]): Rating2kAttributeGroup[] {
   const buckets = new Map<string, Rating2kAttribute[]>();
 
@@ -108,16 +93,11 @@ export function groupRating2kAttributes(attributes: Rating2kAttribute[]): Rating
   return groups;
 }
 
-/**
- * camelCase (or snake_case) attribute name to a readable label:
- * `threePointShot` becomes "Three Point Shot", `helpDefenseIQ` becomes
- * "Help Defense IQ".
- */
 export function formatAttributeLabel(attributeName: string): string {
   const spaced = attributeName
     .replace(/[_-]+/g, ' ')
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    // keeps an acronym run attached to itself, e.g. "IQRating" -> "IQ Rating"
+    // keeps an acronym run together: "IQRating" becomes "IQ Rating".
     .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
     .trim();
 
@@ -128,7 +108,7 @@ export function formatAttributeLabel(attributeName: string): string {
     .join(' ');
 }
 
-/** Display form for the positions field, which arrives as a list or a string. */
+// the positions field arrives as either a list or a delimited string.
 export function formatPositions(positions: string[] | string | null | undefined): string {
   if (!positions) return '';
   const parts = Array.isArray(positions) ? positions : positions.split(/[/,]/);
@@ -137,8 +117,6 @@ export function formatPositions(positions: string[] | string | null | undefined)
 
 export type Rating2kTier = 'elite' | 'strong' | 'average' | 'weak' | 'unknown';
 
-/** Band a 2K value falls into. Thresholds follow how 2K itself reads: mid-80s
- *  and up is elite, low 50s and below is a genuine weakness. */
 export function ratingTier(value: NumericLike | null | undefined): Rating2kTier {
   const parsed = toStatNumber(value);
   if (parsed === null) return 'unknown';
@@ -148,8 +126,6 @@ export function ratingTier(value: NumericLike | null | undefined): Rating2kTier 
   return 'weak';
 }
 
-// "strong" is info, not primary: primary is the app's action color (buttons,
-// Full Analytics), and a rating badge in the same hue reads as a control.
 const TIER_BAR_CLASS: Record<Rating2kTier, string> = {
   elite: 'bg-success',
   strong: 'bg-info',
@@ -166,17 +142,14 @@ const TIER_BADGE_CLASS: Record<Rating2kTier, string> = {
   unknown: 'badge-ghost',
 };
 
-/** daisyUI semantic fill class for a bar, so every theme stays legible. */
 export function tierBarClass(value: NumericLike | null | undefined): string {
   return TIER_BAR_CLASS[ratingTier(value)];
 }
 
-/** daisyUI semantic badge class for an overall rating. */
 export function tierBadgeClass(value: NumericLike | null | undefined): string {
   return TIER_BADGE_CLASS[ratingTier(value)];
 }
 
-/** Bar fill width as a percentage of the 2K maximum, clamped to 0-100. */
 export function ratingBarPercent(value: NumericLike | null | undefined): number {
   const parsed = toStatNumber(value);
   if (parsed === null) return 0;
@@ -184,7 +157,6 @@ export function ratingBarPercent(value: NumericLike | null | undefined): number 
   return Math.max(0, Math.min(100, Math.round(percent)));
 }
 
-/** Signed display for a rating-history change, e.g. "+3", "-2", "0". */
 export function formatRatingDelta(delta: NumericLike | null | undefined): string {
   const parsed = toStatNumber(delta);
   if (parsed === null) return '';

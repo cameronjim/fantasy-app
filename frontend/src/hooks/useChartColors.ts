@@ -1,11 +1,6 @@
 import { useEffect, useState } from 'react';
 
-/**
- * daisyUI 5 exposes its palette as custom properties on the element carrying
- * `data-theme` (our `<html>`). Recharts writes colors onto SVG presentation
- * attributes, where `var(...)` is not reliably resolved, so we read the
- * computed values once per theme and hand recharts real color strings.
- */
+// recharts writes colors onto svg presentation attributes, where `var(...)` is not resolved.
 const COLOR_VARS = {
   primary: '--color-primary',
   secondary: '--color-secondary',
@@ -19,9 +14,6 @@ const COLOR_VARS = {
 
 export type ChartColors = Record<keyof typeof COLOR_VARS, string>;
 
-// jsdom (and the first paint before styles resolve) hands back empty strings.
-// `currentColor` inherits the themed text color, so charts stay legible rather
-// than falling back to recharts' hardcoded black.
 const FALLBACK = 'currentColor';
 
 function readChartColors(): ChartColors {
@@ -33,10 +25,6 @@ function readChartColors(): ChartColors {
   return Object.fromEntries(entries) as ChartColors;
 }
 
-/**
- * Resolved daisyUI palette for the active theme, re-read whenever the theme
- * picker swaps `data-theme` so charts recolor without a remount.
- */
 export function useChartColors(): ChartColors {
   const [colors, setColors] = useState<ChartColors>(readChartColors);
 

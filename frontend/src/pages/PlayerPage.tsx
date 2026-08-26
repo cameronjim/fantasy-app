@@ -1,12 +1,12 @@
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
-import { PercentilePanel } from '../components/PercentilePanel';
-import { StatDistributionSection } from '../components/StatDistributionSection';
-import { PlayerTrendsSection } from '../components/PlayerTrendsSection';
-import { RecentGamesTable } from '../components/RecentGamesTable';
-import { PlayerPredictionCard } from '../components/PlayerPredictionCard';
-import { PlayerUpcomingGames } from '../components/PlayerUpcomingGames';
-import { PlayerCareerSection } from '../components/PlayerCareerSection';
+import { PercentilePanel } from '../components/player/PercentilePanel';
+import { StatDistributionSection } from '../components/player/StatDistributionSection';
+import { PlayerTrendsSection } from '../components/player/PlayerTrendsSection';
+import { RecentGamesTable } from '../components/player/RecentGamesTable';
+import { PlayerPredictionCard } from '../components/player/PlayerPredictionCard';
+import { PlayerUpcomingGames } from '../components/player/PlayerUpcomingGames';
+import { PlayerCareerSection } from '../components/player/PlayerCareerSection';
 import { getPlayerAnalytics, getPlayerPredictions } from '../api/client';
 import { useCachedResource } from '../hooks/useCachedResource';
 import { playerAnalyticsKey, playerPredictionsKey } from '../api/resourceCache';
@@ -26,12 +26,6 @@ const BackLink = (): JSX.Element => (
   </Link>
 );
 
-/**
- * Full analytics view for one player: where they rank in the pool, what the
- * pool's distribution looks like, and how their recent form compares to their
- * own season. Everything below the percentile panel is optional — a player
- * with no ingested game logs still gets a useful page.
- */
 export const PlayerPage = (): JSX.Element => {
   const { id } = useParams<{ id: string }>();
   const playerId = Number(id);
@@ -43,14 +37,9 @@ export const PlayerPage = (): JSX.Element => {
     { enabled: valid, errorMessage: 'Failed to load player analytics' }
   );
 
-  // a separate request on purpose: the analytics payload is heavy and cached
-  // per player, while the prediction run turns over on its own schedule. A
-  // failure here leaves the rest of the page intact — the section renders
-  // nothing rather than taking the page down with it.
-  //
-  // `from` is deliberately not passed. The server then applies no date filter,
-  // which is what makes the section non-empty while the only published run is a
-  // backtest of a week in January.
+  // a separate request on purpose, so a failure here renders nothing rather than
+  // taking the page down. `from` is deliberately not passed: with no date filter the
+  // section stays non-empty while the only published run is a backtest.
   const { data: predictions } = useCachedResource<PlayerPredictionsResponse>(
     playerPredictionsKey(playerId),
     () => getPlayerPredictions(playerId),
@@ -71,8 +60,7 @@ export const PlayerPage = (): JSX.Element => {
     );
   }
 
-  // a cached copy keeps rendering through a failed background refresh; only a
-  // page with nothing to show falls back to the error or loading state.
+  // a cached copy keeps rendering through a failed background refresh.
   if (!data) {
     if (error) {
       return (
@@ -170,7 +158,6 @@ export const PlayerPage = (): JSX.Element => {
             </>
           )}
 
-          {/* renders nothing when this player has no ingested season history */}
           <PlayerCareerSection nbaPlayerId={player.nba_id} framed />
         </div>
 

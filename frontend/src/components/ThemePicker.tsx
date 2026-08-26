@@ -1,15 +1,14 @@
 import { Palette, Check } from 'lucide-react';
 import { useTheme } from '../hooks/useTheme';
 
-// always-visible navbar control for picking a theme. each row previews the
-// theme's base + primary colors by setting `data-theme` on a nested element,
-// so daisyUI resolves the swatch to that theme's actual palette.
+// each row previews a theme by setting `data-theme` on a nested element, so daisyUI
+// resolves the swatch to that theme's own palette.
 export function ThemePicker(): JSX.Element {
   const { theme, setTheme, themes } = useTheme();
 
   const choose = (id: string): void => {
     setTheme(id);
-    // close the dropdown (daisyUI dropdowns close on blur).
+    // daisyUI dropdowns close on blur.
     (document.activeElement as HTMLElement)?.blur();
   };
 

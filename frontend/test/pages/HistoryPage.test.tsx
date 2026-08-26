@@ -4,7 +4,6 @@ import userEvent from '@testing-library/user-event';
 import { HistoryPage } from '../../src/pages/HistoryPage';
 import type { PlayerSeasonRow } from '../../src/types';
 
-// mock the api boundary — these tests exercise the page's branches, not http.
 vi.mock('../../src/api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/api/client')>();
   return {
@@ -55,10 +54,8 @@ beforeEach(() => {
 
 describe('HistoryPage', () => {
   it('renders the newest season by default with its player rows', async () => {
-    // arrange + act
     render(<HistoryPage />);
 
-    // assert
     expect(await screen.findByText('Kobe Bryant')).toBeInTheDocument();
     expect(screen.getByText('LeBron James')).toBeInTheDocument();
     expect(screen.getByLabelText('Season')).toHaveValue('2005-06');
@@ -66,7 +63,6 @@ describe('HistoryPage', () => {
   });
 
   it('refetches when the user switches season', async () => {
-    // arrange
     render(<HistoryPage />);
     await screen.findByText('Kobe Bryant');
     playersMock.mockResolvedValue({
@@ -76,83 +72,65 @@ describe('HistoryPage', () => {
     });
     const user = userEvent.setup();
 
-    // act
     await user.selectOptions(screen.getByLabelText('Season'), '1996-97');
 
-    // assert
     expect(await screen.findByText('Michael Jordan')).toBeInTheDocument();
     expect(playersMock).toHaveBeenCalledWith(expect.objectContaining({ season: '1996-97' }));
   });
 
   it('filters the rendered rows by the search box', async () => {
-    // arrange
     render(<HistoryPage />);
     await screen.findByText('Kobe Bryant');
     const user = userEvent.setup();
 
-    // act
     await user.type(screen.getByLabelText('Search players'), 'lebron');
 
-    // assert
     expect(screen.getByText('LeBron James')).toBeInTheDocument();
     expect(screen.queryByText('Kobe Bryant')).not.toBeInTheDocument();
   });
 
   it('keeps rendering rows after sorting by a stat column', async () => {
-    // arrange
     render(<HistoryPage />);
     await screen.findByText('Kobe Bryant');
     const user = userEvent.setup();
 
-    // act — toggle the same column twice to flip both directions
     await user.click(screen.getByTitle('Points Per Game'));
     await user.click(screen.getByTitle('Points Per Game'));
     await user.click(screen.getByTitle('Player Name'));
 
-    // assert
     expect(screen.getByText('Kobe Bryant')).toBeInTheDocument();
     expect(screen.getByText('LeBron James')).toBeInTheDocument();
   });
 
   it('shows the no-data state and skips the season fetch when no seasons exist', async () => {
-    // arrange
     seasonsMock.mockResolvedValue([]);
 
-    // act
     render(<HistoryPage />);
 
-    // assert
     expect(await screen.findByText(/No historical data available yet/i)).toBeInTheDocument();
     expect(screen.queryByLabelText('Season')).not.toBeInTheDocument();
     expect(playersMock).not.toHaveBeenCalled();
   });
 
   it('shows an error state with a retry button when the season list fails', async () => {
-    // arrange
     seasonsMock.mockRejectedValue(new Error('history down'));
 
-    // act
     render(<HistoryPage />);
 
-    // assert
     expect(await screen.findByText(/Failed to load historical seasons/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Try Again/i })).toBeInTheDocument();
   });
 
   it('shows an error state when the season table fails to load', async () => {
-    // arrange
     playersMock.mockRejectedValue(new Error('season down'));
 
-    // act
     render(<HistoryPage />);
 
-    // assert
     expect(await screen.findByText(/Failed to load season stats/i)).toBeInTheDocument();
   });
 
   it('coerces string numerics and renders dashes for null stats', async () => {
-    // arrange — pg serializes NUMERIC columns as strings, and pre-1996-97
-    // seasons are missing several stats entirely
+    // pg serializes numeric columns as strings, hence the string values here.
     playersMock.mockResolvedValue({
       season: '1996-97',
       total: 1,
@@ -178,11 +156,9 @@ describe('HistoryPage', () => {
       ],
     });
 
-    // act
     const { container } = render(<HistoryPage />);
     await screen.findByText('Michael Jordan');
 
-    // assert
     expect(screen.getByText('29.6')).toBeInTheDocument();
     expect(screen.getByText('82')).toBeInTheDocument();
     await waitFor(() => {

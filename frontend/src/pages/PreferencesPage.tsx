@@ -88,9 +88,8 @@ export const PreferencesPage = () => {
       .finally(() => setLoading(false));
   }, []);
 
-  // the auth guard must come AFTER every hook: an early return above a hook
-  // crashes with react error #300 when the token disappears while the page
-  // is mounted (e.g. signing out from this page).
+  // the auth guard must come after every hook: an early return above one crashes
+  // with react error #300 when the token disappears while the page is mounted.
   if (!getAuthToken()) {
     return <Navigate to="/login" replace state={{ from: '/preferences' }} />;
   }
@@ -126,8 +125,7 @@ export const PreferencesPage = () => {
       const updated = await updatePreferences(prefs);
       setPrefs(updated);
       setSavedAt(Date.now());
-      // Prefs are part of the server's AI cache key — wipe local caches so
-      // /fantasy and /improve re-fetch with the new prompt next visit.
+      // prefs are part of the server's ai cache key, so wipe the local caches too.
       invalidateAIClientCaches();
     } catch {
       setError('Failed to save');

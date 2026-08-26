@@ -1,6 +1,5 @@
 import type { Locator, Page } from '@playwright/test';
 
-// component object for the player detail modal.
 export class PlayerModalComponent {
   readonly page: Page;
 

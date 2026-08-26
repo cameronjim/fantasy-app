@@ -6,7 +6,6 @@ import type { ChatMessage } from '../types';
 interface ChatBoxProps {
   contextType?: string;
   isLoggedIn?: boolean;
-  // shown in the empty state so each page can hint at what to ask about.
   emptyHint?: string;
 }
 

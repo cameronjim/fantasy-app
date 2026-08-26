@@ -1,6 +1,5 @@
 import type { Locator, Page } from '@playwright/test';
 
-// page object for the /improve (Improve Team) route.
 export class ImproveTeamPage {
   readonly page: Page;
 
