@@ -1,10 +1,3 @@
-// minimal player fixtures used across e2e tests. keep this list small —
-// every player here lands in the rendered table, so adding 100 rows slows
-// every test. add a player only when a test actually needs it.
-//
-// the shape must match `Player` in src/types.ts, plus the optional
-// `fantasy_score` / `fantasy_rank` overlay added by the players route.
-
 import type { PlayerAnalytics, PlayerPredictionsResponse } from '../../src/types';
 
 export interface PlayerFixture {
@@ -76,8 +69,6 @@ export const ROLE_PLAYER: PlayerFixture = {
   fantasy_rank: 2,
 };
 
-// A rookie below the GP/MPG threshold — fantasy_score is null and the FS
-// column should render as "-".
 export const UNRANKED_ROOKIE: PlayerFixture = {
   id: 3,
   name: 'Test Rookie',
@@ -126,9 +117,6 @@ export const INJURED: PlayerFixture = {
 
 export const ALL_PLAYERS: PlayerFixture[] = [ALL_STAR, ROLE_PLAYER, UNRANKED_ROOKIE, INJURED];
 
-// Analytics payload for ALL_STAR, matching `/api/players/:id/analytics`. The
-// player analytics page is the only surface that reads this, so it lives here
-// rather than in every spec that needs one.
 export const ALL_STAR_ANALYTICS: PlayerAnalytics = {
   player: {
     id: ALL_STAR.id,
@@ -201,9 +189,6 @@ export const ALL_STAR_ANALYTICS: PlayerAnalytics = {
   prediction: null,
 };
 
-// Upcoming-games payload for ALL_STAR, matching `/api/players/:id/predictions`.
-// Two games on purpose, and a doubtful second one: the section's whole point is
-// that a player the model expects to sit keeps his "if he plays" line.
 export const ALL_STAR_PREDICTIONS: PlayerPredictionsResponse = {
   player_id: ALL_STAR.id,
   nba_player_id: '2544',

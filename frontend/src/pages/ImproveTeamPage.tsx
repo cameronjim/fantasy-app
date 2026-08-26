@@ -15,7 +15,6 @@ interface ImproveTeamPageProps {
 }
 
 export const ImproveTeamPage = ({ isLoggedIn }: ImproveTeamPageProps) => {
-  // Hydrate from client cache so tab-switches feel instant.
   const initial = getCachedSuggestions();
   const [tradeTargets, setTradeTargets] = useState<Suggestion[]>(initial?.trade_targets ?? []);
   const [waiverPickups, setWaiverPickups] = useState<Suggestion[]>(initial?.waiver_pickups ?? []);
@@ -49,23 +48,19 @@ export const ImproveTeamPage = ({ isLoggedIn }: ImproveTeamPageProps) => {
       return;
     }
     apply(data);
-    // Don't pollute the client cache with the empty-roster response (once
-    // the user adds players we want a fresh AI call) or with a stale one
-    // (it's about to be replaced by the background regeneration below).
+    // never cache the empty-roster response, or a stale one about to be replaced.
     if (!data.empty_roster && !data.stale) {
       setCachedSuggestions(data);
     }
     setLoading(false);
     if (!refresh && data.stale) {
-      // the server handed back expired suggestions so the page rendered
-      // instantly — regenerate behind the scenes and swap when ready.
+      // the server handed back expired suggestions, so regenerate behind the scenes.
       setRefreshing(true);
       try {
         const fresh = await getWaiverSuggestions(true);
         apply(fresh);
         if (!fresh.empty_roster) setCachedSuggestions(fresh);
       } catch {
-        // regeneration failed — the previous suggestions stay visible.
       }
     }
     setRefreshing(false);
@@ -73,7 +68,6 @@ export const ImproveTeamPage = ({ isLoggedIn }: ImproveTeamPageProps) => {
 
   useEffect(() => {
     if (!isLoggedIn) return;
-    // Skip the network round-trip if we already hydrated from cache.
     if (initial) return;
     loadSuggestions();
     // eslint-disable-next-line react-hooks/exhaustive-deps

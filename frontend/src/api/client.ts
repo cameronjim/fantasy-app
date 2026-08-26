@@ -46,18 +46,11 @@ export async function googleSignIn(credential: string): Promise<void> {
   setAuthToken(data.token);
 }
 
-/** Same backend endpoint, but using the access_token flow that supports
- *  forcing the Google account picker via prompt: 'select_account'. */
 export async function googleSignInWithToken(accessToken: string): Promise<void> {
   const { data } = await api.post('/auth/google', { access_token: accessToken });
   setAuthToken(data.token);
 }
 
-/**
- * Change or set the user's password. `currentPassword` is required when the
- * user already has a password; pass `null` (or omit) when setting an initial
- * password for a google-only account.
- */
 export async function changePassword(
   currentPassword: string | null,
   newPassword: string
@@ -82,10 +75,7 @@ export interface CurrentUser {
   email: string | null;
   name: string | null;
   phone: string | null;
-  // false for google-only users who haven't set a local password yet —
-  // the change-password form drops the "current password" field for them.
   has_password: boolean;
-  // gates the admin nav link only; the admin api re-checks server-side.
   is_admin: boolean;
 }
 
@@ -101,7 +91,6 @@ export interface ProfileUpdate {
   phone?: string;
 }
 
-/** patch only the fields the caller provides; omitted fields stay unchanged. */
 export async function updateProfile(updates: ProfileUpdate): Promise<CurrentUser> {
   const { data } = await api.patch('/auth/profile', updates);
   return data;
@@ -163,11 +152,6 @@ export async function getPlayer(id: number): Promise<Player> {
   return data;
 }
 
-/**
- * Percentiles, distributions and recent-form trends for one player. The trend
- * arrays come back empty for players with no ingested game logs, so callers
- * must render the percentile half on its own.
- */
 export async function getPlayerAnalytics(id: number): Promise<PlayerAnalytics> {
   const { data } = await api.get<PlayerAnalytics>(`/players/${id}/analytics`);
   return {
@@ -184,24 +168,11 @@ export async function getPlayerAnalytics(id: number): Promise<PlayerAnalytics> {
 }
 
 export interface PlayerPredictionsParams {
-  /** Inclusive lower bound on game date, YYYY-MM-DD. */
   from?: string;
-  /** Games to return; the server defaults to 14. */
   limit?: number;
 }
 
-/**
- * Every game the latest completed model run has a prediction for, for one
- * player, earliest first.
- *
- * `from` IS DELIBERATELY OMITTED BY DEFAULT. The server applies no date filter
- * without it, which matters because the only run published so far is a backtest
- * of a week in January — asking for "today onwards" would render an empty
- * section on a page that is working perfectly.
- *
- * `run: null` (no completed run) and an empty `games` array are both normal
- * answers, not errors; the section renders a different empty state for each.
- */
+// omitting `from` asks the server for every predicted game, not for today onwards.
 export async function getPlayerPredictions(
   id: number,
   params: PlayerPredictionsParams = {}
@@ -217,13 +188,6 @@ export async function getPlayerPredictions(
   };
 }
 
-/**
- * The day's games with each game's top projected players. `date` is a
- * YYYY-MM-DD ET calendar day; omitting it asks the server for today.
- *
- * Both `run: null` (no completed model run) and an empty `games` array are
- * normal answers, not errors — the page renders an empty state for each.
- */
 export async function getSlate(date?: string): Promise<SlateResponse> {
   const { data } = await api.get<SlateResponse>('/predictions/slate', {
     params: date ? { date } : {},
@@ -231,22 +195,13 @@ export async function getSlate(date?: string): Promise<SlateResponse> {
   return {
     date: data.date,
     run: data.run ?? null,
-    // the pool descriptor is what explains the impact numbers, so a response
-    // that predates it (a Lambda caught mid-deploy) degrades to an empty
-    // definition rather than to a page that throws while rendering a footnote.
     pool: data.pool ?? { key: '', label: '', definition: '', sample_size: 0 },
     baseline: data.baseline ?? EMPTY_BASELINE,
     games: (data.games ?? []).map((game) => ({ ...game, players: game.players ?? [] })),
   };
 }
 
-/**
- * The baseline descriptor a response that predates it degrades to — a Lambda
- * caught mid-deploy. `notable_min_delta: 0` is deliberately NOT a threshold of
- * zero in disguise: the pages treat a descriptor with an empty `definition` as
- * "no baseline information", and simply omit the vs-usual chips rather than
- * claiming a deviation against a window nobody described.
- */
+// pages read an empty `definition` as "no baseline", so the zeroes are never used as thresholds.
 const EMPTY_BASELINE = {
   window_games: 0,
   min_games: 0,
@@ -255,7 +210,6 @@ const EMPTY_BASELINE = {
   definition: '',
 };
 
-/** What the page falls back to if a server sends no position vocabulary. */
 const WATCHLIST_POSITION_OPTIONS: WatchlistPositionFilter[] = [
   'G',
   'F',
@@ -266,14 +220,7 @@ const WATCHLIST_POSITION_OPTIONS: WatchlistPositionFilter[] = [
   'PF',
 ];
 
-/**
- * Query parameters for a watchlist request.
- *
- * The default window and "every position" are OMITTED rather than sent
- * explicitly, so the ordinary request stays the bare `?date=` URL an older
- * server also answers, and so the browser caches one URL for the common case
- * instead of two spellings of it.
- */
+// defaults are omitted rather than sent, so the common request stays one cacheable url.
 export function watchlistParams(
   date?: string,
   days?: number,
@@ -286,15 +233,6 @@ export function watchlistParams(
   };
 }
 
-/**
- * Fills in every field a watchlist payload might be missing.
- *
- * Defaulted HERE rather than in the page so that a server caught mid-deploy —
- * one answering without `window`, `games_count` or `position` — renders as a
- * one-day, one-game, position-unknown list instead of as NaN and blank badges.
- * A one-day window is the right fallback because it is what the endpoint did
- * before windows existed.
- */
 export function normalizeWatchlist(data: Partial<WatchlistResponse>): WatchlistResponse {
   const date = data.date ?? '';
   const from = data.window?.from ?? date;
@@ -321,11 +259,6 @@ export function normalizeWatchlist(data: Partial<WatchlistResponse>): WatchlistR
   };
 }
 
-/**
- * Ranked big-night candidates over a window of `days` starting at `date`:
- * players projected above their OWN usual by enough to matter, with the deltas
- * and the rule codes that explain each row.
- */
 export async function getWatchlist(
   date?: string,
   days?: number,
@@ -366,7 +299,6 @@ export interface HistoryPlayersParams {
 
 export interface HistoryPlayersResponse {
   season: string;
-  // total matching rows on the server, which can exceed the returned page.
   total: number;
   players: PlayerSeasonRow[];
 }
@@ -374,12 +306,9 @@ export interface HistoryPlayersResponse {
 export interface PlayerCareerResponse {
   nba_player_id: string;
   player_name: string;
-  // oldest season first, so the table reads like a career timeline.
   seasons: PlayerSeasonRow[];
 }
 
-/** Seasons with ingested historical data, newest first. Empty until the
- *  one-time backfill has been run. */
 export async function getHistorySeasons(): Promise<string[]> {
   const { data } = await api.get<{ seasons: string[] }>('/history/seasons');
   return data.seasons ?? [];
@@ -413,7 +342,6 @@ export interface Ratings2kPlayersParams {
 }
 
 export interface Ratings2kPlayersResponse {
-  // total matching rows on the server, which can exceed the returned page.
   total: number;
   players: Rating2kSummary[];
 }
@@ -425,7 +353,6 @@ export async function getRatings2kPlayers(
   return { total: data.total ?? 0, players: data.players ?? [] };
 }
 
-/** Full attribute breakdown for one rated player, or null when the slug is unknown. */
 export async function getRatings2kPlayer(slug: string): Promise<Rating2kDetail | null> {
   try {
     const { data } = await api.get<Rating2kDetail>(
@@ -438,18 +365,12 @@ export async function getRatings2kPlayer(slug: string): Promise<Rating2kDetail |
       rating_history: data.rating_history ?? [],
     };
   } catch (err) {
-    // 404 is a normal answer here, not a failure — the caller distinguishes
-    // "no such rated player" from "the lookup broke".
     if (axios.isAxiosError(err) && err.response?.status === 404) return null;
     throw err;
   }
 }
 
-/**
- * Resolves one of our players to their 2K row by name. 2K publishes no NBA ids,
- * so the match is name-based and legitimately misses — null is expected, not an
- * error.
- */
+// 2K publishes no nba ids, so this is a name match and null is a normal answer.
 export async function getRatings2kByName(name: string): Promise<Rating2kSummary | null> {
   const { data } = await api.get<{ player: Rating2kSummary | null }>('/ratings2k/by-player-name', {
     params: { name },
@@ -514,10 +435,6 @@ export async function deleteBet(id: number): Promise<void> {
   await api.delete(`/betting/bets/${id}`);
 }
 
-/**
- * Fire-and-forget pageview beacon. Failures are swallowed on purpose —
- * analytics must never affect the user experience.
- */
 export function trackPageView(path: string, referrer?: string): void {
   api.post('/track/pageview', referrer ? { path, referrer } : { path }).catch(() => {});
 }
@@ -552,7 +469,6 @@ export interface AdminPageView {
   referrer: string | null;
   user_agent: string | null;
   created_at: string;
-  // null for views by logged-out visitors.
   username: string | null;
 }
 

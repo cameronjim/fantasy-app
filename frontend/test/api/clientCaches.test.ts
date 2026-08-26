@@ -21,28 +21,22 @@ beforeEach(() => {
 
 describe('clientCaches', () => {
   it('returns null when nothing is cached', () => {
-    // act + assert
     expect(getCachedAnalysis()).toBeNull();
     expect(getCachedSuggestions()).toBeNull();
   });
 
   it('returns the value that was set', () => {
-    // arrange + act
     setCachedAnalysis(analysis);
 
-    // assert
     expect(getCachedAnalysis()).toEqual(analysis);
   });
 
   it('invalidateAIClientCaches clears both caches', () => {
-    // arrange
     setCachedAnalysis(analysis);
     setCachedSuggestions({ trade_targets: [], waiver_pickups: [], summary: 'x' });
 
-    // act
     invalidateAIClientCaches();
 
-    // assert
     expect(getCachedAnalysis()).toBeNull();
     expect(getCachedSuggestions()).toBeNull();
   });

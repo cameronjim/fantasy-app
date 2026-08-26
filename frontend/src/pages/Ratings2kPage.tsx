@@ -1,16 +1,15 @@
 import { useState } from 'react';
 import { Gamepad2, Search } from 'lucide-react';
 import type { Rating2kSummary, Rating2kTeamType } from '../types';
-import { Rating2kTable } from '../components/Rating2kTable';
-import { Rating2kModal } from '../components/Rating2kModal';
-import { Ratings2kAttribution } from '../components/Ratings2kAttribution';
+import { Rating2kTable } from '../components/ratings2k/Rating2kTable';
+import { Rating2kModal } from '../components/ratings2k/Rating2kModal';
+import { Ratings2kAttribution } from '../components/ratings2k/Ratings2kAttribution';
 import { getRatings2kPlayers, type Ratings2kPlayersResponse } from '../api/client';
 import { useCachedResource } from '../hooks/useCachedResource';
 import { ratings2kPlayersKey } from '../api/resourceCache';
 
-// each roster loads in one request and the search box filters in memory, so this
-// has to clear the largest roster outright (classic is ~767) or the lowest-rated
-// cards would be unreachable by search. the api ceiling for this route is 1000.
+// must clear the largest roster outright (classic is ~767) or the lowest-rated cards
+// are unreachable by search. the api ceiling for this route is 1000.
 const ROSTER_ROW_LIMIT = 1000;
 
 const TEAM_TYPES: Array<{ value: Rating2kTeamType; label: string }> = [
@@ -24,8 +23,6 @@ export const Ratings2kPage = (): JSX.Element => {
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Rating2kSummary | null>(null);
 
-  // cached copies render instantly when the user flips back to a roster they've
-  // already loaded; a silent background refetch keeps them current.
   const { data, loading, error, reload } = useCachedResource<Ratings2kPlayersResponse>(
     ratings2kPlayersKey(teamType),
     () => getRatings2kPlayers({ teamType, limit: ROSTER_ROW_LIMIT, sort: 'overall' }),
@@ -63,8 +60,6 @@ export const Ratings2kPage = (): JSX.Element => {
     }
 
     if (rows.length === 0) {
-      // the 2K import is a manual job, so an empty roster is the expected
-      // state until it has been run.
       return (
         <div className="card bg-base-200">
           <div className="card-body items-center text-center py-12 gap-2">

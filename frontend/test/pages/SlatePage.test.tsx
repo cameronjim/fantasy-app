@@ -4,7 +4,6 @@ import { MemoryRouter } from 'react-router-dom';
 import { SlatePage } from '../../src/pages/SlatePage';
 import type { SlatePlayer, SlateResponse } from '../../src/types';
 
-// mock the api boundary — these tests exercise the page's branches, not http.
 vi.mock('../../src/api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/api/client')>();
   return { ...actual, getSlate: vi.fn() };
@@ -102,10 +101,8 @@ beforeEach(() => {
 
 describe('SlatePage', () => {
   it('renders each game as a card with its projected players', async () => {
-    // arrange + act
     renderPage();
 
-    // assert
     expect(await screen.findByRole('heading', { name: /GSW.*@.*LAL/ })).toBeInTheDocument();
     expect(screen.getByText('Stephen Curry')).toBeInTheDocument();
     expect(screen.getByText('LeBron James')).toBeInTheDocument();
@@ -113,11 +110,9 @@ describe('SlatePage', () => {
   });
 
   it('shows the projected line and availability percentage for each player', async () => {
-    // arrange + act
     renderPage();
     await screen.findByText('Stephen Curry');
 
-    // assert — points, minutes and the availability badge
     expect(screen.getByText('28.4')).toBeInTheDocument();
     expect(screen.getByText(/33\.1 min/)).toBeInTheDocument();
     expect(screen.getByText('99%')).toBeInTheDocument();
@@ -125,42 +120,32 @@ describe('SlatePage', () => {
   });
 
   it('names the model run behind the projections', async () => {
-    // arrange + act
     renderPage();
 
-    // assert
     expect(await screen.findByText(/model v1-decomposed/)).toBeInTheDocument();
   });
 
   it('shows the per-category projections so the line is more than points', async () => {
-    // arrange + act
     renderPage();
     await screen.findByText('Stephen Curry');
 
-    // assert
     expect(screen.getByText(/4\.6 REB · 6\.1 AST · 1\.2 STL · 0\.3 BLK · 4\.4 3PM · 2\.8 TOV/))
       .toBeInTheDocument();
   });
 
   it('shows each player total projected impact, signed', async () => {
-    // arrange + act
     renderPage();
     await screen.findByText('Stephen Curry');
 
-    // assert — 0 is an average night on the slate, so the sign carries meaning
     expect(screen.getByText('+6.2')).toBeInTheDocument();
     expect(screen.getByText('+2.1')).toBeInTheDocument();
   });
 
   it('marks the slate standouts and explains every badge in the legend', async () => {
-    // arrange + act
     renderPage();
     await screen.findByText('Stephen Curry');
 
-    // assert — one of the two is a slate-wide standout, the other is not
     expect(screen.getByLabelText('Top projected impact on the slate')).toBeInTheDocument();
-    // the legend must explain all three symbols inline, where they are visible
-    // without hovering — the tooltip-only version confused a real user
     const legend = screen.getByTestId('slate-legend');
     expect(legend).toHaveTextContent(/impact/i);
     expect(legend).toHaveTextContent(/0 = average night/i);
@@ -169,7 +154,6 @@ describe('SlatePage', () => {
   });
 
   it('renders a placeholder when availability was not modelled', async () => {
-    // arrange
     slateMock.mockResolvedValue(
       payload({
         games: [
@@ -181,16 +165,13 @@ describe('SlatePage', () => {
       })
     );
 
-    // act
     renderPage();
 
-    // assert
     expect(await screen.findByText('Stephen Curry')).toBeInTheDocument();
     expect(screen.getByTitle('Availability not modelled')).toHaveTextContent('-');
   });
 
   it('renders a placeholder when the run projected no impact for a player', async () => {
-    // arrange
     slateMock.mockResolvedValue(
       payload({
         games: [
@@ -203,10 +184,8 @@ describe('SlatePage', () => {
       })
     );
 
-    // act
     renderPage();
 
-    // assert
     expect(await screen.findByText('Stephen Curry')).toBeInTheDocument();
     expect(
       screen.getByTitle('No impact score for this player')
@@ -214,7 +193,6 @@ describe('SlatePage', () => {
   });
 
   it('labels a player with no roster row by id instead of showing a blank name', async () => {
-    // arrange — the server never sends an empty name; it sends this
     slateMock.mockResolvedValue(
       payload({
         games: [
@@ -233,10 +211,8 @@ describe('SlatePage', () => {
       })
     );
 
-    // act
     renderPage();
 
-    // assert
     expect(await screen.findByText('NBA #1642850 (new roster)')).toBeInTheDocument();
     expect(
       screen.getByTitle(/Not on a roster yet, so this is his NBA id/i)
@@ -244,11 +220,9 @@ describe('SlatePage', () => {
   });
 
   it('says what the impact number means without explaining how it is computed', async () => {
-    // arrange + act
     renderPage();
     await screen.findByText('Stephen Curry');
 
-    // assert — what it means, not the pool or the z-scoring behind it
     expect(screen.getByText(/ordered by projected impact/i)).toBeInTheDocument();
     expect(screen.getByText(/0 is an average night/i)).toBeInTheDocument();
     expect(screen.queryByText(/z-score/i)).not.toBeInTheDocument();
@@ -256,7 +230,6 @@ describe('SlatePage', () => {
   });
 
   it('explains that no model run has completed yet, while still listing the games', async () => {
-    // arrange
     slateMock.mockResolvedValue(
       payload({
         run: null,
@@ -264,23 +237,18 @@ describe('SlatePage', () => {
       })
     );
 
-    // act
     renderPage();
 
-    // assert
     expect(await screen.findByText(/No prediction run yet/i)).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /GSW.*@.*LAL/ })).toBeInTheDocument();
     expect(screen.getByText(/No projected players for this game yet/i)).toBeInTheDocument();
   });
 
   it('shows an empty state for a day with no games', async () => {
-    // arrange
     slateMock.mockResolvedValue(payload({ games: [] }));
 
-    // act
     renderPage();
 
-    // assert
     expect(await screen.findByText('No games scheduled')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /the watchlist/i })).toHaveAttribute(
       'href',
@@ -289,47 +257,38 @@ describe('SlatePage', () => {
   });
 
   it('refetches for another date when the picker changes', async () => {
-    // arrange
     renderPage();
     await screen.findByText('Stephen Curry');
     slateMock.mockResolvedValue(payload({ date: '2026-02-06', games: [] }));
 
-    // act — a date input is set wholesale, not typed character by character
+    // a date input is set wholesale, not typed character by character.
     fireEvent.change(screen.getByLabelText('Game date'), { target: { value: '2026-02-06' } });
 
-    // assert
     expect(await screen.findByText('No games scheduled')).toBeInTheDocument();
     expect(slateMock).toHaveBeenLastCalledWith('2026-02-06');
   });
 
   it('shows an error state with a retry button when the request fails', async () => {
-    // arrange
     slateMock.mockRejectedValue(new Error('slate down'));
 
-    // act
     renderPage();
 
-    // assert
     expect(await screen.findByText(/Failed to load the slate/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Try Again/i })).toBeInTheDocument();
   });
 
   it('chips a player whose minutes depart from his own usual, and leaves the rest alone', async () => {
-    // arrange + act — LeBron is +6.2 over his recent average, Curry +0.7
     renderPage();
     await screen.findByText('Stephen Curry');
 
-    // assert
     expect(screen.getByText(/\+6\.2 min vs usual/)).toBeInTheDocument();
     expect(screen.queryByText(/\+0\.7 min vs usual/)).not.toBeInTheDocument();
   });
 
   it('keeps the chip meaning in its tooltip rather than restating the threshold', async () => {
-    // arrange + act
     renderPage();
     await screen.findByText('Stephen Curry');
 
-    // assert — the chip says what changed; the footer no longer explains the bar
     expect(
       screen.getByTitle('Usually 24.3 min, tonight 30.5. Points -5.5 vs usual.')
     ).toBeInTheDocument();
@@ -337,7 +296,6 @@ describe('SlatePage', () => {
   });
 
   it('chips a minutes drop too, in a different tone', async () => {
-    // arrange
     slateMock.mockResolvedValue(
       payload({
         games: [
@@ -349,16 +307,13 @@ describe('SlatePage', () => {
       })
     );
 
-    // act
     renderPage();
     await screen.findByText('Stephen Curry');
 
-    // assert — a fall is as much a lineup decision as a jump
     expect(screen.getByText(/-5\.1 min vs usual/)).toBeInTheDocument();
   });
 
   it('shows no chip for a player with too little history to have a usual', async () => {
-    // arrange — a rookie is not "unchanged", he is unknown
     slateMock.mockResolvedValue(
       payload({
         games: [
@@ -378,16 +333,13 @@ describe('SlatePage', () => {
       })
     );
 
-    // act
     renderPage();
 
-    // assert
     expect(await screen.findByText('Stephen Curry')).toBeInTheDocument();
     expect(screen.queryByText(/min vs usual/)).not.toBeInTheDocument();
   });
 
   it('shows no chips at all when the server sent no baseline descriptor', async () => {
-    // arrange — a Lambda caught mid-deploy: the client fills in an empty one
     slateMock.mockResolvedValue(
       payload({
         baseline: {
@@ -400,27 +352,22 @@ describe('SlatePage', () => {
       })
     );
 
-    // act
     renderPage();
     await screen.findByText('Stephen Curry');
 
-    // assert
     expect(screen.queryByText(/min vs usual/)).not.toBeInTheDocument();
   });
 
   it('orders the players as the server ranked them', async () => {
-    // arrange + act
     renderPage();
     await screen.findByText('Stephen Curry');
 
-    // assert — the server ranks by total impact; the page must not resort
     const rows = screen.getAllByRole('listitem');
     expect(within(rows[0]).getByText('Stephen Curry')).toBeInTheDocument();
     expect(within(rows[1]).getByText('LeBron James')).toBeInTheDocument();
   });
 
   it('shows the current injury designation in the source wording', async () => {
-    // arrange — a designation the run already knew about: chip, no marker
     slateMock.mockResolvedValue(
       payload({
         games: [
@@ -440,18 +387,15 @@ describe('SlatePage', () => {
       })
     );
 
-    // act
     renderPage();
     await screen.findByText('Stephen Curry');
 
-    // assert
     const chip = screen.getByTestId('injury-chip');
     expect(chip).toHaveTextContent('Game Time Decision');
     expect(chip).not.toHaveTextContent('· new');
   });
 
   it('marks a designation that moved after the projection was published', async () => {
-    // arrange — ruled out after the run: the numbers on the card don't know
     slateMock.mockResolvedValue(
       payload({
         games: [
@@ -471,11 +415,9 @@ describe('SlatePage', () => {
       })
     );
 
-    // act
     renderPage();
     await screen.findByText('Stephen Curry');
 
-    // assert — the marker and an explanation the tooltip carries
     const chip = screen.getByTestId('injury-chip');
     expect(chip).toHaveTextContent('Out');
     expect(chip).toHaveTextContent('· new');
@@ -483,7 +425,6 @@ describe('SlatePage', () => {
   });
 
   it('shows a clearance chip when a priced-in designation came off the report', async () => {
-    // arrange — the run expected him doubtful; he has since cleared
     slateMock.mockResolvedValue(
       payload({
         games: [
@@ -503,31 +444,25 @@ describe('SlatePage', () => {
       })
     );
 
-    // act
     renderPage();
     await screen.findByText('Stephen Curry');
 
-    // assert
     const chip = screen.getByTestId('injury-chip');
     expect(chip).toHaveTextContent('Cleared');
     expect(chip).toHaveTextContent('· new');
   });
 
   it('shows no injury chip for a healthy player or an older server', async () => {
-    // arrange + act — the default payload carries no injury fields at all
     renderPage();
     await screen.findByText('Stephen Curry');
 
-    // assert
     expect(screen.queryByTestId('injury-chip')).not.toBeInTheDocument();
   });
 
   it('explains the injury chip in the legend', async () => {
-    // arrange + act
     renderPage();
     await screen.findByText('Stephen Curry');
 
-    // assert
     const legend = screen.getByTestId('slate-legend');
     expect(legend).toHaveTextContent(/injury report now/i);
     expect(legend).toHaveTextContent(/changed after this projection/i);

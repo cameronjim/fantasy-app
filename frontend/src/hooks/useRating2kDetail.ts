@@ -6,12 +6,10 @@ export interface Rating2kDetailState {
   detail: Rating2kDetail | null;
   loading: boolean;
   error: string;
-  // the slug resolved to nothing (api 404) — a distinct state from a failure.
   notFound: boolean;
   reload: () => void;
 }
 
-/** Loads one rated player's full attribute breakdown for the modal. */
 export function useRating2kDetail(slug: string): Rating2kDetailState {
   const [detail, setDetail] = useState<Rating2kDetail | null>(null);
   const [loading, setLoading] = useState(true);

@@ -38,8 +38,7 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
     }
   };
 
-  // Forces the Google account picker every time — fixes the "Continue as X"
-  // problem where users couldn't switch between Google accounts on the same device.
+  // forces the account picker so users can switch google accounts on a shared device.
   const switchGoogleAccount = useGoogleLogin({
     flow: 'implicit',
     prompt: 'select_account',

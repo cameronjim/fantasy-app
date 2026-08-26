@@ -1,6 +1,5 @@
 import type { Locator, Page } from '@playwright/test';
 
-// page object for the /fantasy (My Team) route.
 export class FantasyPage {
   readonly page: Page;
 

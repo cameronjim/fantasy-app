@@ -47,7 +47,7 @@ export const RegisterPage = ({ onRegister }: RegisterPageProps) => {
     }
   };
 
-  // Forces the Google account picker (vs. silently using the cached account).
+  // forces the account picker rather than silently using the cached account.
   const switchGoogleAccount = useGoogleLogin({
     flow: 'implicit',
     prompt: 'select_account',

@@ -1,6 +1,5 @@
 import type { Locator, Page } from '@playwright/test';
 
-// page object for the per-player analytics route, /player/:id.
 export class PlayerAnalyticsPage {
   readonly page: Page;
 
@@ -32,8 +31,8 @@ export class PlayerAnalyticsPage {
     return this.page.getByTestId('distribution-chart');
   }
 
+  // every stat tablist here repeats the same labels, so each must stay scoped by tablist name.
   distributionTab(statLabel: string): Locator {
-    // scoped: the trends section has a tablist with the same stat names
     return this.page
       .getByRole('tablist', { name: 'Distribution stat' })
       .getByRole('tab', { name: statLabel, exact: true });
@@ -69,8 +68,6 @@ export class PlayerAnalyticsPage {
     return this.page.getByTestId('upcoming-game-row');
   }
 
-  // scoped: the trends and distribution sections both carry stat tablists with
-  // the same labels.
   upcomingStatTab(statLabel: string): Locator {
     return this.page
       .getByRole('tablist', { name: 'Prediction stat' })

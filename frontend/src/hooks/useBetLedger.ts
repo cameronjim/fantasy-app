@@ -21,16 +21,7 @@ interface UseBetLedger {
   reload: () => Promise<void>;
 }
 
-/**
- * The user's bet ledger, with optimistic mutations: add/settle/delete apply
- * to local state immediately so the UI never stalls on a round trip, then
- * the API call runs in the background and reverts the change (with an error
- * message) if it fails. Server-computed fields (net, real ids) reconcile via
- * the API response or a silent re-fetch.
- */
 export function useBetLedger(isLoggedIn: boolean): UseBetLedger {
-  // hydrate from the shared cache so tab returns render the ledger instantly;
-  // the mount effect still revalidates silently behind it.
   const [initialLedger] = useState<LedgerData | null>(
     () => (isLoggedIn ? getCached<LedgerData>(CACHE_KEYS.bets) : null)
   );
@@ -38,11 +29,9 @@ export function useBetLedger(isLoggedIn: boolean): UseBetLedger {
   const [summary, setSummary] = useState<LedgerSummary>(initialLedger?.summary ?? EMPTY_SUMMARY);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  // temp ids for optimistic rows are negative so they can never collide with
-  // real SERIAL ids from the db.
+  // optimistic row ids are negative so they can never collide with real serial ids.
   const tempIdRef = useRef(-1);
-  // gates the cache mirror below until real data has loaded, so a transient
-  // empty ledger never gets pinned as the cached copy.
+  // gates the cache mirror, so a transient empty ledger is never pinned as the cached copy.
   const loadedRef = useRef(initialLedger !== null);
 
   const reload = useCallback(async (silent = false): Promise<void> => {
@@ -62,12 +51,9 @@ export function useBetLedger(isLoggedIn: boolean): UseBetLedger {
 
   useEffect(() => {
     if (!isLoggedIn) return;
-    // silent when a cached copy is already on screen — no spinner flash.
     void reload(initialLedger !== null);
   }, [isLoggedIn, initialLedger, reload]);
 
-  // mirror the rendered ledger (including optimistic mutations) into the
-  // shared cache so tab switches always restore what the user last saw.
   useEffect(() => {
     if (isLoggedIn && loadedRef.current) setCached(CACHE_KEYS.bets, { bets, summary });
   }, [bets, summary, isLoggedIn]);
@@ -124,7 +110,6 @@ export function useBetLedger(isLoggedIn: boolean): UseBetLedger {
 
     try {
       await settleBetStatus(id, status);
-      // the server computes the money result — pick it up quietly.
       void reload(true);
     } catch {
       setBets(prevBets);

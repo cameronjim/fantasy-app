@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getDataStatus, type DataStatus } from '../api/client';
 
-// Refresh roughly every 5 minutes — the scraper runs every 6 hours, no need to poll fast.
+// the scraper runs every 6 hours, so there is no need to poll fast.
 const REFRESH_INTERVAL = 5 * 60_000;
 
 function relativeTime(iso: string | null): string {
@@ -26,10 +26,6 @@ function fullTimestamp(iso: string | null): string {
   });
 }
 
-/**
- * Small badge in the navbar showing how recently the data was scraped.
- * Hover/click to see the per-source breakdown.
- */
 export const StatusBadge = () => {
   const [status, setStatus] = useState<DataStatus | null>(null);
 
@@ -38,14 +34,13 @@ export const StatusBadge = () => {
     const load = (): void => {
       getDataStatus()
         .then((s) => { if (!cancelled) setStatus(s); })
-        .catch(() => { /* silent — badge is non-essential */ });
+        .catch(() => { /* silent: badge is non-essential */ });
     };
     load();
     const id = setInterval(load, REFRESH_INTERVAL);
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
-  // The "freshest" source — for the compact summary in the navbar.
   const mostRecentISO =
     status &&
     [status.players_updated_at, status.teams_updated_at, status.games_updated_at]
@@ -61,9 +56,7 @@ export const StatusBadge = () => {
         aria-label={`Data updated ${relativeTime(mostRecentISO ?? null)}`}
         title={`Data updated ${relativeTime(mostRecentISO ?? null)}`}
       >
-        {/* filled brand-green dot. uses `bg-success` (overridden in
-            index.css to the brand green) so every "success" indicator in
-            the app stays the same color. */}
+        {/* bg-success is overridden in index.css to the brand green. */}
         <span className="inline-block w-2 h-2 rounded-full bg-success" />
       </button>
       <div tabIndex={0} className="dropdown-content mt-1 z-50 w-60 p-3 shadow-lg bg-base-200 border border-base-300 rounded-box">

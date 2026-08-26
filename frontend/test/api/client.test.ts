@@ -9,13 +9,11 @@ import type { WatchlistPlayer, WatchlistResponse } from '../../src/types';
 
 describe('watchlistParams', () => {
   it('omits the default window and every position from the URL', () => {
-    // act + assert — the ordinary request stays the URL an older server answers
     expect(watchlistParams('2026-02-04', 1, null)).toEqual({ date: '2026-02-04' });
     expect(watchlistParams('2026-02-04')).toEqual({ date: '2026-02-04' });
   });
 
   it('sends the window and the position once they are chosen', () => {
-    // act + assert
     expect(watchlistParams('2026-02-04', 7, 'G')).toEqual({
       date: '2026-02-04',
       days: 7,
@@ -24,23 +22,19 @@ describe('watchlistParams', () => {
   });
 
   it('lets the server decide the date when none is given', () => {
-    // act + assert — absent `date` means "today in Eastern" on the server
     expect(watchlistParams(undefined, 14, null)).toEqual({ days: 14 });
   });
 });
 
 describe('normalizeWatchlist', () => {
   it('reads a windowless response as a one-day, one-game answer', () => {
-    // arrange — a server that predates the window, or one caught mid-deploy
     const data = {
       date: '2026-02-04',
       players: [{ nba_player_id: '1', name: 'A', score: 1.2 } as unknown as WatchlistPlayer],
     } as Partial<WatchlistResponse>;
 
-    // act
     const res = normalizeWatchlist(data);
 
-    // assert — everything is defaulted here so the page never renders NaN
     expect(res.window).toEqual({ from: '2026-02-04', to: '2026-02-04', days: 1 });
     expect(res.position).toBeNull();
     expect(res.position_options).toEqual(['G', 'F', 'C', 'PG', 'SG', 'SF', 'PF']);
@@ -58,7 +52,6 @@ describe('normalizeWatchlist', () => {
   });
 
   it('keeps a full payload exactly as the server sent it', () => {
-    // arrange
     const data = {
       date: '2026-02-04',
       window: { from: '2026-02-04', to: '2026-02-10', days: 7 },
@@ -68,10 +61,8 @@ describe('normalizeWatchlist', () => {
       players: [],
     } as unknown as Partial<WatchlistResponse>;
 
-    // act
     const res = normalizeWatchlist(data);
 
-    // assert
     expect(res.window).toEqual({ from: '2026-02-04', to: '2026-02-10', days: 7 });
     expect(res.position).toBe('G');
     expect(res.position_options).toEqual(['G', 'F', 'C']);
@@ -79,7 +70,6 @@ describe('normalizeWatchlist', () => {
   });
 
   it('survives an empty body rather than throwing on it', () => {
-    // act + assert — a 200 with no body must not blank the page with an error
     const res = normalizeWatchlist({});
     expect(res.players).toEqual([]);
     expect(res.window.days).toBe(1);
@@ -92,22 +82,17 @@ describe('auth token storage', () => {
   });
 
   it('persists the token to localStorage when set', () => {
-    // arrange + act
     setAuthToken('abc.def.ghi');
 
-    // assert
     expect(getAuthToken()).toBe('abc.def.ghi');
     expect(localStorage.getItem('auth_token')).toBe('abc.def.ghi');
   });
 
   it('clears the token from localStorage when set to null', () => {
-    // arrange
     setAuthToken('a-token');
 
-    // act
     setAuthToken(null);
 
-    // assert
     expect(getAuthToken()).toBeNull();
     expect(localStorage.getItem('auth_token')).toBeNull();
   });

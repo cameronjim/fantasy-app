@@ -2,7 +2,6 @@ import type { Locator, Page } from '@playwright/test';
 import { PlayerTableComponent } from './PlayerTableComponent';
 import { PlayerModalComponent } from './PlayerModalComponent';
 
-// page object for the home / Stats route.
 export class StatsPage {
   readonly page: Page;
   readonly playerTable: PlayerTableComponent;

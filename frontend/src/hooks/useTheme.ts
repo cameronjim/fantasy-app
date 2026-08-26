@@ -3,16 +3,11 @@ import { useEffect, useState } from 'react';
 const STORAGE_KEY = 'theme';
 
 export interface ThemeOption {
-  /** daisyUI theme id (also the value stored in localStorage + data-theme). */
   id: string;
-  /** label shown in the picker. */
   label: string;
-  /** light/dark scheme — used to pick a sensible default and order the list. */
   scheme: 'light' | 'dark';
 }
 
-// the full set of selectable themes. `lofi`/`business` are daisyUI built-ins
-// (our original Light/Dark); the rest are custom themes defined in index.css.
 export const THEMES: readonly ThemeOption[] = [
   { id: 'lofi', label: 'Light', scheme: 'light' },
   { id: 'cream', label: 'Cream', scheme: 'light' },
@@ -34,11 +29,7 @@ function getInitialTheme(): string {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? DEFAULT_DARK : DEFAULT_LIGHT;
 }
 
-/**
- * Shared theme hook. Reads/sets the active daisyUI theme, persists it in
- * localStorage, and mirrors the pre-paint script in index.html that prevents
- * a flash of the wrong theme on first load.
- */
+// the pre-paint script in index.html mirrors this logic and must change with it.
 export function useTheme(): {
   theme: string;
   setTheme: (id: string) => void;
@@ -51,7 +42,6 @@ export function useTheme(): {
     localStorage.setItem(STORAGE_KEY, theme);
   }, [theme]);
 
-  // ignore unknown ids so a stale/typo'd value can't blank out the theme.
   const setTheme = (id: string): void => {
     if (THEME_IDS.has(id)) setThemeState(id);
   };
