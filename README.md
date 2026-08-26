@@ -20,7 +20,7 @@ fantasy roster, the Claude-powered analysis surfaces, and the bet tracker.
 | **Frontend** | React 18, TypeScript, Vite 6, Tailwind CSS 4, daisyUI 5, React Router 7 |
 | **Backend** | Node.js 20, Express 4, TypeScript (ESM) |
 | **Database** | PostgreSQL (Neon in production) |
-| **ML** | Python, LightGBM — availability/minutes/production predictions |
+| **ML** | Python, LightGBM |
 | **AI** | Anthropic Claude API |
 | **Scraper** | Python, `nba_api`, Beautiful Soup |
 | **Tests** | Vitest, Supertest, React Testing Library, Playwright, pytest |
