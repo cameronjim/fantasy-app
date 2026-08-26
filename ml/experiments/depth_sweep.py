@@ -1,39 +1,6 @@
 """training-depth and weighting ablation on appearance-only (conditional) targets.
 
-THE QUESTION. "We could create the model with all different # of seasons, with
-different weightings - this would improve the model right?" This script measures
-the curve rather than answering from intuition. Three axes:
-
-  depth     how many seasons of history the estimator is FIT on
-            {2, 4, 8, 13, 20, 29}, each window ending at the origin's own season
-  halflife  the EWMA memory the champion production/form features carry
-            {3, 5, 8, 12}
-  decay     exponential sample weighting by season age, decay ** age
-            {1.0 (none), 0.8, 0.6}
-
-WHAT IS HELD FIXED, and it is the whole design. Every configuration is scored on
-the SAME five rolling origins from ``fnba_ml.config.ORIGINS`` and, within each
-origin, on the SAME validation rows. Only the training data varies.
-:func:`assert_identical_validation_rows` enforces it on every cell rather than
-trusting the construction, because the failure it guards against - a
-configuration that quietly scores fewer or easier rows and therefore posts a
-better MAE - is invisible in the output table.
-
-The full grid is 6 x 4 x 3 x 3 targets and is deliberately NOT run. Axes are
-swept one at a time around a fixed point (halflife 5, decay none, the depth-sweep
-winner), which is the standard coordinate-descent pruning and costs ~1/10th of
-the cross-product. The cost of that choice is stated in the report: an
-interaction between depth and decay would be invisible, so the decay sweep is run
-at the best depth specifically to catch the one interaction most likely to exist.
-
-CONDITIONAL ONLY. There is no availability target here and there cannot be - see
-``deep_dataset``'s module docstring. Nothing in this file's output speaks to
-``P(plays)``, to unconditional points, or to the composition.
-
-usage::
-
-    ml-spike/.venv/Scripts/python ml/experiments/depth_sweep.py
-    ml-spike/.venv/Scripts/python ml/experiments/depth_sweep.py --phases depth
+axes are swept one at a time around a fixed point rather than as a full grid.
 """
 
 from __future__ import annotations
@@ -83,29 +50,20 @@ DEPTHS: tuple[int, ...] = (2, 4, 8, 13, 20, 29)
 HALFLIVES: tuple[float, ...] = (3.0, 5.0, 8.0, 12.0)
 DECAYS: tuple[float, ...] = (1.0, 0.8, 0.6)
 
-# the fixed point the axes are swept around
-BASE_HALFLIFE: float = float(EWMA_HALFLIFE)   # 5.0
+BASE_HALFLIFE: float = float(EWMA_HALFLIFE)
 BASE_DECAY: float = 1.0
-HALFLIFE_SWEEP_DEPTH: int = 4                 # the current production depth
+HALFLIFE_SWEEP_DEPTH: int = 4
 
-# depths whose RAW history is also truncated, as a confound probe. see
-# run_truncation_probe.
 TRUNCATION_DEPTHS: tuple[int, ...] = (2, 4)
 
 TARGETS: tuple[str, ...] = ("MIN", "PTS", "AST")
 
 
-# ---------------------------------------------------------------------------
-# pure pieces (unit-tested in test_depth_sweep.py)
-# ---------------------------------------------------------------------------
 def origin_season(seasons: list[str], vstart: str) -> str:
     """which season a validation window belongs to.
 
-    the NBA season straddles the new year, so a February 2025 window belongs to
-    2024-25, not 2025-26. The rule: a date in month >= 8 belongs to the season
-    starting that year, otherwise to the season starting the previous year.
-    August rather than September or October because the 2019-20 and 2020-21
-    seasons were displaced by COVID and one of them opened in December.
+    the month >= 8 cutoff is deliberately August, since COVID displaced the
+    2019-20 and 2020-21 openers.
     """
     ts = pd.Timestamp(vstart)
     start_year = ts.year if ts.month >= 8 else ts.year - 1
@@ -126,16 +84,8 @@ def recency_weights(
 ) -> np.ndarray:
     """``decay ** (seasons before end_season)``, per training row.
 
-    decay = 1.0 is the no-weighting control and returns all-ones, which is
-    deliberately NOT special-cased away: an implementation that skipped the
-    weighting entirely at 1.0 would not be testing the same code path as the
-    decayed runs, and a bug in the age arithmetic would only show up in the runs
-    it was supposed to be compared against.
-
-    weights are NOT renormalised to sum to n. LightGBM and Ridge both use them as
-    relative multipliers, and rescaling would change ``min_child_samples`` /
-    ``alpha`` semantics differently for the two estimators - which would make the
-    decay axis partly a regularisation-strength axis.
+    weights are not renormalised, since rescaling would shift regularisation
+    strength differently for LightGBM and Ridge.
     """
     if not 0.0 < decay <= 1.0:
         raise ValueError(f"decay must be in (0, 1], got {decay}")
@@ -160,10 +110,7 @@ def split_origin(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """(train, valid) for one origin and one training window.
 
-    forward-chaining: train is everything in ``train_seasons`` STRICTLY BEFORE
-    ``vstart``; valid is the window itself. The validation slice does not depend
-    on ``train_seasons`` at all, which is the property
-    :func:`assert_identical_validation_rows` then verifies empirically.
+    train is strictly before ``vstart``; the valid slice ignores ``train_seasons``.
     """
     vstart_ts, vend_ts = pd.Timestamp(vstart), pd.Timestamp(vend)
     dates = pd.to_datetime(frame["GAME_DATE"])
@@ -179,13 +126,7 @@ def validation_key(valid: pd.DataFrame) -> tuple:
 
 
 class ValidationRowRegistry:
-    """remembers the first validation row set seen per origin and enforces it.
-
-    THE POINT OF THE WHOLE EXPERIMENT depends on this. If configuration A scores
-    41,000 rows and configuration B scores 40,300 because a feature it needs was
-    null on 700 of them, B's MAE is lower for a reason that has nothing to do with
-    training depth and everything to do with which rows it declined to answer.
-    """
+    """remembers the first validation row set seen per origin and enforces it."""
 
     def __init__(self) -> None:
         self._seen: dict[str, tuple] = {}
@@ -204,10 +145,7 @@ class ValidationRowRegistry:
 
 
 def assert_identical_validation_rows(valid_frames: dict[str, pd.DataFrame]) -> int:
-    """standalone form of the registry check, for tests and for a final sweep.
-
-    returns the number of rows every frame agreed on. Raises if any two differ.
-    """
+    """returns the row count every frame agreed on, raising if any two differ."""
     if not valid_frames:
         raise ValueError("nothing to compare")
     keys = {label: validation_key(v) for label, v in valid_frames.items()}
@@ -221,9 +159,6 @@ def assert_identical_validation_rows(valid_frames: dict[str, pd.DataFrame]) -> i
     return len(reference)
 
 
-# ---------------------------------------------------------------------------
-# one cell of the sweep
-# ---------------------------------------------------------------------------
 def _feature_matrix(frame: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
     return frame[feature_cols].astype("float64")
 
@@ -238,23 +173,7 @@ def evaluate_cell(
     registry: ValidationRowRegistry | None,
     label: str,
 ) -> list[dict]:
-    """fit every estimator for one (origin, depth, decay) and score them.
-
-    estimators, and which axis each one can even respond to:
-
-      MIN  ewma        the demoted baseline. reads ``ewma_MIN`` off the row, so
-                       DEPTH CANNOT MOVE IT except through the fallback constant
-                       used for players with no history. It is in the table
-                       precisely to show that.
-      MIN  ridge       trained; responds to depth and decay
-      MIN  lightgbm    the promoted champion; responds to depth and decay
-      PTS/AST ewma_total       EwmaProduction, the pre-2026-08-17 champion. same
-                               depth-invariance as MIN/ewma
-      PTS/AST ewma_propagated  the CURRENT champion path: E[min|played] x
-                               EWMA(stat per minute). Depth reaches it through the
-                               minutes model only
-      PTS/AST ridge            the standing challenger
-    """
+    """fit every estimator for one (origin, depth, decay) and score them."""
     name, vstart, vend = origin
     end_season = origin_season(seasons, vstart)
     window = trailing_window(seasons, end_season, depth)
@@ -266,7 +185,6 @@ def evaluate_cell(
     if registry is not None:
         registry.enforce(name, valid, label)
 
-    # forward-chaining guard: nothing in training may reach the validation window.
     max_train = pd.to_datetime(train["GAME_DATE"]).max()
     if max_train >= pd.Timestamp(vstart):
         raise AssertionError(
@@ -294,7 +212,6 @@ def evaluate_cell(
         rows.append({**common, "target": target, "estimator": estimator,
                      "mae": mae(valid[target], pred)})
 
-    # ---- minutes | played ----
     minutes_lgbm = make_lgbm_regressor()
     minutes_lgbm.fit(x_train, train["MIN"], sample_weight=weights)
     minutes_pred = np.clip(minutes_lgbm.predict(x_valid).astype(float), 0.0, None)
@@ -307,7 +224,6 @@ def evaluate_cell(
 
     record("MIN", "ewma", EwmaProduction("MIN").fit(train).predict(valid))
 
-    # ---- production | played ----
     for target in ("PTS", "AST"):
         record(target, "ewma_total", EwmaProduction(target).fit(train).predict(valid))
 
@@ -322,9 +238,6 @@ def evaluate_cell(
     return rows
 
 
-# ---------------------------------------------------------------------------
-# phases
-# ---------------------------------------------------------------------------
 def run_depth_sweep(frame: pd.DataFrame, seasons: list[str],
                     registry: ValidationRowRegistry) -> pd.DataFrame:
     """axis 1: training depth, at the production halflife and no decay."""
@@ -347,9 +260,8 @@ def run_halflife_sweep(seasons: list[str],
                        registry: ValidationRowRegistry) -> pd.DataFrame:
     """axis 2a: the EWMA halflife the features carry.
 
-    a feature-definition axis, so the whole frame is rebuilt per halflife. Depth
-    is pinned at ``HALFLIFE_SWEEP_DEPTH`` (4, the production depth) so this axis
-    is not confounded with depth.
+    a feature-definition axis, so the frame is rebuilt per halflife and depth is
+    pinned so the two axes are not confounded.
     """
     rows: list[dict] = []
     for halflife in HALFLIVES:
@@ -389,13 +301,7 @@ def run_decay_sweep(frame: pd.DataFrame, seasons: list[str], best_depth: int,
 
 def run_era_probe(frame: pd.DataFrame, seasons: list[str], best_depth: int,
                   registry: ValidationRowRegistry) -> pd.DataFrame:
-    """does telling the model WHICH season a row came from change anything.
-
-    the hypothesis a deep training set has to answer: if 2003-04 rows hurt because
-    the league was different, an era flag lets the model discount them itself
-    rather than being told to by a decay schedule. One extra feature
-    (``SEASON_INDEX``), everything else identical to the depth-sweep cell.
-    """
+    """the depth-sweep cell plus ``SEASON_INDEX`` as an era flag."""
     rows: list[dict] = []
     feature_cols = [*DEEP_FEATURE_COLS, SEASON_INDEX]
     for origin in ORIGINS:
@@ -410,19 +316,9 @@ def run_era_probe(frame: pd.DataFrame, seasons: list[str], best_depth: int,
 
 def run_truncation_probe(seasons: list[str],
                          registry: ValidationRowRegistry) -> pd.DataFrame:
-    """the confound probe the main design deliberately avoids, measured anyway.
+    """rebuilds features over the truncated raw history, not just the window.
 
-    The depth sweep varies only the TRAINING WINDOW: features are always built
-    over the full 30 seasons, so a validation row's ``ewma_PTS`` and
-    ``n_appearances`` are the same number in every configuration. That isolates
-    training volume, which is what "only training data varies" requires.
-
-    But it is not what a team with two seasons of data would actually face - they
-    would also have two seasons of FEATURE history, so their ``n_appearances``
-    would cap out and their earliest rows would have no form at all. This phase
-    rebuilds the features over the truncated raw history too, at the two shallowest
-    depths, so the report can say how much of the depth effect is training volume
-    and how much is feature history.
+    separates the training-volume effect from the feature-history effect.
     """
     rows: list[dict] = []
     for depth in TRUNCATION_DEPTHS:
@@ -442,12 +338,9 @@ def run_truncation_probe(seasons: list[str],
     return pd.DataFrame(rows)
 
 
-# ---------------------------------------------------------------------------
-# reporting helpers
-# ---------------------------------------------------------------------------
 def mean_by(results: pd.DataFrame, index: str | list[str],
             columns: str | list[str] = "estimator") -> pd.DataFrame:
-    """mean MAE over origins. the sweep's headline aggregation."""
+    """mean MAE over origins."""
     return results.pivot_table(index=index, columns=columns, values="mae",
                                aggfunc="mean")
 
@@ -461,10 +354,8 @@ def best_depth_for(results: pd.DataFrame, target: str, estimator: str) -> int:
 def ascii_curve(series: pd.Series, width: int = 44) -> str:
     """a monospace bar chart of MAE against depth, lower being better.
 
-    bars are drawn against a floor slightly below the minimum rather than against
-    zero: the interesting variation across depths is ~1% of the level, and a
-    zero-based bar chart of six numbers within 1% of each other is six identical
-    bars.
+    bars start from a floor just below the minimum, not zero, since the spread
+    across depths is about 1% of the level.
     """
     values = series.astype(float)
     lo, hi = values.min(), values.max()
@@ -484,7 +375,6 @@ def print_table(title: str, table: pd.DataFrame) -> None:
     print(table.round(4).to_string())
 
 
-# ---------------------------------------------------------------------------
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--phases", nargs="*",
@@ -540,7 +430,6 @@ def main(argv: list[str] | None = None) -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     results.to_csv(out_path, index=False)
 
-    # ---- printed tables (pasted into DEPTH_REPORT.md) ----
     print(f"\n{'=' * 78}\nDEEP-HISTORY DEPTH / WEIGHTING ABLATION\n{'=' * 78}")
     print(f"seasons available : {len(seasons)} ({seasons[0]} .. {seasons[-1]})")
     print(f"features          : {len(DEEP_FEATURE_COLS)} (appearance-only, "
@@ -581,9 +470,6 @@ def main(argv: list[str] | None = None) -> int:
 
     era = results[results["phase"] == "era_flag"]
     if not era.empty and not depth.empty:
-        # the comparison cell is the depth-sweep cell at the SAME depth, same
-        # halflife, same decay - identical in every respect but the one extra
-        # column. anything else would make the probe a two-variable change.
         base = depth[depth["depth"] == best_depth].assign(variant="30 features")
         probe = era.assign(variant=f"31 features (+{SEASON_INDEX})")
         comparison = pd.concat([base, probe], ignore_index=True).pivot_table(

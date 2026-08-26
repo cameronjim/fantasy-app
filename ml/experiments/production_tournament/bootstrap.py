@@ -1,26 +1,7 @@
-"""the moving-block bootstrap the decision rule runs on. PURE FUNCTIONS ONLY.
+"""the moving-block bootstrap the decision rule runs on. pure functions only.
 
-WHY A BLOCK BOOTSTRAP OVER DATES AND NOT AN i.i.d. ROW BOOTSTRAP. the unit of
-independence in this data is nowhere near the row. every player on a slate shares a
-schedule, an injury report, a referee crew and a set of opponents, and a rate
-estimator that is having a bad week is having it on consecutive nights. resampling
-rows independently would treat 30,917 rows as 30,917 independent draws, shrink the
-interval by roughly the square root of the average within-date cluster size, and
-manufacture significance out of autocorrelation. so:
-
-  * per-row paired deltas are summed to DATE level first;
-  * dates are resampled in 7-consecutive-date MOVING BLOCKS, which preserves
-    serial dependence up to a week;
-  * blocks are drawn WITHIN ORIGIN, so a block never spans the multi-month gap
-    between two rolling origins and pretends it was a contiguous week.
-
-WHY theta IS A RATIO OF SUMS AND NOT A MEAN OF PER-DATE RATIOS. the reported effect
-is relative improvement over the incumbent's total absolute error. recomputing it as
-sum(delta) / sum(baseline error) on each resample re-weights numerator and
-denominator coherently, so a replicate that happens to draw high-scoring nights does
-not inflate the numerator against a denominator from a different sample. a mean of
-per-date ratios would additionally give a 40-row night the same weight as a
-300-row one.
+rows are not independent within a date, so deltas are summed to date level and dates
+are resampled in moving blocks drawn within origin, never spanning two origins.
 """
 
 from __future__ import annotations
@@ -38,10 +19,10 @@ N_REPLICATES = 2000
 class BootstrapResult:
     """the whole decision input for one (method, target) pair, in one object."""
 
-    theta: float           # point estimate: relative improvement, positive is better
-    lo: float              # 95% percentile CI lower bound
-    hi: float              # 95% percentile CI upper bound
-    p_value: float         # two-sided bootstrap p against theta = 0
+    theta: float           # relative improvement, positive is better
+    lo: float
+    hi: float
+    p_value: float
     n_rows: int
     n_dates: int
     n_replicates: int
@@ -51,7 +32,7 @@ class BootstrapResult:
         return (self.lo > 0.0) or (self.hi < 0.0)
 
     def clears(self, floor: float) -> bool:
-        """the pre-registered bar: CI excludes zero AND the effect is >= floor."""
+        """the pre-registered bar: CI excludes zero and the effect is >= floor."""
         return self.ci_excludes_zero and self.theta >= floor
 
 
@@ -61,11 +42,7 @@ def date_aggregate(
     dates: pd.Series,
     origins: pd.Series,
 ) -> pd.DataFrame:
-    """collapse per-row deltas to one row per (origin, date), summed.
-
-    the bootstrap never touches individual rows after this. it is also the step that
-    makes 2000 replicates cheap: 142 date-level sums instead of 30,917 row-level ones.
-    """
+    """collapse per-row deltas to one row per (origin, date), summed."""
     frame = pd.DataFrame({
         "origin": np.asarray(origins),
         "date": pd.to_datetime(pd.Series(np.asarray(dates))).to_numpy(),
@@ -82,11 +59,9 @@ def date_aggregate(
 
 
 def _block_sums(values: np.ndarray, block: int) -> np.ndarray:
-    """sum of every admissible ``block``-long contiguous run, by cumulative sums.
+    """sum of every admissible ``block``-long contiguous run, one per start position.
 
-    returns one entry per admissible START position. when the series is shorter than
-    the block, the single admissible block is the whole series - a 23-date origin
-    still contributes, it just contributes a coarser block.
+    a series shorter than the block yields one block: the whole series.
     """
     n = len(values)
     if n == 0:

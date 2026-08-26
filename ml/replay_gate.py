@@ -1,56 +1,4 @@
-"""the October replay gate — MODEL.md section 13.7, implemented by P5.
-
-    python replay_gate.py --version 20260818
-    python replay_gate.py --version 20260818 --report reports/october_replay.md
-
-replays a past October through the FROZEN serving pipeline and reports the three
-acceptance criteria section 13.7 pinned BEFORE this file existed. The ordering is
-the point: a gate whose pass mark is set after the gate is built is not a gate,
-so every threshold here is read out of ``config.PROSPECTIVE_OCTOBER_GATE`` and
-none is defined in this module.
-
-WHAT IT ANSWERS. Not "is the model good in October" — it cannot answer that, for
-the reason stated below — but "how much WORSE is October than the rest of the same
-season, scored by one frozen artifact". That ratio is a degradation SHAPE, and a
-shape is what sets an expectation for October 2026, which has not happened yet.
-
-THE LIMITATION, stated first rather than in a footnote. October 2025 is INSIDE
-artifact 20260818's training window (2022-10-18 → 2026-04-12). Its October
-numbers are therefore in-sample and its absolute skill is overstated. That is
-known and accepted, and it is survivable ONLY because the gate is a RATIO of two
-numbers that are contaminated the same way: the non-October comparison rows are
-inside the same training window, fitted by the same model, in the same season. A
-uniform in-sample optimism divides out of a ratio; it does not divide out of a
-level. So:
-
-  * every criterion in 13.7 is expressed as a RATIO or as coverage, never as an
-    absolute Brier or MAE — and that was frozen before this run, not chosen after
-    seeing which form passed;
-  * the absolute numbers are printed anyway, labelled IN-SAMPLE, because hiding
-    them would make the ratio harder to interrogate rather than easier;
-  * the residual risk is a NON-uniform optimism — if a model overfits its
-    October rows harder than its March rows, the ratio understates real October
-    degradation and the gate is too easy. Nothing in this replay can rule that
-    out. The honest reading of a PASS is "no October-shaped catastrophe is
-    visible", not "October 2026 will look like this".
-
-The alternative — refitting to a pre-October cutoff — was rejected because it
-would measure a DIFFERENT artifact. Criterion 4 of 13.7 says the replay uses the
-pinned checksums, and a replay against a differently-trained model tells us about
-that model. Given the choice between honest-about-a-contaminated-gate and
-silently-gating-the-wrong-object, this file takes the first.
-
-NO REFIT, NO WRITES, NO STORE. Nothing here fits an estimator and nothing here
-touches a database. It reads one parquet and one artifact directory.
-
-ONE VECTORISED PASS IS PER-DATE. The served context features
-(``teammates.expected_vacated_features``) aggregate strictly within a
-(GAME_ID, TEAM_ID) group, and every other feature on the dataset was built by an
-``allow_exact_matches=False`` as-of join. So scoring the whole window at once and
-scoring it date by date produce identical numbers, and the cheap form is used.
-``--per-date`` runs the expensive form anyway and asserts they agree, which is how
-that claim stays true rather than remaining a comment.
-"""
+"""the October replay gate, MODEL.md section 13.7."""
 
 from __future__ import annotations
 
@@ -89,15 +37,10 @@ from predict import load_version  # noqa: E402
 
 log = logging.getLogger("replay_gate")
 
-# the three cohort axes reported alongside the headline. MIN_TIER is the frozen
-# cohort family (13.3); the other two are the shares 13.7 criterion 1 asks for
-# "alongside" coverage.
 TIER_COL = "MIN_TIER"
 INSUFFICIENT = "insufficient_history"
 CONTEXT_SOURCE = "P_CONTEXT_SOURCE"
 
-# the stage-0 label cross_fit_base_probabilities stamps on rows whose block had
-# fewer than CROSS_FIT_MIN_TRAIN_ROWS of history to fit on.
 CROSS_FIT_FALLBACK = "baseline"
 
 
@@ -106,43 +49,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     add_common_args(parser)
     parser.add_argument("--dataset", type=Path, default=default_dataset_path())
     parser.add_argument("--version", default=PROSPECTIVE_MODEL_VERSION,
-                        help="the artifact to replay with. defaults to the FROZEN "
-                             f"{PROSPECTIVE_MODEL_VERSION}; overriding it fails the "
-                             "checksum criterion unless --skip-checksums is passed")
+                        help="the artifact to replay with")
     parser.add_argument("--models-dir", type=Path, default=MODELS_DIR)
     parser.add_argument("--window", nargs=2, metavar=("START", "END"),
                         default=list(PROSPECTIVE_OCTOBER_REPLAY_WINDOW),
-                        help="the October window. defaults to the frozen "
-                             f"{PROSPECTIVE_OCTOBER_REPLAY_WINDOW}")
+                        help="the October window")
     parser.add_argument("--season", default=None,
-                        help="the season supplying the non-October comparison rows. "
-                             "defaults to whichever season the window falls in")
+                        help="the season supplying the non-October comparison rows")
     parser.add_argument("--report", type=Path, default=None,
-                        help="write the markdown report here (default "
-                             "reports/october_replay_<version>.md)")
+                        help="write the markdown report here")
     parser.add_argument("--skip-checksums", action="store_true",
-                        help="run against an unpinned artifact. criterion 4 then "
-                             "reports FAIL, because it is about the pinned artifact "
-                             "and no flag can make a different one pinned")
+                        help="run against an unpinned artifact")
     parser.add_argument("--per-date", action="store_true",
-                        help="also score date by date and assert the numbers match "
-                             "the single-pass ones. proves the docstring's claim "
-                             "rather than asserting it in prose")
+                        help="also score date by date and assert the numbers match")
     return parser.parse_args(argv)
 
 
-# ---------------------------------------------------------------------------
-# criterion 4: the replay uses the pinned checksums
-# ---------------------------------------------------------------------------
 def verify_pinned_artifact(
     version: str, models_dir: Path, pinned: dict[str, str] = PROSPECTIVE_ARTIFACT_CHECKSUMS
 ) -> tuple[bool, list[str]]:
-    """re-hash the artifact directory against the frozen checksum set.
-
-    the set is asserted to cover the WHOLE directory, exactly as
-    ``tests/test_prospective_freeze.py`` does: six per-file matches would all pass
-    while a seventh, unwatched, file sat in the directory being loaded.
-    """
+    """re-hash the artifact directory against the frozen checksum set."""
     problems: list[str] = []
     if version != PROSPECTIVE_MODEL_VERSION:
         problems.append(
@@ -165,32 +91,10 @@ def verify_pinned_artifact(
     return not problems, problems
 
 
-# ---------------------------------------------------------------------------
-# scoring
-# ---------------------------------------------------------------------------
 def score(features: pd.DataFrame, model, minutes_model, base_model) -> pd.DataFrame:
-    """P(play) and E[minutes|plays] from the pinned artifact, with no refit.
-
-    THE SERVING SHAPE, minus the two things a replay must not have. It runs the
-    same three stages ``predict.rebuild_context`` runs — base probability,
-    expected context, final scoring — so the context features the champions see
-    are the ones a live run would build.
-
-    WHAT IS DELIBERATELY ABSENT:
-
-      the leakage guards.  ``validate_out_of_fold`` refuses any row whose model
-        cutoff is after its own game date, and every row here is one: the artifact
-        was trained through 2026-04-13 and the window is October 2025. Calling the
-        guard would raise, and catching the raise would be the same thing as not
-        calling it while looking more careful. It is not called, the reason is this
-        paragraph, and the module docstring states the consequence. NOTHING ELSE IN
-        THE PACKAGE SKIPS THIS GUARD.
-
-      the injury-override layer.  ``player_injury_reports`` held no rows in
-        October 2025, so an override pass would be a no-op that made the replay
-        look like it had measured a layer it had not. The layer's own endpoint is
-        F10, prospectively, on real reports.
-    """
+    """P(play) and E[minutes|plays] from the pinned artifact, with no refit."""
+    # validate_out_of_fold is deliberately not called: every replay row predates
+    # the artifact cutoff, so the guard would raise on all of them.
     base_p = base_model.predict_proba(features)
     rebuilt = attach_expected_context(features, base_p, pd.Timestamp(base_model.cutoff))
     scored = minutes_model.attach(model.attach(rebuilt))
@@ -199,12 +103,7 @@ def score(features: pd.DataFrame, model, minutes_model, base_model) -> pd.DataFr
 
 
 def score_per_date(features: pd.DataFrame, model, minutes_model, base_model) -> pd.DataFrame:
-    """the same scoring, one game date at a time, in date order.
-
-    exists to be compared against :func:`score`. If the two ever disagree, some
-    feature has acquired a cross-date dependency at serving time and the cheap
-    path has silently become wrong.
-    """
+    """the same scoring, one game date at a time, in date order."""
     frames = []
     for game_date in sorted(pd.to_datetime(features["GAME_DATE"]).unique()):
         day = features[pd.to_datetime(features["GAME_DATE"]) == game_date]
@@ -212,9 +111,6 @@ def score_per_date(features: pd.DataFrame, model, minutes_model, base_model) -> 
     return pd.concat(frames, ignore_index=True)
 
 
-# ---------------------------------------------------------------------------
-# metrics
-# ---------------------------------------------------------------------------
 def brier(frame: pd.DataFrame) -> float:
     if frame.empty:
         return float("nan")
@@ -224,12 +120,7 @@ def brier(frame: pd.DataFrame) -> float:
 
 
 def minutes_mae(frame: pd.DataFrame) -> float:
-    """MAE of E[minutes|plays] over APPEARANCE rows only.
-
-    appearances, because the quantity is conditional on playing: scoring it over
-    scheduled rows would fold the availability model's errors into the minutes
-    model's number and make the ratio a mixture of two different degradations.
-    """
+    """MAE of E[minutes|plays] over APPEARANCE rows only."""
     played = frame[frame["PLAYED"] == 1]
     if played.empty:
         return float("nan")
@@ -240,12 +131,7 @@ def minutes_mae(frame: pd.DataFrame) -> float:
 
 
 def coverage(scored: pd.DataFrame, scheduled: int) -> float:
-    """share of scheduled player-games that came back with a usable prediction.
-
-    a row counts as covered only if BOTH numbers are finite. A P(play) with no
-    minutes beside it cannot be composed into any served stat, so counting it
-    would be counting a prediction the product could not display.
-    """
+    """share of scheduled player-games that came back with a usable prediction."""
     if scheduled == 0:
         return float("nan")
     usable = (
@@ -262,13 +148,7 @@ def share(frame: pd.DataFrame, mask: pd.Series | np.ndarray) -> float:
 
 
 def cohort_table(october: pd.DataFrame, rest: pd.DataFrame) -> pd.DataFrame:
-    """per-minutes-tier Brier and minutes MAE on both sides, plus the ratios.
-
-    the frozen cohort family (13.3): the four minutes tiers plus ``unknown (no
-    history)``, assigned from a strictly prior rolling mean. Reported because a
-    headline ratio that passes while the fringe tier triples is a headline ratio
-    hiding the thing October actually does.
-    """
+    """per-minutes-tier Brier and minutes MAE on both sides, plus the ratios."""
     rows = []
     tiers = sorted(set(october.get(TIER_COL, pd.Series(dtype=object)).dropna())
                    | set(rest.get(TIER_COL, pd.Series(dtype=object)).dropna()))
@@ -297,13 +177,7 @@ def evaluate_gate(
     scheduled_october: int,
     gate: dict[str, float] = PROSPECTIVE_OCTOBER_GATE,
 ) -> pd.DataFrame:
-    """the three frozen criteria, as a verdict table.
-
-    THE THRESHOLDS ARE READ, NEVER WRITTEN. Each row's bar comes out of
-    ``config.PROSPECTIVE_OCTOBER_GATE``, which section 13.7 froze and
-    ``tests/test_prospective_freeze.py`` pins. A criterion that fails is a
-    reportable finding about the model; it is not an argument about the number.
-    """
+    """the three frozen criteria, as a verdict table."""
     cov = coverage(october, scheduled_october)
     ob, rb = brier(october), brier(rest)
     om, rm = minutes_mae(october), minutes_mae(rest)
@@ -335,9 +209,6 @@ def evaluate_gate(
     ])
 
 
-# ---------------------------------------------------------------------------
-# report
-# ---------------------------------------------------------------------------
 LIMITATION = (
     "**October 2025 is inside artifact {version}'s training window "
     "(2022-10-18 -> 2026-04-12). These October numbers are IN-SAMPLE and their "
@@ -418,7 +289,6 @@ def render(
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     setup_logging(args.verbose)

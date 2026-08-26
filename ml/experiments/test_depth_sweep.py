@@ -1,24 +1,4 @@
-"""tests for the pure pieces of the depth/weighting ablation.
-
-Scope, deliberately narrow: window construction, sample-weight arithmetic, and
-the identical-validation-rows assertion. Nothing here fits a model, opens a
-network connection, reads the pulled parquet, or touches ``ml/tests`` - the
-existing suite is not this experiment's business.
-
-The three things worth pinning are the three that would silently invalidate the
-whole ablation rather than crash it:
-
-  * a trailing window off by one season makes "depth 8" mean nine seasons, and
-    every number in the report is then mislabelled
-  * a sample weight indexed by the wrong season age can put MORE weight on old
-    rows than new ones, which reads in the output table as "recency weighting
-    hurts"
-  * a validation set that varies between configurations makes the comparison
-    meaningless while the table still looks perfectly sensible
-
-Each gets a NEGATIVE CONTROL: a test asserting the check FAILS on deliberately
-broken input, because an assertion that cannot fail is not a test.
-"""
+"""tests for the pure pieces of the depth/weighting ablation."""
 
 from __future__ import annotations
 
@@ -58,9 +38,6 @@ from depth_sweep import (  # noqa: E402
 SEASONS = [f"{y}-{str(y + 1)[2:]}" for y in range(1996, 2026)]
 
 
-# ---------------------------------------------------------------------------
-# window construction
-# ---------------------------------------------------------------------------
 def test_trailing_window_length_and_endpoint():
     window = trailing_window(SEASONS, "2024-25", 4)
     assert window == ["2021-22", "2022-23", "2023-24", "2024-25"]
@@ -79,11 +56,6 @@ def test_trailing_window_is_contiguous_and_sorted():
 
 
 def test_trailing_window_truncates_rather_than_overrunning_history():
-    """depth 29 at the second-oldest season is depth 2, not an error.
-
-    the sweep records ``realised_depth`` separately for exactly this reason, so a
-    truncated window is never reported as the depth that was asked for.
-    """
     window = trailing_window(SEASONS, "1997-98", 29)
     assert window == ["1996-97", "1997-98"]
     assert len(window) == 2 < 29
@@ -100,7 +72,6 @@ def test_trailing_window_rejects_a_nonpositive_depth():
 
 
 def test_origin_season_maps_a_new_year_window_to_the_season_that_straddles_it():
-    """January 2025 belongs to 2024-25. The whole depth axis hangs on this."""
     assert origin_season(SEASONS, "2025-01-01") == "2024-25"
     assert origin_season(SEASONS, "2025-02-01") == "2024-25"
     assert origin_season(SEASONS, "2024-12-01") == "2024-25"
@@ -109,19 +80,10 @@ def test_origin_season_maps_a_new_year_window_to_the_season_that_straddles_it():
 
 
 def test_origin_season_negative_control_naive_year_would_be_wrong():
-    """the bug this function exists to prevent, stated as a test.
-
-    taking the calendar year would map January 2025 to 2025-26 - a season that
-    had not been played when the model was trained - so the trailing window would
-    include the validation season's own future.
-    """
     naive = "2025-26"
     assert origin_season(SEASONS, "2025-01-15") != naive
 
 
-# ---------------------------------------------------------------------------
-# sample weights
-# ---------------------------------------------------------------------------
 def test_season_age_is_zero_at_the_end_season_and_counts_backwards():
     ages = season_age(SEASONS, "2024-25")
     assert ages["2024-25"] == 0
@@ -144,7 +106,6 @@ def test_recency_weights_are_exactly_decay_to_the_age():
 def test_recency_weights_are_monotone_decreasing_in_age():
     rows = pd.Series(SEASONS)
     weights = recency_weights(rows, SEASONS, "2025-26", 0.6)
-    # SEASONS is oldest-first, so weights must be increasing along it
     assert np.all(np.diff(weights) > 0)
     assert weights[-1] == pytest.approx(1.0)
 
@@ -157,7 +118,6 @@ def test_recency_weights_harsher_decay_downweights_old_rows_further():
 
 
 def test_recency_weights_reject_a_future_season():
-    """a training row from after the origin season means the window is broken."""
     rows = pd.Series(["2025-26"])
     with pytest.raises(ValueError, match="AFTER the origin season"):
         recency_weights(rows, SEASONS, "2024-25", 0.8)
@@ -174,9 +134,6 @@ def test_recency_weights_reject_a_decay_outside_the_unit_interval(decay):
         recency_weights(pd.Series(["2024-25"]), SEASONS, "2024-25", decay)
 
 
-# ---------------------------------------------------------------------------
-# splitting and the validation-row invariant
-# ---------------------------------------------------------------------------
 def _toy_frame() -> pd.DataFrame:
     """three seasons, four dated rows each, two players."""
     rows = []
@@ -208,7 +165,6 @@ def test_split_origin_excludes_seasons_outside_the_window():
 
 
 def test_split_origin_validation_slice_is_independent_of_the_training_window():
-    """the invariant the whole ablation rests on, checked directly."""
     frame = _toy_frame()
     _, shallow = split_origin(frame, "2025-01-10", "2025-01-31", ["2024-25"])
     _, deep = split_origin(frame, "2025-01-10", "2025-01-31",
@@ -231,7 +187,6 @@ def test_assert_identical_validation_rows_is_order_independent():
 
 
 def test_assert_identical_validation_rows_negative_control_dropped_row():
-    """a configuration that scores one fewer row must FAIL, not post a better MAE."""
     frame = _toy_frame()
     _, a = split_origin(frame, "2025-01-10", "2025-01-31", ["2024-25"])
     with pytest.raises(AssertionError, match="validation rows differ"):
@@ -239,7 +194,6 @@ def test_assert_identical_validation_rows_negative_control_dropped_row():
 
 
 def test_assert_identical_validation_rows_negative_control_swapped_row():
-    """same row COUNT, different rows: the harder failure to notice."""
     frame = _toy_frame()
     _, a = split_origin(frame, "2025-01-10", "2025-01-31", ["2024-25"])
     swapped = a.copy()
@@ -272,26 +226,21 @@ def test_registry_rejects_a_changed_row_set_for_the_same_origin():
 
 
 def test_registry_keeps_origins_independent():
-    """two origins legitimately have different row sets; the check is per-origin."""
     frame = _toy_frame()
     _, jan = split_origin(frame, "2025-01-01", "2025-01-10", ["2024-25"])
     _, late = split_origin(frame, "2025-01-15", "2025-01-31", ["2024-25"])
     registry = ValidationRowRegistry()
     registry.enforce("O-jan", jan, "depth=2")
-    registry.enforce("O-late", late, "depth=2")  # must not raise
+    registry.enforce("O-late", late, "depth=2")
     assert registry.checks == 2
 
 
-# ---------------------------------------------------------------------------
-# feature-set integrity and small helpers
-# ---------------------------------------------------------------------------
 def test_deep_feature_list_excludes_every_status_dependent_column():
     for column in EXCLUDED_FEATURE_COLS:
         assert column not in DEEP_FEATURE_COLS
 
 
 def test_deep_feature_list_keeps_usage_which_needs_no_inactive_list():
-    """usg_ewma is a v2 teammate-family column that is NOT status-dependent."""
     assert "usg_ewma" in DEEP_FEATURE_COLS
 
 
@@ -300,19 +249,10 @@ def test_deep_feature_list_has_no_duplicates_and_is_nonempty():
 
 
 def test_deep_feature_list_is_pinned_at_exactly_thirty_columns():
-    """the pin, asserted as a number.
-
-    the ablation's whole design is that every configuration uses an identical
-    feature set. This list used to be derived from ``config.FEATURE_COLS`` and
-    changed underneath a running sweep when a concurrent branch moved
-    FEATURE_VERSION to v3; the count is pinned so that can never happen silently
-    again.
-    """
     assert len(DEEP_FEATURE_COLS) == 30
 
 
 def test_deep_feature_list_is_independent_of_the_live_config(monkeypatch):
-    """rewriting config.FEATURE_COLS must not move the ablation's feature set."""
     import fnba_ml.config as config_module
 
     import deep_dataset
@@ -323,18 +263,11 @@ def test_deep_feature_list_is_independent_of_the_live_config(monkeypatch):
 
 
 def test_feature_contract_drift_reports_config_only_columns():
-    """production has features an appearance-only universe cannot supply.
-
-    that direction is expected. The other direction - a column this ablation uses
-    that production has dropped - is the one worth noticing, and the function
-    reports both rather than asserting either.
-    """
     from deep_dataset import feature_contract_drift
 
     drift = feature_contract_drift()
     assert set(drift) == {"config_only", "pinned_only"}
     assert all(isinstance(c, str) for c in drift["config_only"])
-    # every pinned column that production still has must not appear as drift
     assert "roll5_MIN" not in drift["pinned_only"] or "roll5_MIN" not in DEEP_FEATURE_COLS
 
 

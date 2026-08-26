@@ -1,11 +1,3 @@
-"""shared fixtures. the parquet files are regenerated on every session.
-
-the feature frame is parametrised over BOTH universe constructions. the leakage
-tests therefore run twice - once against the status-based universe (the
-production path) and once against the biased approximation (the path the
-parquet-mode backtest uses). a shift dropped in either would fail.
-"""
-
 from __future__ import annotations
 
 import sys
@@ -62,13 +54,6 @@ def status(source: ParquetSource) -> pd.DataFrame:
 
 @pytest.fixture(scope="session")
 def positions(source: ParquetSource) -> pd.DataFrame:
-    """the SYNTHETIC fixture positions. no real parquet export has any.
-
-    they exist so the positional half of the v2 teammate features
-    (``vacated_minutes_pos``, ``depth_rank_available_pos``) is exercised rather
-    than being null in every test. two roster slots are deliberately unassigned so
-    the no-bucket path is covered too - see fixtures/generate.SLOT_POSITIONS.
-    """
     frame = source.load_player_positions()
     assert frame is not None, "the fixture set must carry a player_positions file"
     return frame
