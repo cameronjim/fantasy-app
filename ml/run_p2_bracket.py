@@ -1,46 +1,4 @@
-"""the P2 decision run: v3-honest vs v4 over identical rows, with the pre-registered bar.
-
-    python run_p2_bracket.py --dataset data/dataset_v4.parquet --version 20260819
-
-THE BAR IS PRE-REGISTERED IN ``config`` AND IS NOT NEGOTIATED HERE. This script
-computes; ``fnba_ml.promotion.decide`` applies the rule; the exit code reports the
-verdict. Read ``config``'s P2 block (``P2_PROMOTION_FLOOR``,
-``P2_PROMOTION_ENDPOINTS``, ``P2_COHORT_REGRESSION_TOLERANCE``) before reading any
-number below.
-
-WHY THIS IS A SEPARATE SCRIPT FROM ``evaluate.py --bracket``. The two answer
-different questions and want different outputs. ``evaluate.py`` runs the whole
-ladder - every challenger estimator, the 9-cat rate ladder, the importance table,
-the coherence check - and reports MEANS OVER ORIGINS per cohort. That is the right
-shape for "which estimator is champion" and the wrong shape for a paired bootstrap,
-which needs PER-ROW losses from both passes with their row identity intact. So:
-
-  * ``evaluate.py --bracket`` still runs and still produces the familiar four-way
-    ladder tables (v1 / v3-honest / v2-oracle / v4). Run it for those.
-  * this script fits ONLY the promoted path - LightGBM availability, LightGBM
-    minutes, the shipped per-minute rate composition - twice per origin, keeps every
-    row's two losses, and derives the pooled numbers, the per-origin numbers, the
-    cohort tables AND the bootstrap from that one frame. One set of fits, one source
-    of truth, and the cohort table cannot disagree with the bootstrap because both
-    are aggregations of the same per-row losses.
-
-THE THREE ENDPOINTS, and which of them can promote:
-
-  availability_brier   per-row ``(p - y)^2`` over every scheduled row.       GATE
-  minutes_mae          per-row ``|MIN - E[MIN|plays]|`` over appearances.    GATE
-  uncond_pts_mae       per-row ``|PTS - P(play)*E[MIN]*rate|``, all rows.    report
-
-The third is deliberately not a gate: it is downstream of the other two, so letting
-it clear the bar would count one win twice. ``config.P2_PROMOTION_ENDPOINTS`` is the
-authority.
-
-SIX ORIGINS (``config.DEV_ORIGINS``), and the sixth is reported separately as well as
-pooled. It validates on 2025-03-15..04-12 and it exists to measure the
-load-management effect, which cannot appear in five origins that all validate in
-December, January or February. Pooling a March effect into five winter months would
-dilute it by roughly a factor of six; reporting only March would be selecting the
-window where the answer is most flattering. Both, always, is the honest form.
-"""
+"""the P2 decision run: v3-honest vs v4 over identical rows, with the pre-registered bar."""
 
 from __future__ import annotations
 
@@ -96,9 +54,6 @@ from fnba_ml.registry import git_commit  # noqa: E402
 
 log = logging.getLogger("run_p2_bracket")
 
-# the endpoints, in the order the report shows them. ``rows`` says which validation
-# rows the endpoint is scored over; it is the reason the three cannot live in one
-# frame and are bootstrapped separately.
 ENDPOINT_ROWS = {
     ENDPOINT_AVAILABILITY: "scheduled",
     ENDPOINT_MINUTES: "appearances",
@@ -121,20 +76,7 @@ def score_one_pass(
     feature_set: str,
     origins: list[tuple[str, str, str]],
 ) -> pd.DataFrame:
-    """per-row losses for all three endpoints, one feature set, every origin.
-
-    the promoted path ONLY. No challenger estimator is fitted, because the question
-    is not "which estimator wins" - that is settled and frozen in ``CHAMPIONS`` - but
-    "does the same estimator do better with more columns". Fitting ridge and logistic
-    alongside would triple the runtime to produce numbers no clause of the promotion
-    rule reads.
-
-    the returned frame is long: one row per (origin, endpoint, scored row), carrying
-    ``loss``, the cohort label, the game date and a ``row_key`` that
-    :func:`promotion.paired_endpoint_bootstrap` checks alignment on. Emitting the
-    key rather than trusting positional order is the cheap insurance against the one
-    bug in this script that would be invisible in its output.
-    """
+    """per-row losses for all three endpoints, one feature set, every origin."""
     feats = feature_set_columns(frame, feature_set)
     log.info("pass %s: %d features", feature_set, len(feats))
     out: list[pd.DataFrame] = []
@@ -157,10 +99,6 @@ def score_one_pass(
         rate = PerMinuteRate("PTS").fit(train_app)
         _, uncond = minutes_propagated_estimate(scored, rate.predict(valid_all))
 
-        # the cohort masks per validation row. Computed ONCE per origin and reused for
-        # all three endpoints, and computed from the DATASET's own columns, so the
-        # v3-honest and v4 passes partition identical rows - the same property that
-        # makes the section 5.1 bracket a comparison.
         masks = cohort_masks(valid_all)
 
         key = (
@@ -177,22 +115,14 @@ def score_one_pass(
 
         every_row = np.ones(len(valid_all), dtype=bool)
         losses = {
-            # Brier is a SQUARED loss, and using ``(p - y)**2`` rather than |p - y|
-            # matters: the bootstrap's theta is a ratio of sums, so the per-row
-            # quantity has to be the one whose MEAN IS the reported metric. An
-            # absolute-difference per-row loss would bootstrap a statistic nobody
-            # reports.
+            # each per-row loss must be the one whose MEAN IS the reported metric,
+            # because the bootstrap's theta is a ratio of sums.
             ENDPOINT_AVAILABILITY: ((p - y_play) ** 2, every_row),
             ENDPOINT_MINUTES: (np.abs(min_pred - y_min), valid_app_mask),
             ENDPOINT_UNCOND_PTS: (np.abs(uncond - y_pts), every_row),
         }
-        # THE COHORT AXIS IS EMITTED AS EXTRA ROWS, not as a column, because a row
-        # belongs to SEVERAL cohorts at once - a star can be in a blowout-decile game
-        # on a locked team - so one cohort column per row would have to pick one and
-        # lose the others. "ALL" is emitted first and is what the pooled bootstrap
-        # reads; each named cohort is emitted as its own block and is what the cohort
-        # table reads. Both are aggregations of the SAME per-row loss array, so the
-        # cohort table cannot disagree with the pooled number.
+        # cohorts are emitted as extra rows, not a column: a row belongs to several
+        # cohorts at once.
         for label, mask in (("ALL", every_row), *masks):
             if not mask.any():
                 continue
@@ -223,13 +153,7 @@ def pooled(frame: pd.DataFrame, endpoint: str) -> pd.DataFrame:
 def per_origin_table(
     incumbent: pd.DataFrame, candidate: pd.DataFrame, endpoint: str
 ) -> pd.DataFrame:
-    """one row per origin: the two means and the relative change.
-
-    THE LATE-SEASON ORIGIN IS IN THIS TABLE AND NOT ONLY IN THE POOLED NUMBER, which
-    is the point of having added it. A stakes feature that helps in March and does
-    nothing in January produces a pooled effect one sixth its true size, and only a
-    per-origin table can tell that apart from a feature that does nothing anywhere.
-    """
+    """one row per origin: the two means and the relative change."""
     a, b = pooled(incumbent, endpoint), pooled(candidate, endpoint)
     joint = pd.DataFrame({
         "origin": a["origin"].to_numpy(),
@@ -289,11 +213,6 @@ def main(argv: list[str] | None = None) -> int:
         )
         for endpoint in ENDPOINT_ROWS
     ]
-    # the cohort side condition is evaluated on the GATED endpoints only, and that is
-    # a deliberate scoping rather than an oversight: the rule says "no cohort
-    # regressing", and a cohort regression on a report-only endpoint cannot block a
-    # promotion the same endpoint is not allowed to grant. Both tables are written
-    # either way, so a reader can apply the stricter reading themselves.
     gated_cohorts = pd.concat(
         [
             cohort_table(incumbent, candidate, endpoint).assign(endpoint=endpoint)
@@ -326,7 +245,6 @@ def main(argv: list[str] | None = None) -> int:
     all_cohorts.to_csv(args.reports_dir / f"{stem}_cohorts_all_endpoints.csv",
                        index=False)
 
-    # ---- the report, printed. the header states the bar BEFORE any number. ----
     print("=" * 78)
     print("P2 DECISION RUN - v3-honest (incumbent, FROZEN CONTRACT) vs v4 (candidate)")
     print("=" * 78)
@@ -381,9 +299,7 @@ def main(argv: list[str] | None = None) -> int:
     print("=" * 78)
     print(f"csvs -> {args.reports_dir / f'{stem}_decision.csv'} and three more")
 
-    # EXIT 0 EITHER WAY. A null result is a valid outcome of a pre-registered test,
-    # not a pipeline failure, and an exit code that punished it would create pressure
-    # to keep re-running until it passed. The verdict is in the output and in the csv.
+    # exit 0 either way: a null result is a valid outcome of a pre-registered test.
     return 0
 
 

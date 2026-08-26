@@ -1,22 +1,4 @@
-"""build the scheduled-player-game feature dataset.
-
-    python build_dataset.py --source parquet --data-dir ../ml-spike/data
-    python build_dataset.py --source postgres --out data/dataset.parquet
-
-writes one parquet: every scheduled player-game with as-of-safe features and
-the outcome columns. this is the only file train.py, evaluate.py and predict.py
-read.
-
-THIS SCRIPT NOW FITS MODELS (feature_version v3). The served teammate-context
-features are expectations over as-of play probabilities, and those probabilities
-come from a base availability model cross-fitted over forward-chaining calendar
-blocks (``models.cross_fit_base_probabilities``). The alternative was for
-evaluate.py, train.py and predict.py each to run the cross-fit independently and
-hope they agreed on it; one dataset that carries ``P_CONTEXT`` and its cutoff is
-cheaper and auditable. The cost is roughly a minute of LightGBM per season on the
-four-season build, and the share of rows whose probability came from the base model
-rather than the stage-0 baseline is printed below.
-"""
+"""build the scheduled-player-game feature dataset."""
 
 from __future__ import annotations
 
@@ -56,12 +38,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--out", type=Path, default=DATA_DIR / "dataset.parquet")
     parser.add_argument(
         "--no-v4-candidate", action="store_true",
-        help="skip the P2 matchup / blowout / stakes / start-rate columns "
-             f"({len(V4_FEATURE_COLS)} of them, fnba_ml.matchup). they are PURELY "
-             f"ADDITIVE - FEATURE_COLS names none of them and the served contract is "
-             f"unchanged - and they cost one extra LightGBM cross-fit over 9,840 "
-             f"team-games. This flag exists so a dataset can be rebuilt to the exact "
-             f"pre-P2 column set if a v3 number ever has to be reproduced",
+        help=f"skip the {len(V4_FEATURE_COLS)} P2 candidate columns",
     )
     return parser.parse_args(argv)
 
@@ -74,15 +51,7 @@ def main(argv: list[str] | None = None) -> int:
     universe = build_universe(source)
     coverage = coverage_report(universe, source.load_player_game_logs())
     features = build_features(universe)
-    # STAGE 2 + 3 of the two-stage pipeline. The dataset build now fits models -
-    # one base availability model per calendar block - which is a change in the
-    # character of this script and is stated in its docstring. The alternative was
-    # for every consumer (evaluate, train, predict) to run the same cross-fit
-    # independently and hope they agreed.
     features = attach_cross_fit_context(features)
-    # P2's candidate family. Additive: FEATURE_COLS names none of these columns, so
-    # the served 51-column contract and the frozen artifact are unaffected, and
-    # FEATURE_SETS["v4"] becomes evaluable over the same rows as v3-honest.
     if not args.no_v4_candidate:
         features = attach_v4_features(features, source.load_team_game_logs())
 
@@ -101,8 +70,6 @@ def main(argv: list[str] | None = None) -> int:
     print(f"rows             : {len(features):,}")
     print(f"saved            -> {args.out}")
 
-    # the v3 provenance block: which probability built the context features, and how
-    # much of it came from a model rather than from the baseline fallback.
     if "P_CONTEXT_SOURCE" in features.columns:
         shares = features["P_CONTEXT_SOURCE"].value_counts(normalize=True)
         print("\ncontext probability p_j (stage 2):")
@@ -115,9 +82,6 @@ def main(argv: list[str] | None = None) -> int:
           + ", ".join(f"{name}={len([c for c in cols if c in features.columns])}"
                       for name, cols in FEATURE_SETS.items()))
 
-    # the v2 family gets its own block because its null pattern is the thing most
-    # likely to be silently wrong: a source with no positions, or team logs with no
-    # possession totals, produce a fully-null column rather than an error.
     positions = position_group_counts(features)
     if not positions.empty:
         print("\nrows per position bucket:")

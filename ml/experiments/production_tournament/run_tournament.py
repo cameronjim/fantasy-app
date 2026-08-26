@@ -1,27 +1,9 @@
-"""the runner. ONE LOOK: it is executed once and its output is the report.
+"""the tournament runner.
 
     python -m experiments.production_tournament.run_tournament        (from ml/)
 
-WHAT IT GUARANTEES, and where.
-
-  IDENTICAL ROWS. the composition (P(play), E[min|plays]) is fitted once per origin
-  and the SAME arrays are reused by all nine bracket members and both targets. a
-  method contributes only a rate vector, and :func:`_score_origin` asserts every rate
-  vector has the origin's row count before it is multiplied by anything. so "same
-  rows" is structural rather than checked-afterwards.
-
-  AS-OF DISCIPLINE. every rate column arrives through ONE
-  ``merge_asof(allow_exact_matches=False)`` (``rates.attach_rate_columns``), and the
-  out-of-fold minutes used by the Poisson candidate arrive through
-  ``models.validate_out_of_fold``. the composition itself re-runs all three shipped
-  guards on every score.
-
-  NO SELECTION ON THE REPORTED ROWS. hyperparameters are chosen inside
-  ``methods.RateMethod.prepare``, which is only ever handed ``ctx.train_*``.
-
-CACHING. the two expensive as-of/cross-fit passes are cached under ``cache/`` (which
-the directory's own .gitignore excludes). they are pure functions of the dataset, so a
-cache hit and a cold run produce the same numbers; ``--rebuild`` forces the recompute.
+the composition is fitted once per origin and shared by every bracket member, so a
+method contributes only a rate vector.
 """
 
 from __future__ import annotations
@@ -69,14 +51,10 @@ log = logging.getLogger(__name__)
 HERE = Path(__file__).resolve().parent
 CACHE = HERE / "cache"
 
-# the pre-registered practical floor: 2% relative improvement on the primary endpoint.
 PRACTICAL_FLOOR = 0.02
 ALPHA = 0.05
 
 
-# ---------------------------------------------------------------------------
-# stage 1: the frame, the rate cache and the out-of-fold minutes
-# ---------------------------------------------------------------------------
 def load_frame(rebuild: bool = False) -> pd.DataFrame:
     """the v3 dataset with every candidate rate column and OOF minutes attached."""
     CACHE.mkdir(exist_ok=True)
@@ -105,12 +83,7 @@ def load_frame(rebuild: bool = False) -> pd.DataFrame:
 
 
 def reproduction_check(frame: pd.DataFrame) -> pd.DataFrame:
-    """does the recomputed halflife-5 rate reproduce the SHIPPED column exactly?
-
-    the cheapest possible proof that the sweep is a sweep of the incumbent's own
-    estimator rather than of a lookalike. if this does not match, every halflife
-    number in the report is measuring the reimplementation instead of the halflife.
-    """
+    """does the recomputed halflife-5 rate reproduce the shipped column exactly?"""
     rows = []
     for target in RATE_TARGETS:
         shipped = frame[f"ewma_{target}_per_min"].to_numpy(dtype=float)
@@ -127,9 +100,6 @@ def reproduction_check(frame: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# ---------------------------------------------------------------------------
-# stage 2: score every method on every origin
-# ---------------------------------------------------------------------------
 def _score_origin(frame: pd.DataFrame, origin: tuple[str, str, str]) -> tuple[pd.DataFrame, list[dict]]:
     """one origin: fit the shared composition once, then every method x target."""
     name, vstart, vend = origin
@@ -158,9 +128,8 @@ def _score_origin(frame: pd.DataFrame, origin: tuple[str, str, str]) -> tuple[pd
 
     frames: list[pd.DataFrame] = []
     selections: list[dict] = []
-    # dict.fromkeys rather than a list comprehension: two EVENT_COHORTS definitions read
-    # the SAME column (vacated_minutes >= 30 and vacated_minutes < 5), and selecting it
-    # twice makes the frame unwritable and every later groupby ambiguous
+    # dict.fromkeys: two EVENT_COHORTS definitions read the same column, and selecting
+    # it twice makes the frame unwritable and later groupbys ambiguous
     cohort_cols = list(dict.fromkeys(
         c for _, c, _, _ in EVENT_COHORTS if c in valid_all.columns
     ))
@@ -212,9 +181,6 @@ def run(frame: pd.DataFrame,
     return pd.concat(pieces, ignore_index=True), pd.DataFrame(selections)
 
 
-# ---------------------------------------------------------------------------
-# stage 3: the endpoints, the bootstrap and the cohorts
-# ---------------------------------------------------------------------------
 def headline(predictions: pd.DataFrame) -> pd.DataFrame:
     """primary (unconditional, all rows) and secondary (conditional, appearances)."""
     rows = []
@@ -239,7 +205,7 @@ def headline(predictions: pd.DataFrame) -> pd.DataFrame:
 
 
 def per_origin(predictions: pd.DataFrame) -> pd.DataFrame:
-    """unconditional MAE per origin - the '5/5 origins' consistency read."""
+    """unconditional MAE per origin, the consistency read."""
     grid = (
         predictions.groupby(["target", "method", "origin"])
         .apply(lambda g: mae(g["y"], g["uncond"]), include_groups=False)
@@ -259,9 +225,7 @@ def bootstrap_table(predictions: pd.DataFrame, seed: int = RANDOM_STATE) -> pd.D
     for target, block in predictions.groupby("target"):
         incumbent = block[block["method"] == INCUMBENT].set_index(keys)
         base_err = (incumbent["y"] - incumbent["uncond"]).abs()
-        # the origin label lives on the index after set_index, and the PAIRING is the
-        # whole point of this table - reading it off the incumbent's own index is what
-        # guarantees the challenger was aligned to the same rows, in the same order
+        # read off the incumbent's own index so the pairing is guaranteed aligned
         origin_labels = pd.Series(incumbent.index.get_level_values("origin"))
         for method, group in block.groupby("method"):
             if method == INCUMBENT:
@@ -288,9 +252,8 @@ def bootstrap_table(predictions: pd.DataFrame, seed: int = RANDOM_STATE) -> pd.D
     out = pd.DataFrame(rows)
     if out.empty:
         return out
-    # THE HOLM FAMILY IS THE DECISION FAMILY ONLY. the descriptive sweep members are
-    # bootstrapped and reported for completeness, but including them in the correction
-    # would penalise the eight candidates for tests that can promote nothing.
+    # the Holm correction covers the decision family only; descriptive members are
+    # bootstrapped and reported but can promote nothing
     family = decision_methods()
     out["decision_candidate"] = out["method"].isin(family)
     holm = []
@@ -308,7 +271,7 @@ def bootstrap_table(predictions: pd.DataFrame, seed: int = RANDOM_STATE) -> pd.D
 
 
 def cohort_table(predictions: pd.DataFrame) -> pd.DataFrame:
-    """DESCRIPTIVE ONLY. unconditional MAE by minutes tier and by event cohort."""
+    """descriptive only: unconditional MAE by minutes tier and by event cohort."""
     rows = []
     definitions: list[tuple[str, np.ndarray]] = []
     for tier in TIER_ORDER:
@@ -340,16 +303,10 @@ def cohort_table(predictions: pd.DataFrame) -> pd.DataFrame:
 
 
 def halflife_sweep(predictions: pd.DataFrame) -> pd.DataFrame:
-    """the DESCRIPTIVE halflife curve, both schemes, primary endpoint.
+    """the descriptive halflife curve, both schemes, primary endpoint.
 
-    NOT part of the decision family: only its two pre-registered representatives (the
-    inner-selected M1 and the fixed-halflife-12 M2) are. This table exists because
-    "halflife 12 helps" is a claim about a curve, and a curve is the honest way to show
-    it - including the case where the curve is flat.
-
-    the (scheme, halflife) label of each fixed-halflife member is read off the bracket
-    objects rather than parsed out of their names, so a renamed method cannot silently
-    land in the wrong row of the sweep.
+    each member's (scheme, halflife) is read off the bracket object rather than parsed
+    from its name, so a rename cannot land it in the wrong row.
     """
     fixed = {
         m.name: (m.scheme, m.halflife)
@@ -387,10 +344,7 @@ def main() -> None:
     parser.add_argument("--rebuild", action="store_true",
                         help="recompute the rate cache and the cross-fit minutes")
     parser.add_argument("--from-cache", action="store_true",
-                        help="re-render the tables from the cached per-row predictions "
-                             "instead of re-scoring. the scoring is deterministic, so "
-                             "this changes no number - it exists so that a reporting fix "
-                             "does not require another pass over the bracket")
+                        help="re-render the tables from the cached per-row predictions")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 

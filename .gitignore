@@ -9,12 +9,11 @@ venv/
 .venv/
 .claude/
 backend/.serverless/
+.pytest_cache/
 
-# Playwright artifacts
 frontend/test-results/
 frontend/playwright-report/
 frontend/playwright/.cache/
 
-# Local operator notes — intentionally untracked. Describes the full
-# infrastructure setup and is for the maintainer's reference only.
+# local infra notes, maintainer only
 SETUP_GUIDE.txt

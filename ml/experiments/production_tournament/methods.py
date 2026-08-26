@@ -1,36 +1,7 @@
 """the eight rate estimators, and the inner-fold machinery that tunes them.
 
-EVERY METHOD PRODUCES ONE THING: a per-minute rate, one number per scheduled
-validation row. The composition that turns it into a projection
-(``P(play) x E[min|plays] x rate``) is fitted once per origin by the runner and
-shared verbatim, so the bracket is a one-variable comparison and the leakage guards
-in ``models.minutes_propagated_estimate`` run on all eight.
-
-THE INNER FOLD, and why hyperparameters cannot be chosen anywhere else. the reported
-number comes from an origin's validation month. choosing a halflife by looking at
-that month and then reporting the winning halflife's score on it is how a 1% noise
-difference becomes a 1% "finding" - the choice has already spent the evidence. so
-every hyperparameter here is chosen on the LAST 30 DAYS OF THE TRAINING WINDOW,
-scored by a proxy of the real endpoint built entirely from out-of-fold quantities the
-frame already carries:
-
-    proxy = P_CONTEXT x OOF_MIN x rate
-
-``P_CONTEXT`` is the cross-fit base availability probability the v3 dataset build
-already produced for every scheduled row; ``OOF_MIN`` is the cross-fit minutes
-prediction from :mod:`crossfit`. Both are strictly out of fold for every row by
-construction, so the selection criterion needs no extra fits and cannot peek. It is a
-PROXY - it uses the base availability model rather than the final one - and it is used
-only to rank candidates within a family, never to produce a reported number.
-
-THE COMMON FALLBACK IS TERMINAL. 3.83% of scheduled rows belong to a player with no
-prior appearance-with-minutes at all. Every method - including the ones whose own
-definition would happily supply a number there (shrinkage returns the prior, the
-boosters return a feature-based guess) - is overridden on those rows with the
-incumbent's own league fallback, ``sum(stat) / sum(MIN)`` over the origin's training
-appearances. That is deliberately conservative: it denies the fancier methods a free
-win on cold-start rows and makes the bracket a test of the rate estimator on players
-who have a history, which is what the question was about.
+hyperparameters are chosen on the last 30 days of the training window, never on the
+validation month, and scored by a proxy built only from out-of-fold quantities.
 """
 
 from __future__ import annotations
@@ -73,25 +44,17 @@ from .rates import (
 
 log = logging.getLogger(__name__)
 
-# the inner-validation window, in days back from the origin's cutoff. one month, so
-# it is the same shape of window as the outer validation month it stands in for.
 INNER_DAYS = 30
 
 RIDGE_ALPHAS: tuple[float, ...] = (0.1, 1.0, 10.0, 100.0, 1000.0)
 TWEEDIE_POWER = 1.5
 
 
-# ---------------------------------------------------------------------------
-# per-origin context
-# ---------------------------------------------------------------------------
 @dataclass
 class OriginContext:
     """everything a method may look at for one origin, and nothing it may not.
 
-    the validation frame is here because methods have to SCORE it; no method is ever
-    handed its outcome columns for fitting, and the runner asserts that the rate a
-    method emits is a function of the validation features alone by construction (all
-    fitting happens in ``prepare``, which only ever sees ``train_all``).
+    all fitting happens in ``prepare``, which only ever sees ``train_all``.
     """
 
     name: str
@@ -126,25 +89,19 @@ def proxy_mae(rows: pd.DataFrame, target: str, rate: np.ndarray) -> float:
 def has_rate_history(rows: pd.DataFrame) -> np.ndarray:
     """rows whose player has at least one strictly-prior appearance with minutes.
 
-    read off the as-of-joined ``rate_n``, so it is the same mask for every method and
-    for every halflife - the join that produced it is shared.
+    read off the as-of-joined ``rate_n``, so the mask is shared across methods and
+    halflives.
     """
     return pd.to_numeric(rows[RATE_N], errors="coerce").notna().to_numpy()
 
 
-# ---------------------------------------------------------------------------
-# the method interface
-# ---------------------------------------------------------------------------
 class RateMethod:
     """a rate estimator. ``prepare`` may only look at ``ctx.train_*``."""
 
     name = "abstract"
     label = "abstract"
-    # DESCRIPTIVE members are scored on exactly the same rows as the decision family
-    # and reported in exactly the same tables, but they are NOT in the Holm family and
-    # cannot promote anything. they exist because "halflife 12 helps" is a claim about a
-    # curve, and a curve with two points on it is not a curve. TOURNAMENT.md section 0.6
-    # pre-registers the five-point sweep as descriptive for precisely this reason.
+    # descriptive members are scored and reported but are not in the Holm family and
+    # cannot promote anything.
     descriptive = False
 
     def prepare(self, ctx: OriginContext, target: str, fallback: float) -> None:
@@ -167,12 +124,7 @@ class RateMethod:
 
 
 class EwmaRate(RateMethod):
-    """EWMA of per-game ratios at a FIXED halflife, plain or minutes-weighted.
-
-    M0 (plain, h=5) and M2 (plain, h=12) are decision members; the rest of the
-    five-point sweep in both schemes is instantiated from this class with
-    ``descriptive=True``.
-    """
+    """EWMA of per-game ratios at a fixed halflife, plain or minutes-weighted."""
 
     def __init__(self, halflife: float, name: str, label: str,
                  scheme: str = SCHEME_PLAIN, descriptive: bool = False) -> None:
@@ -209,8 +161,7 @@ class SelectedHalflifeRate(RateMethod):
             rate = rows[rate_column(self.scheme, target, h)].to_numpy(dtype=float)
             rate = np.where(np.isfinite(rate), rate, self.fallback)
             scores.append((proxy_mae(rows, target, rate), h))
-        # ties break to the SHORTER halflife: the more conservative estimator, and the
-        # one that does not claim a memory the inner fold could not distinguish
+        # ties break to the shorter halflife, the more conservative estimator
         self.halflife = min(scores, key=lambda s: (s[0], s[1]))[1]
 
     def _raw_rate(self, rows: pd.DataFrame) -> np.ndarray:
@@ -221,11 +172,9 @@ class SelectedHalflifeRate(RateMethod):
 
 
 class ShrunkRate(RateMethod):
-    """empirical-Bayes shrinkage toward a position prior fitted on TRAIN rows only.
+    """empirical-Bayes shrinkage toward a position prior fitted on train rows only.
 
-    ``halflife=None`` selects the halflife jointly with k over the full grid (the
-    hybrid candidate M8); a fixed halflife tunes only k (M4, which changes exactly one
-    thing about the incumbent).
+    ``halflife=None`` selects the halflife jointly with k; a fixed halflife tunes k.
     """
 
     def __init__(self, name: str, label: str, halflife: float | None = INCUMBENT_HALFLIFE,
@@ -253,8 +202,7 @@ class ShrunkRate(RateMethod):
             for k in self.ks:
                 rate = shrink_toward_prior(base, n, prior, k)
                 scores.append((proxy_mae(rows, target, rate), h, k))
-        # ties break to the shorter halflife and then the LARGER k - more shrinkage is
-        # the more conservative estimator
+        # ties break to the shorter halflife then the larger k, more shrinkage
         best = min(scores, key=lambda s: (s[0], s[1], -s[2]))
         self.halflife, self.k = best[1], best[2]
 
@@ -269,15 +217,7 @@ class ShrunkRate(RateMethod):
 
 
 class RidgeResidualRate(RateMethod):
-    """ridge on ``r - ewma_5(r)`` over the v3 honest features. M5.
-
-    THE FRAMING BEING TESTED: form (the EWMA) is the level, and the features explain
-    tonight's DEVIATION from it - a back-to-back, a soft defence, a night with 30
-    vacated minutes. It is a strictly weaker ask than predicting the rate outright,
-    which is why it is the shape a linear model has the best chance in: the EWMA
-    already carries the player identity, so the coefficients only have to carry
-    context.
-    """
+    """ridge on ``r - ewma_5(r)`` over the v3 honest features."""
 
     name = "M5_ridge_residual"
     label = "ridge on the residual r - EWMA5(r), v3 honest features"
@@ -320,8 +260,7 @@ class RidgeResidualRate(RateMethod):
             rate = self._apply(ctx.inner_valid, inner, target)
             rate = np.where(np.isfinite(rate), rate, self.fallback)
             scores.append((proxy_mae(ctx.inner_valid, target, np.clip(rate, 0.0, None)), alpha))
-        # ties break to the LARGER alpha: more regularisation is the more conservative
-        # model, and the one closer to the incumbent it is trying to beat
+        # ties break to the larger alpha, the more conservative model
         self.alpha = min(scores, key=lambda s: (s[0], -s[1]))[1]
         self.model = self._fit(ctx.train_rate, target, self.alpha)
 
@@ -333,22 +272,10 @@ class RidgeResidualRate(RateMethod):
 
 
 class PoissonOffsetRate(RateMethod):
-    """LightGBM Poisson on raw counts with ``log(OOF minutes)`` as the offset. M6.
+    """LightGBM Poisson on raw counts with ``log(OOF minutes)`` as the offset.
 
-    THE COUNT-NATIVE FRAMING. points and assists are counts, not continuous
-    quantities, and their variance grows with their mean; a squared-error regression on
-    a ratio fights both facts. a Poisson GBM with a log-minutes offset models
-    ``stat ~ Poisson(minutes * rate)`` directly, so what the trees learn IS the
-    per-minute intensity: ``rate = exp(f(x))``, and the offset is exactly what makes
-    that identification hold.
-
-    the offset is the CROSS-FIT out-of-fold minutes prediction, never the realized
-    target-game minutes. using realized minutes here would be the single most
-    flattering leak available in this whole bracket - the model would be told how long
-    the player was on the floor before being asked how much he produced.
-
-    hyperparameters are FIXED at ``config.LGBM_PARAMS``, pre-registered, so this
-    candidate spends no selection budget at all.
+    the offset is the cross-fit out-of-fold minutes prediction; realized target-game
+    minutes would leak.
     """
 
     name = "M6_lgbm_poisson_offset"
@@ -372,8 +299,7 @@ class PoissonOffsetRate(RateMethod):
         self.model.fit(self._design(train), y, init_score=self._offset(train))
 
     def _raw_rate(self, rows: pd.DataFrame) -> np.ndarray:
-        # raw_score excludes the fit-time init_score, so exp(f(x)) is the per-minute
-        # intensity the offset factored the count into
+        # raw_score excludes the fit-time init_score, so exp(f(x)) is the rate
         return np.exp(self.model.predict(self._design(rows), raw_score=True))
 
     def chosen(self) -> dict[str, object]:
@@ -381,18 +307,7 @@ class PoissonOffsetRate(RateMethod):
 
 
 class TweedieRate(RateMethod):
-    """LightGBM Tweedie on rates with minutes as the sample weight. M7.
-
-    THE RATE-NATIVE FRAMING with the weighting defect fixed inside the LOSS rather
-    than inside the feature. the target is the per-game ratio, so no offset and no
-    predicted minutes are involved at all; the sample weight says a 36-minute
-    observation of a rate is nine times the evidence a 4-minute one is. Tweedie rather
-    than squared error because a per-minute rate is non-negative, right-skewed and has
-    a point mass at zero (a bench player who did not score), which is the exact shape
-    Tweedie's variance function is for.
-
-    hyperparameters FIXED and pre-registered, as for M6.
-    """
+    """LightGBM Tweedie on rates with minutes as the sample weight."""
 
     name = "M7_lgbm_tweedie_rate"
     label = "LightGBM Tweedie on rates, minutes as sample weight"
@@ -423,7 +338,7 @@ INCUMBENT = "M0_ewma_h5"
 
 
 def build_methods() -> list[RateMethod]:
-    """the pre-registered bracket, in the order TOURNAMENT.md section 0.6 lists it."""
+    """the pre-registered decision family, incumbent first."""
     return [
         EwmaRate(INCUMBENT_HALFLIFE, INCUMBENT,
                  "INCUMBENT: EWMA halflife 5 of stat/max(MIN,4)"),
@@ -444,14 +359,7 @@ def build_methods() -> list[RateMethod]:
 
 
 def build_descriptive_methods() -> list[RateMethod]:
-    """the rest of the five-point halflife sweep, in both schemes. DESCRIPTIVE ONLY.
-
-    plain halflife 5 and 12 are already in the decision family as M0 and M2, so they are
-    not duplicated here. everything else in the 2 x 5 grid is scored on the same rows so
-    the report can print the CURVE the DEPTH_REPORT hypothesis is a point on - including
-    the case where the curve turns out to be flat, which a two-point table could not
-    show either way.
-    """
+    """the rest of the five-point halflife sweep, in both schemes, descriptive only."""
     out: list[RateMethod] = []
     for h in HALFLIVES:
         if h not in (INCUMBENT_HALFLIFE, 12.0):

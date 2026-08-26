@@ -1,35 +1,3 @@
-"""the four decisions ``daily_run.py`` makes that nothing downstream would catch.
-
-WHAT IS AND IS NOT TESTED HERE, because the boundary is the point of the file.
-
-``daily_run.py`` is a pipeline: it queries the schedule, drives ``build_dataset.py``,
-``fnba_ml.prospective`` and ``predict.py``, and prints a summary. Almost none of that
-is new behaviour and all of it is already covered - ``test_prospective.py`` for the
-future-row construction, ``test_predictions.py`` for the serving path,
-``test_prospective_freeze.py`` for the artifact. Re-testing it through a driver would
-need a database and would prove nothing that is not already proven.
-
-Four things ARE new, and each of them can be wrong in a way that produces a
-plausible-looking run rather than an error:
-
-  1. **The window.** Off by one timezone and the 5pm ET cron asks for tomorrow's
-     slate every single evening, publishes it, and the store fills with runs whose
-     horizon is 27 hours.
-  2. **The staleness rule.** Too strict and the run refuses to serve on an ordinary
-     overnight; too loose and it serves week-old form without saying so.
-  3. **The prospective label.** MODEL.md 13.8.4 makes the label the definition of
-     what counts, so a run that carries it wrongly contaminates the first genuinely
-     untouched evaluation this system will get - silently, and only visibly in April.
-  4. **The post-tipoff filter.** 13.8.2 is the one rule in section 13 with no
-     judgement in it. A single post-tipoff row makes every season aggregate
-     unauditable, and ``predict.py`` has no notion of a tip time, so this is the only
-     place the rule can be enforced.
-
-All four are pure functions taking their inputs as arguments, which is why they are
-pure functions: a rule that can only be exercised by running the pipeline is a rule
-nobody will exercise.
-"""
-
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
@@ -41,30 +9,18 @@ import daily_run
 from fnba_ml import config
 from fnba_ml.prospective import SOURCE_PROSPECTIVE
 
-# ---------------------------------------------------------------------------
-# 1. the window
-# ---------------------------------------------------------------------------
-
 
 class TestEasternToday:
-    """the Eastern calendar date, which is the date a schedule row carries."""
-
     @pytest.mark.parametrize(
         ("utc", "expected"),
         [
-            # EDT (UTC-4). 03:30Z on the 19th is 23:30 on the 18th in New York, and
-            # the 18th is the date whose slate a manager is still setting a lineup for.
             ("2026-08-19T03:30:00Z", date(2026, 8, 18)),
             ("2026-08-19T04:30:00Z", date(2026, 8, 19)),
             # EST (UTC-5). the offset changes and the rule must not.
             ("2026-12-15T04:30:00Z", date(2026, 12, 14)),
             ("2026-12-15T05:30:00Z", date(2026, 12, 15)),
-            # the cron's own instant, 16:00Z, is midday Eastern in both halves of
-            # the year, so the window it opens is the slate a manager wakes up to.
             ("2026-10-20T16:00:00Z", date(2026, 10, 20)),
             ("2027-01-20T16:00:00Z", date(2027, 1, 20)),
-            # and the retired 21:00Z instant still maps the same way; the date rule
-            # never depended on the cron time.
             ("2026-10-20T21:00:00Z", date(2026, 10, 20)),
             ("2027-01-20T21:00:00Z", date(2027, 1, 20)),
         ],
@@ -73,13 +29,11 @@ class TestEasternToday:
         assert daily_run.eastern_today(pd.Timestamp(utc).to_pydatetime()) == expected
 
     def test_a_naive_now_is_read_as_utc(self) -> None:
-        """no ambient local timezone. a runner in any region must agree with prod."""
         naive = datetime(2026, 8, 19, 3, 30)
         aware = datetime(2026, 8, 19, 3, 30, tzinfo=timezone.utc)
         assert daily_run.eastern_today(naive) == daily_run.eastern_today(aware)
 
     def test_the_utc_date_and_the_eastern_date_genuinely_differ(self) -> None:
-        """the guard against 'it passes because the timezone never mattered'."""
         instant = datetime(2026, 10, 21, 2, 0, tzinfo=timezone.utc)
         assert instant.date() == date(2026, 10, 21)
         assert daily_run.eastern_today(instant) == date(2026, 10, 20)
@@ -98,7 +52,6 @@ class TestPredictionWindow:
         assert start == end == date(2026, 10, 20)
 
     def test_window_extends_forward_never_backward(self) -> None:
-        """13.8.2 forbids backfilling a missed slate; the arithmetic cannot express it."""
         for days in (1, 2, 3, 7):
             start, end = daily_run.prediction_window(
                 days, now=datetime(2026, 12, 1, 21, 0, tzinfo=timezone.utc)
@@ -118,7 +71,6 @@ class TestPredictionWindow:
         assert daily_run.prediction_window(2, date(2026, 10, 20)) == expected
 
     def test_window_start_ignores_today(self) -> None:
-        """the escape hatch overrides the clock and nothing else."""
         start, _ = daily_run.prediction_window(
             2, "2026-10-20", now=datetime(2027, 3, 1, tzinfo=timezone.utc)
         )
@@ -130,11 +82,6 @@ class TestPredictionWindow:
         )
 
 
-# ---------------------------------------------------------------------------
-# 2. the staleness rule
-# ---------------------------------------------------------------------------
-
-
 class TestStalenessWarning:
     def test_no_lag_is_not_stale(self) -> None:
         assert daily_run.staleness_warning(
@@ -143,7 +90,6 @@ class TestStalenessWarning:
 
     @pytest.mark.parametrize("lag", [1, 2, 3])
     def test_a_lag_within_tolerance_is_not_stale(self, lag: int) -> None:
-        """the scraper runs every six hours, so an overnight gap is ordinary."""
         logs = date(2026, 12, 1)
         schedule = date(2026, 12, 1) + pd.Timedelta(days=lag).to_pytimedelta()
         assert daily_run.staleness_warning(logs, schedule) is None
@@ -154,15 +100,12 @@ class TestStalenessWarning:
         schedule = logs + pd.Timedelta(days=lag).to_pytimedelta()
         message = daily_run.staleness_warning(logs, schedule)
         assert message is not None
-        # the message is what lands in prediction_runs.notes, so it has to carry
-        # both dates and the size of the gap - a bare "STALE" is unauditable later.
         assert "STALE" in message
         assert str(logs) in message
         assert str(schedule) in message
         assert f"{lag} days behind" in message
 
     def test_the_boundary_is_inclusive(self) -> None:
-        """exactly at the tolerance is not stale; one day past it is."""
         logs = date(2026, 12, 1)
         edge = logs + pd.Timedelta(days=daily_run.STALE_AFTER_DAYS).to_pytimedelta()
         assert daily_run.staleness_warning(logs, edge) is None
@@ -170,12 +113,10 @@ class TestStalenessWarning:
         assert daily_run.staleness_warning(logs, over) is not None
 
     def test_nothing_behind_the_window_is_not_stale(self) -> None:
-        """opening night: no game has been played, so nothing is missing."""
         assert daily_run.staleness_warning(None, None) is None
         assert daily_run.staleness_warning(date(2026, 4, 12), None) is None
 
     def test_an_empty_truth_layer_with_games_behind_us_is_stale(self) -> None:
-        """the case the check exists for must not be the case it is silent on."""
         message = daily_run.staleness_warning(None, date(2026, 12, 1))
         assert message is not None
         assert "empty" in message
@@ -186,13 +127,7 @@ class TestStalenessWarning:
         assert daily_run.staleness_warning(logs, schedule, max_lag_days=5) is None
 
 
-# ---------------------------------------------------------------------------
-# 3. the prospective label
-# ---------------------------------------------------------------------------
-
-
 def _qualifying(**overrides: object) -> dict[str, object]:
-    """the argument set a real 2026-27 gameday run makes. every value from the freeze."""
     kwargs: dict[str, object] = {
         "seasons": [str(config.PROSPECTIVE_2026_27["season"])],
         "season_types": ["Regular Season"],
@@ -233,14 +168,12 @@ class TestProspectiveConditions:
         assert any(fragment in r for r in reasons), reasons
 
     def test_a_mixed_season_window_disqualifies(self) -> None:
-        """a window straddling the rollover is not a 2026-27 run for all of its rows."""
         reasons = daily_run.prospective_conditions(
             **_qualifying(seasons=["2026-27", "2027-28"])
         )
         assert reasons and "2027-28" in reasons[0]
 
     def test_the_frozen_season_is_read_from_the_freeze(self) -> None:
-        """no second copy of '2026-27' in the driver (section 13's own preamble)."""
         source = (daily_run.__file__ or "")
         text = open(source, encoding="utf-8").read()
         assert '"2026-27"' not in text and "'2026-27'" not in text
@@ -254,7 +187,6 @@ class TestProspectiveConditions:
 
 class TestRunNotes:
     def test_a_qualifying_run_carries_the_frozen_note(self) -> None:
-        """13.4 fixes the served run's note verbatim."""
         note = daily_run.run_notes([])
         assert note == (
             f"{config.PROSPECTIVE_RUN_NOTE_LABEL}; "
@@ -262,14 +194,12 @@ class TestRunNotes:
         )
 
     def test_a_disqualified_run_never_carries_the_label(self) -> None:
-        """the load-bearing assertion: a look report selects the season by substring."""
         note = daily_run.run_notes(["horizon lock is not gameday"])
         assert config.PROSPECTIVE_RUN_NOTE_LABEL not in note
         assert "NOT PROSPECTIVE" in note
         assert "horizon lock is not gameday" in note
 
     def test_the_reason_text_cannot_smuggle_the_label_in(self) -> None:
-        """a reworded reason must fail loudly rather than contaminate the season."""
         with pytest.raises(AssertionError, match=config.PROSPECTIVE_RUN_NOTE_LABEL):
             daily_run.run_notes([f"not {config.PROSPECTIVE_RUN_NOTE_LABEL}"])
 
@@ -285,14 +215,8 @@ class TestRunNotes:
         assert stale in daily_run.run_notes(["horizon lock is not gameday"], stale)
 
     def test_a_stale_qualifying_run_still_carries_the_label(self) -> None:
-        """staleness is a warning, not a disqualification: 13.8.1 is best effort."""
         note = daily_run.run_notes([], "STALE truth layer: 9 days behind")
         assert note.startswith(config.PROSPECTIVE_RUN_NOTE_LABEL)
-
-
-# ---------------------------------------------------------------------------
-# 4. the post-tipoff filter
-# ---------------------------------------------------------------------------
 
 
 def _slate() -> pd.DataFrame:
@@ -321,11 +245,6 @@ class TestDropTippedOff:
         assert tipped.empty
 
     def test_the_cron_instant_keeps_the_whole_slate(self) -> None:
-        """16:00Z is noon ET: every tip, the 3pm game included, is still ahead.
-
-        this is the coverage the 2026-08-24 cron move bought; the retired 21:00Z
-        instant below shows exactly what it used to lose.
-        """
         upcoming, tipped = daily_run.drop_tipped_off(
             _slate(), pd.Timestamp("2026-10-20T16:00:00Z")
         )
@@ -335,7 +254,6 @@ class TestDropTippedOff:
         assert tipped.empty
 
     def test_the_retired_cron_instant_drops_only_the_afternoon_game(self) -> None:
-        """21:00Z is 5pm ET: the 3pm game has started, the two evening games have not."""
         upcoming, tipped = daily_run.drop_tipped_off(
             _slate(), pd.Timestamp("2026-10-20T21:00:00Z")
         )
@@ -350,7 +268,6 @@ class TestDropTippedOff:
         assert len(tipped) == 3
 
     def test_a_prediction_at_the_tip_is_not_before_it(self) -> None:
-        """13.8.2 has no grace period, so neither does the comparison."""
         exact = pd.Timestamp("2026-10-20T19:00:00Z")
         upcoming, tipped = daily_run.drop_tipped_off(_slate(), exact)
         assert "0022600001" in set(tipped["GAME_ID"])
@@ -372,12 +289,9 @@ class TestDropTippedOff:
         assert len(upcoming) == 2
 
     def test_an_unknown_tip_falls_back_to_the_nominal_hour(self) -> None:
-        """no scheduled_at: the approximation predict.py already uses, not a new one."""
         frame = _slate()
         frame["SCHEDULED_AT"] = pd.NaT
-        # nominal tip is GAME_DATE + NOMINAL_TIP_HOUR_UTC, i.e. 2026-10-20T00:00Z,
-        # which is EARLIER than every real tip - so an unknown tip is dropped rather
-        # than published on an optimistic guess.
+        # an unknown tip is dropped rather than published on an optimistic guess
         upcoming, tipped = daily_run.drop_tipped_off(
             frame, pd.Timestamp("2026-10-20T12:00:00Z")
         )
@@ -400,8 +314,6 @@ class TestDropTippedOff:
         upcoming, tipped = daily_run.drop_tipped_off(
             frame, pd.Timestamp("2026-10-20T18:00:00Z")
         )
-        # row 0 tips at 19:00Z (upcoming), row 1 is approximated to 00:00Z (dropped),
-        # row 2 tips at 01:30Z the next day (upcoming).
         assert list(upcoming["GAME_ID"]) == ["0022600001", "0022600003"]
         assert list(tipped["GAME_ID"]) == ["0022600002"]
 
@@ -416,7 +328,6 @@ class TestDropTippedOff:
         assert list(upcoming["GAME_ID"]) == ["0022600002", "0022600003"]
 
     def test_the_two_halves_partition_the_frame(self) -> None:
-        """no row may be lost and none may be counted twice."""
         for hour in range(0, 30, 3):
             now = pd.Timestamp("2026-10-20T00:00:00Z") + pd.Timedelta(hours=hour)
             upcoming, tipped = daily_run.drop_tipped_off(_slate(), now)
@@ -437,7 +348,6 @@ class TestDropTippedOff:
         pd.testing.assert_frame_equal(frame, before)
 
     def test_the_nominal_hour_is_predicts_own(self) -> None:
-        """one nominal tip in the package, not two that can drift apart."""
         import predict
 
         frame = _slate().drop(columns=["SCHEDULED_AT"])
@@ -448,14 +358,8 @@ class TestDropTippedOff:
         assert (tip == expected).all()
 
 
-# ---------------------------------------------------------------------------
-# 5. the preflight, and the phase contract
-# ---------------------------------------------------------------------------
-
-
 class TestVerifyPinnedArtifact:
     def test_the_checked_in_artifact_verifies(self) -> None:
-        """the same claim test_prospective_freeze makes, through the run-time path."""
         assert daily_run.verify_pinned_artifact() == []
 
     def test_a_missing_directory_is_reported_not_silently_passed(self, tmp_path) -> None:
@@ -472,7 +376,6 @@ class TestVerifyPinnedArtifact:
         )
 
     def test_an_extra_file_in_the_served_directory_is_caught(self, tmp_path) -> None:
-        """set equality: an added file changes what 'the artifact' means."""
         real = config.MODELS_DIR / config.PROSPECTIVE_MODEL_VERSION
         target = tmp_path / config.PROSPECTIVE_MODEL_VERSION
         target.mkdir()
@@ -492,7 +395,6 @@ class TestPhaseContract:
         assert "postgres said no" in str(caught.value)
 
     def test_a_driven_scripts_systemexit_is_relabelled(self) -> None:
-        """predict.py signals failure with SystemExit(str); the phase name is added."""
         with pytest.raises(daily_run.PhaseFailure) as caught:
             with daily_run.phase("predict"):
                 raise SystemExit("no trained model at models/20260818")
@@ -500,7 +402,6 @@ class TestPhaseContract:
         assert "no trained model" in str(caught.value)
 
     def test_a_clean_no_op_passes_through_unrelabelled(self) -> None:
-        """the offseason exit is not a failure and must not be dressed as one."""
         with pytest.raises(daily_run.NothingToDo):
             with daily_run.phase("schedule"):
                 raise daily_run.NothingToDo("no games in window")
@@ -512,7 +413,6 @@ class TestPhaseContract:
         assert caught.value.phase == "dataset"
 
     def test_every_phase_the_driver_enters_is_declared(self) -> None:
-        """phase() indexes into PHASES, so an undeclared phase name is a ValueError."""
         text = open(daily_run.__file__, encoding="utf-8").read()
         used = {
             line.split('phase("')[1].split('"')[0]
@@ -530,11 +430,6 @@ class TestPhaseContract:
         assert daily_run.PHASES.index("prospective") < daily_run.PHASES.index("predict")
 
 
-# ---------------------------------------------------------------------------
-# 6. the command line, since the workflow is the only caller
-# ---------------------------------------------------------------------------
-
-
 class TestArgs:
     def test_the_scheduled_invocation_needs_no_arguments(self) -> None:
         args = daily_run.parse_args([])
@@ -546,7 +441,6 @@ class TestArgs:
         assert daily_run.parse_args(["--dry-run"]).dry_run is True
 
     def test_the_out_dir_is_not_the_hand_built_dataset(self) -> None:
-        """a daily run must not clobber data/dataset.parquet."""
         args = daily_run.parse_args([])
         assert args.out_dir != config.DATA_DIR
         assert args.out_dir.parent == config.DATA_DIR
