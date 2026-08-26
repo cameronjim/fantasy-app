@@ -144,9 +144,11 @@ describe('rating tiers', () => {
     ];
 
     // act + assert
+    // strong is info, not primary: primary is reserved for actions, and a
+    // rating badge in the action color reads as a button
     expect(classes).toEqual([
-      'bg-success', 'bg-primary', 'bg-warning', 'bg-error', 'bg-base-300',
-      'badge-success', 'badge-primary', 'badge-warning', 'badge-error', 'badge-ghost',
+      'bg-success', 'bg-info', 'bg-warning', 'bg-error', 'bg-base-300',
+      'badge-success', 'badge-info', 'badge-warning', 'badge-error', 'badge-ghost',
     ]);
     // a hardcoded tailwind palette shade would break the non-default themes
     for (const className of classes) {

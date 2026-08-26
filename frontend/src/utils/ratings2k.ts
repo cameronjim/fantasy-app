@@ -148,9 +148,11 @@ export function ratingTier(value: NumericLike | null | undefined): Rating2kTier 
   return 'weak';
 }
 
+// "strong" is info, not primary: primary is the app's action color (buttons,
+// Full Analytics), and a rating badge in the same hue reads as a control.
 const TIER_BAR_CLASS: Record<Rating2kTier, string> = {
   elite: 'bg-success',
-  strong: 'bg-primary',
+  strong: 'bg-info',
   average: 'bg-warning',
   weak: 'bg-error',
   unknown: 'bg-base-300',
@@ -158,7 +160,7 @@ const TIER_BAR_CLASS: Record<Rating2kTier, string> = {
 
 const TIER_BADGE_CLASS: Record<Rating2kTier, string> = {
   elite: 'badge-success',
-  strong: 'badge-primary',
+  strong: 'badge-info',
   average: 'badge-warning',
   weak: 'badge-error',
   unknown: 'badge-ghost',
