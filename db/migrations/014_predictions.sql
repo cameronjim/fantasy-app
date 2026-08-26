@@ -31,6 +31,9 @@ CREATE INDEX IF NOT EXISTS idx_prediction_runs_predicted_at
 --
 -- stat vocabulary: bare name is conditional, '<stat>_uncond' is the
 -- schedule-level expectation. 'prob_active' is always [0,1], quantile NULL.
+-- reserved stat names (no CHECK constraint on `stat`, so this line is the
+-- contract; ml/tests/test_rate_targets.py parses it):
+--   'minutes','pts','reb','ast','stl','blk','tov','fg3m','fgm','fga','ftm','fta'
 CREATE TABLE IF NOT EXISTS player_game_predictions (
     -- BIGSERIAL: append-only across every slate and run outgrows SERIAL
     id BIGSERIAL PRIMARY KEY,
