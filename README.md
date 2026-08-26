@@ -7,7 +7,7 @@
 A full-stack fantasy basketball app built on real NBA stats, with AI-powered team
 analysis, waiver wire suggestions, game predictions, and a betting picks tab.
 
-**Live app: [fantasy-nba.cameronjim.com](https://fantasy-nba.cameronjim.com)**
+**Live app: [nbaiq.cameronjim.com](https://nbaiq.cameronjim.com)**
 
 Player stats, team stats, the live scoreboard, and the odds board are all open to
 anyone. Creating a free account (email/password or Google Sign-In) unlocks the
