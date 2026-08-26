@@ -1,4 +1,4 @@
-# AGENTS.md — Fantasy NBA
+# AGENTS.md — NBA IQ
 
 This is the single source of truth for AI agents and human contributors
 working on this repo. It covers:
@@ -20,7 +20,7 @@ checklist** before you finish.
 
 ### What this app is
 
-Fantasy NBA is a small personal full-stack app:
+NBA IQ is a small personal full-stack app:
 
 - **Stats `/`** — searchable/sortable player and team tables, live scoreboard
 - **My Team `/fantasy`** — personal fantasy roster with Claude-powered 9-category analysis

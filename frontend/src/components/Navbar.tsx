@@ -66,7 +66,7 @@ export function Navbar({ isLoggedIn, onLogout }: NavbarProps): JSX.Element {
     <div className="navbar bg-base-200 border-b border-base-300 sticky top-0 z-50 px-4">
       <div className="flex-1 flex items-center gap-2">
         <NavLink to="/" className="text-xl font-bold tracking-tight">
-          Fantasy <span className="text-primary">NBA</span>
+          NBA <span className="text-primary">IQ</span>
         </NavLink>
         <StatusBadge />
       </div>

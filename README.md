@@ -1,4 +1,4 @@
-# Fantasy NBA
+# NBA IQ
 
 [![CI](https://github.com/cameronjim/fantasy-app/actions/workflows/ci.yml/badge.svg)](https://github.com/cameronjim/fantasy-app/actions/workflows/ci.yml)
 [![Deploy](https://github.com/cameronjim/fantasy-app/actions/workflows/deploy.yml/badge.svg)](https://github.com/cameronjim/fantasy-app/actions/workflows/deploy.yml)
