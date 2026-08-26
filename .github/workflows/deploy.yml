@@ -51,6 +51,9 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1
+          # the action sends session tags by default, which needs sts:TagSession
+          # in the role trust policy; skip them instead of requiring it
+          role-skip-session-tagging: true
 
       - name: Serverless deploy
         env:
@@ -101,6 +104,9 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1
+          # the action sends session tags by default, which needs sts:TagSession
+          # in the role trust policy; skip them instead of requiring it
+          role-skip-session-tagging: true
 
       # vite emits content-hashed assets under dist/assets/ — safe to cache
       # forever. anything outside dist/assets/ (index.html, favicon, etc.)
