@@ -52,16 +52,16 @@ archived).
 | Path            | Purpose                                                              |
 |-----------------|----------------------------------------------------------------------|
 | `frontend/`     | React + Vite app                                                     |
-| `frontend/src/` | components, pages, hooks, api client, types                          |
+| `frontend/src/` | `components/` (grouped by feature: player/, watchlist/, slate/, betting/, ratings2k/), pages, hooks, api client, `types/` |
 | `frontend/test/`| Vitest unit tests for frontend modules                               |
 | `frontend/e2e/` | Playwright e2e tests (specs, page objects, fixtures)                 |
 | `backend/`      | Express server                                                       |
 | `backend/src/`  | routes, middleware, services, db                                     |
 | `backend/tests/`| Vitest unit + api tests                                              |
-| `db/`           | PostgreSQL schema and migrations                                     |
-| `scraper/`      | Python scraper (cron-driven by GitHub Actions)                       |
-| `db/`           | schema.sql, sequential migrations, seed script                        |
-| `.github/`      | GitHub Actions workflows (scraper cron, CI)                          |
+| `ml/`           | prediction models: `fnba_ml/` package, `train.py`/`predict.py`/`evaluate.py`, `tests/`, `MODEL.md` |
+| `db/`           | schema.sql, sequential migrations, seed script                       |
+| `scraper/`      | Python scraper package (cron-driven by GitHub Actions); `run_scraper.py` is the CLI entry point |
+| `.github/`      | GitHub Actions workflows (scraper cron, predictions cron, CI)        |
 
 ### Files to read before editing each area
 
@@ -73,11 +73,12 @@ archived).
 | Anthropic AI           | `backend/src/services/ai.ts`, `backend/src/routes/ai.ts`                   |
 | Auth                   | `backend/src/middleware/auth.ts`, `backend/src/routes/auth.ts`             |
 | Frontend pages         | `frontend/src/App.tsx`, the page file under `frontend/src/pages/`          |
-| Frontend components    | `frontend/src/components/` for the relevant file                           |
+| Frontend components    | the matching subfolder under `frontend/src/components/`                    |
 | API client             | `frontend/src/api/client.ts`                                               |
-| Types shared by both   | `frontend/src/types.ts`                                                    |
+| Types shared by both   | `frontend/src/types/` (`index.ts` re-exports everything)                   |
 | Database schema        | `db/schema.sql`, then any later files in `db/migrations/`                  |
-| Scraper                | `scraper/run_scraper.py`                                                   |
+| Scraper                | `scraper/run_scraper.py`, then the relevant module (`truth_layer.py`, `backfill.py`, `fetching.py`, ...) |
+| ML models               | `ml/README.md`, then `ml/MODEL.md` for the frozen protocol                 |
 | Deployment             | `backend/serverless.yml`, `backend/src/lambda.ts`, `.env.example`, `.github/workflows/deploy.yml` |
 | Tests                  | `backend/tests/`, `frontend/test/`, `frontend/e2e/`, this file's §6        |
 
@@ -325,12 +326,17 @@ configuration values.
 
 ### Comments
 
-- **Lowercase**, short, and direct. Explain **why**, not what.
-- Single-line `//` comments for brief explanations. Reserve `/** ... */`
-  for actual JSDoc on exported APIs.
-- No decorative dividers, banners, or separator lines.
+Sparse and short. Most functions need none.
+
+- **Lowercase**, one short sentence max. Explain **why**, not what.
+- Only for a genuine gotcha: a workaround, a units/timezone trap, an
+  invariant that isn't obvious from the code.
+- No file-header essays, no design rationale, no "why not X" arguments,
+  no history ("this used to...", "as of 2026-08-17"). That belongs in a
+  commit message or MODEL.md, not the file.
+- No decorative dividers, banners, or separator lines. No em dashes.
 - No commenting obvious code.
-- No `TODO` without owner and context (or, better, don't commit it — file
+- No `TODO` without owner and context (or, better, don't commit it, file
   an issue instead).
 - No `console.log`, `console.warn`, `console.error` in committed code.
 
