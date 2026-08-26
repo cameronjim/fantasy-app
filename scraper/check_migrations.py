@@ -1,33 +1,3 @@
-"""
-Migration state checker.
-
-This project has no migration runner: every file in db/migrations/ is applied by
-hand in the Neon SQL editor, against two databases (prod and the dev branch).
-That makes "has 013 been applied to this one?" a real question with no answer,
-and the usual way it gets answered is a "relation does not exist" error in
-production.
-
-This script answers it instead. It hashes every migration on disk and compares
-against the schema_migrations table (added by migration 013), then reports:
-
-    applied            - recorded, and the file is unchanged since
-    not applied        - on disk, nothing recorded
-    checksum mismatch  - recorded, but the file has been edited since
-    unknown to disk    - recorded, but no such file (a deleted migration)
-
-Usage:
-    cd scraper/
-    python check_migrations.py            # prod (DATABASE_URL)
-    python check_migrations.py --dev      # dev branch (DATABASE_URL_DEV)
-    python check_migrations.py --record 013_truth_layer.sql
-
-Read-only unless --record is passed. --record writes a schema_migrations row for
-a migration you have just applied by hand; it does NOT execute any SQL from the
-migration file, so it can never be mistaken for a migration runner.
-
-Exit codes: 0 = everything on disk is applied and unchanged, 1 = otherwise.
-"""
-
 import argparse
 import hashlib
 import logging
@@ -40,9 +10,6 @@ import psycopg2
 # from inside scraper/
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# resolve_database_url owns the DATABASE_URL / DATABASE_URL_DEV rules and the
-# actionable error message when one is missing. Reused rather than duplicated so
-# --dev cannot come to mean two different things in two files.
 from run_scraper import TARGET_DEV, TARGET_PROD, resolve_database_url  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -53,22 +20,14 @@ MIGRATIONS_DIR = os.path.join(
 
 
 def migration_files(directory: str = MIGRATIONS_DIR) -> list[str]:
-    """Migration filenames in numeric order.
-
-    Sorted lexicographically, which is numeric order given the zero-padded
-    three-digit prefix the convention already uses.
-    """
     if not os.path.isdir(directory):
         return []
     return sorted(f for f in os.listdir(directory) if f.endswith(".sql"))
 
 
 def file_checksum(path: str) -> str:
-    """sha256 of a file's bytes.
-
-    Bytes, not text: a checksum that changed when someone's editor rewrote the
-    line endings would cry wolf on every checkout.
-    """
+    # bytes, not text: a checksum that moved when an editor rewrote the line
+    # endings would cry wolf on every checkout.
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
         for chunk in iter(lambda: handle.read(65536), b""):
@@ -77,12 +36,8 @@ def file_checksum(path: str) -> str:
 
 
 def _recorded_migrations(conn: psycopg2.extensions.connection) -> dict[str, str] | None:
-    """filename -> checksum from schema_migrations, or None if the table is absent.
-
-    None is a meaningful answer, not an error: on a database where migration 013
-    has not been applied yet the table genuinely does not exist, and the whole
-    point of this script is to survive that state and say so.
-    """
+    # None is a meaningful answer, not an error: before migration 013 the table
+    # genuinely does not exist, and saying so is the point of this script.
     cur = conn.cursor()
     try:
         cur.execute("SELECT to_regclass('schema_migrations')")
@@ -114,10 +69,6 @@ def _record(conn: psycopg2.extensions.connection, filename: str, checksum: str) 
 def classify(
     on_disk: dict[str, str], recorded: dict[str, str]
 ) -> dict[str, list[str]]:
-    """Split every known migration into applied / unapplied / mismatched / orphaned.
-
-    Pure over two dicts so the reporting logic is testable without a database.
-    """
     applied: list[str] = []
     unapplied: list[str] = []
     mismatched: list[str] = []
@@ -141,8 +92,6 @@ def classify(
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="report migration state")
-    # mirrors run_scraper's flags exactly, including prod-by-default, so the two
-    # scripts can never be pointed at different databases by the same command
     target = parser.add_mutually_exclusive_group()
     target.add_argument(
         "--dev",
