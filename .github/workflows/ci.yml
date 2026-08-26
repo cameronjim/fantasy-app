@@ -169,32 +169,6 @@ jobs:
         with:
           node-version: '20'
 
-      # TEMPORARY DEBUG - remove once the oidc failure is diagnosed.
-      # emits claims as warning annotations (readable via the api) instead of
-      # logs. prints no token and no full account id: this repo is public.
-      - name: Debug OIDC claims
-        env:
-          ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-        run: |
-          if [ -z "$ROLE_ARN" ]; then
-            echo "::warning::ROLE_ARN_IS_EMPTY variable did not resolve"
-          else
-            acct=$(echo "$ROLE_ARN" | cut -d: -f5)
-            name=$(echo "$ROLE_ARN" | sed 's|.*/||')
-            echo "::warning::role_var len=${#ROLE_ARN} role_name=$name acct_last4=****${acct: -4}"
-          fi
-          tok=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r '.value')
-          if [ -z "$tok" ] || [ "$tok" = "null" ]; then
-            echo "::warning::NO_ID_TOKEN could not fetch an oidc token"
-            exit 0
-          fi
-          p=$(echo "$tok" | cut -d. -f2)
-          while [ $(( ${#p} % 4 )) -ne 0 ]; do p="${p}="; done
-          claims=$(echo "$p" | tr '_-' '/+' | base64 -d 2>/dev/null)
-          echo "::warning::sub=$(echo "$claims" | jq -r .sub)"
-          echo "::warning::aud=$(echo "$claims" | jq -r .aud) repo=$(echo "$claims" | jq -r .repository) event=$(echo "$claims" | jq -r .event_name)"
-
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
