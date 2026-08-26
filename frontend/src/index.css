@@ -209,5 +209,22 @@
   --border: 1px;
 }
 
+/* daisyui's default field focus is a 2px outline offset 2px outside the 1px
+   border, which reads as a thick double ring on every input, select and date
+   picker. keep the focus affordance (accessibility) but make it a hairline
+   snug against the field. utilities layer so it wins the cascade against the
+   plugin css. */
+@layer utilities {
+  .input:focus,
+  .input:focus-within,
+  .select:focus,
+  .select:focus-within,
+  .textarea:focus,
+  .textarea:focus-within {
+    outline-width: 1px;
+    outline-offset: 0px;
+  }
+}
+
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { scrollbar-width: none; }
