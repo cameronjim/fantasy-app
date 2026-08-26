@@ -50,14 +50,14 @@ export function passwordResetEmail(resetUrl: string, username: string): {
   html: string;
   text: string;
 } {
-  const subject = 'Reset your Fantasy NBA password';
+  const subject = 'Reset your NBA IQ password';
   const safeResetUrl = escapeHtml(resetUrl);
   const safeUsername = escapeHtml(username);
 
   const text = [
     `Hi ${username},`,
     '',
-    'We received a request to reset your Fantasy NBA password.',
+    'We received a request to reset your NBA IQ password.',
     'Click the link below to choose a new password. It expires in 1 hour.',
     '',
     resetUrl,
@@ -73,7 +73,7 @@ export function passwordResetEmail(resetUrl: string, username: string): {
       <table width="480" cellpadding="0" cellspacing="0" style="background:#ffffff; border-radius:12px; padding:32px; max-width:480px;">
         <tr><td>
           <h2 style="color:#1f2937; margin:0 0 16px; font-size:22px;">Reset your password</h2>
-          <p style="color:#4b5563; line-height:1.6; margin:0 0 16px;">Hi ${safeUsername}, we received a request to reset your Fantasy NBA password.</p>
+          <p style="color:#4b5563; line-height:1.6; margin:0 0 16px;">Hi ${safeUsername}, we received a request to reset your NBA IQ password.</p>
           <p style="color:#4b5563; line-height:1.6; margin:0 0 24px;">Click the button below to choose a new password. The link expires in 1 hour.</p>
           <table cellpadding="0" cellspacing="0"><tr><td style="background:#2563eb; border-radius:8px;">
             <a href="${safeResetUrl}" style="display:inline-block; color:#ffffff; text-decoration:none; padding:12px 28px; font-weight:600; font-size:15px;">Reset Password</a>
