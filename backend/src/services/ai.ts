@@ -3,7 +3,6 @@ import { activeProviderKind, getNarrator } from './aiProvider.js';
 import { getRankedPlayers } from './fantasyScore.js';
 import type { BettingGame } from './odds.js';
 
-/** Pulls the JSON payload out of a model reply that may be fenced or chatty. */
 export function extractJSON(text: string): string {
   const fenced = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
   if (fenced) return fenced[1].trim();
@@ -12,11 +11,6 @@ export function extractJSON(text: string): string {
   return text;
 }
 
-/**
- * The single chokepoint every AI feature routes through. Kept on its original
- * signature so callers stay provider-agnostic; the actual protocol is chosen
- * by the narrator in aiProvider.ts.
- */
 export async function callClaude(
   systemPrompt: string,
   messages: Array<{ role: string; content: string }>,
@@ -29,9 +23,6 @@ export async function callClaude(
       content: m.content,
     })),
     maxTokens: options.maxTokens,
-    // per-request overrides in this codebase are Claude model ids; forwarding
-    // one to an OpenAI-compatible gateway would 404, so they only apply when
-    // the anthropic provider is active.
     model: activeProviderKind() === 'anthropic' ? options.model : undefined,
   });
   return result.text;
@@ -49,31 +40,12 @@ function formatPlayerLine(p: PlayerRow): string {
   );
 }
 
-/**
- * Finite number, or null. `Number(null)` is 0, so a plain coercion would turn
- * a missing projection into a confident "0% chance to play" — the opposite of
- * "we don't know", and a claim the prompt would act on.
- */
 function finite(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-/**
- * Compact recent-form block appended to the roster prompts: each player's
- * last-10 averages against their own season, plus the modelled chance they
- * suit up for their next game.
- *
- * Deliberately additive and deliberately fragile-proof. The data lives in the
- * game-log and prediction tables from migrations 013/014, which a given
- * environment may not have applied yet, so ANY failure here returns an empty
- * string and the prompt is exactly what it was before. An AI feature must not
- * go down because an optional enrichment table is missing.
- *
- * One query, regardless of roster size: the rolling windows are computed in
- * SQL and the availability row is joined on.
- */
 async function buildRosterAnalyticsBlock(
   roster: Array<{ nba_id: string; name: string }>
 ): Promise<string> {
@@ -180,16 +152,10 @@ async function buildRosterAnalyticsBlock(
       : 'RECENT FORM (last 10 games, change vs season average):';
     return `\n${heading}\n${lines.join('\n')}\n`;
   } catch {
-    // 013/014 not applied, or the enrichment query failed for any other
-    // reason. The prompt is still complete without it.
     return '';
   }
 }
 
-/**
- * `nba_id` is needed to join the roster to game logs and predictions. Rows
- * without one (players that predate the scraper) simply skip the enrichment.
- */
 function rosterNbaIds(rows: PlayerRow[]): Array<{ nba_id: string; name: string }> {
   const out: Array<{ nba_id: string; name: string }> = [];
   for (const row of rows) {
@@ -232,18 +198,9 @@ export async function buildTeamContext(userId: number): Promise<string> {
   return context;
 }
 
-/**
- * Builds the AI context for waiver / trade suggestions.
- *
- * leagueSize is used to compute how many players are realistically rostered
- * in the user's league (size * 13 = total rostered). Trade targets come from
- * inside that pool (other managers' players); waiver candidates come from
- * outside it. Without leagueSize we default to 10 teams.
- */
 export async function buildWaiverContext(userId: number, leagueSize?: number): Promise<string> {
   const ranked = await getRankedPlayers();
 
-  // Pull the user's roster (with full stats for the prompt).
   const rosterResult = await query(
     `SELECT p.id, p.nba_id, p.name, p.team, p.position,
             p.points_per_game, p.rebounds_per_game, p.assists_per_game, p.steals_per_game, p.blocks_per_game,
@@ -261,22 +218,15 @@ export async function buildWaiverContext(userId: number, leagueSize?: number): P
   const rosterIds = new Set<number>(rosterResult.rows.map((r: { id: number }) => r.id));
   const players = rosterResult.rows;
 
-  // Roster size assumption — 13 is the most common 9-cat depth.
   const ROSTER_DEPTH = 13;
   const teams = leagueSize && leagueSize >= 4 ? leagueSize : 10;
   const rosteredCutoff = teams * ROSTER_DEPTH;
 
-  // Trade targets: presumably owned by someone in the league, so they're
-  // inside the top `rosteredCutoff`. Sample with some randomness so we don't
-  // always recommend the same names.
   const tradeCandidates = ranked
     .filter((p) => p.fantasy_rank != null && p.fantasy_rank <= rosteredCutoff && !rosterIds.has(p.id));
   shuffleInPlace(tradeCandidates);
   const tradeTargets = tradeCandidates.slice(0, 20);
 
-  // Waiver candidates: ranked OUTSIDE the rostered pool. We grab a ~250-deep
-  // band starting just past the cutoff so the AI has realistic, available
-  // names to choose from. Sorting by RANDOM gives variety.
   const waiverBandWidth = 250;
   const waiverCandidates = ranked
     .filter((p) =>
@@ -365,7 +315,6 @@ interface TeamForm {
   avgAllowed: string;
 }
 
-/** win-loss record and scoring averages over a team's last `n` finals */
 function recentForm(finals: FinalGameRow[], team: string, n = 10): TeamForm | null {
   const games = finals
     .filter((g) => g.home_team === team || g.away_team === team)
@@ -390,7 +339,6 @@ function recentForm(finals: FinalGameRow[], team: string, n = 10): TeamForm | nu
   };
 }
 
-/** head-to-head summary lines between two teams from the stored finals */
 function headToHead(finals: FinalGameRow[], teamA: string, teamB: string, maxGames = 5): string[] {
   const meetings = finals.filter(
     (g) =>
@@ -413,12 +361,6 @@ function headToHead(finals: FinalGameRow[], teamA: string, teamB: string, maxGam
   return lines;
 }
 
-/**
- * Builds the AI context for betting picks: each upcoming game's posted
- * markets with implied probabilities, both teams' records and ratings,
- * recent form (last 10), head-to-head results, and the injury report for
- * rotation players on the involved teams.
- */
 export async function buildBettingContext(games: BettingGame[]): Promise<string> {
   const teamNames = [...new Set(games.flatMap((g) => [g.home_team, g.away_team]))];
 
@@ -433,9 +375,6 @@ export async function buildBettingContext(games: BettingGame[]): Promise<string>
     teamsResult.rows.map((t: Record<string, unknown>) => [t.name as string, t])
   );
 
-  // completed games involving any team on the slate, newest first. feeds both
-  // last-10 form and head-to-head. capped to keep the scan bounded; 400 rows
-  // comfortably covers 10+ games for every team plus all season meetings.
   const finalsResult = await query(
     `SELECT home_team, away_team, home_score, away_score,
             TO_CHAR(game_date, 'YYYY-MM-DD') AS game_date
@@ -449,7 +388,6 @@ export async function buildBettingContext(games: BettingGame[]): Promise<string>
   );
   const finals = finalsResult.rows as FinalGameRow[];
 
-  // rotation players only (15+ mpg) — a two-way player's ankle doesn't move a line.
   const injuriesResult = await query(
     `SELECT p.name, p.team, p.injury_status, p.injury_detail, p.points_per_game
      FROM players p

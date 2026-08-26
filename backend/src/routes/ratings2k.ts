@@ -10,14 +10,11 @@ import {
   parseTeamType,
 } from '../services/ratings2kParams.js';
 
-// public, no auth — same as /api/players. 2K ratings are not user data.
 const router = Router();
 
 const INVALID_TEAM_TYPE = 'teamType must be one of curr, class, allt, all';
 const NAME_REQUIRED = 'A name is required';
 
-// SMALLINT arrives from pg as a real number, unlike NUMERIC, so nothing here
-// needs the float8 cast /api/history applies to its per-game stats.
 const SUMMARY_COLUMNS = `slug,
        name,
        team,
@@ -35,8 +32,6 @@ const DETAIL_COLUMNS = `${SUMMARY_COLUMNS},
        wingspan,
        updated_at`;
 
-// 2K's own tier ladder, strongest first. A CASE rather than a lookup table
-// because it is five fixed literals, not data anyone maintains.
 const BADGE_TIER_ORDER = `CASE tier
            WHEN 'Legendary'    THEN 1
            WHEN 'Hall of Fame' THEN 2
@@ -46,11 +41,6 @@ const BADGE_TIER_ORDER = `CASE tier
            ELSE 6
          END`;
 
-/**
- * One roster type's cards, best rating first, with an optional name filter.
- * `teamType=all` spans every roster type; anything unrecognized is a 400 rather
- * than a silent fallback, because serving the wrong roster is a wrong answer.
- */
 router.get('/players', async (req: Request, res: Response): Promise<void> => {
   const parsedTeamType = parseTeamType(req.query.teamType);
   if (!parsedTeamType.ok) {
@@ -79,8 +69,6 @@ router.get('/players', async (req: Request, res: Response): Promise<void> => {
   const offsetPlaceholder = params.length + 2;
 
   try {
-    // count first, then the page — the mocked query in tests resolves in call
-    // order, and Promise.all preserves it.
     const [countResult, pageResult] = await Promise.all([
       query(`SELECT COUNT(*)::int AS total FROM nba_2k_players ${where}`, params),
       query(
@@ -103,12 +91,6 @@ router.get('/players', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-/**
- * One card in full — the attribute modal's payload. Attributes, badges, and
- * rating history are read as separate rows rather than a join so a card with no
- * badges (or, for an unrated rookie, no attributes at all) still returns cleanly
- * with empty arrays.
- */
 router.get('/players/:slug', async (req: Request, res: Response): Promise<void> => {
   const { slug } = req.params;
 
@@ -141,8 +123,6 @@ router.get('/players/:slug', async (req: Request, res: Response): Promise<void> 
         [slug]
       ),
       query(
-        // game_version is always "2K" plus two digits (2K10 through 2K27), so a
-        // plain DESC sort is chronological, newest game first.
         `SELECT game_version, overall, delta
          FROM nba_2k_rating_history
          WHERE player_slug = $1
@@ -163,15 +143,6 @@ router.get('/players/:slug', async (req: Request, res: Response): Promise<void> 
   }
 });
 
-/**
- * Resolve an app player to their 2K card by name, since 2K publishes no NBA
- * player id. Responds 200 with `player: null` on a miss rather than 404: a name
- * with no 2K card is the expected case for two-way players and mid-season
- * signings, not an error the caller should have to branch on.
- *
- * A name can match several cards (a current card plus classic ones), so the
- * current-roster card wins, then the highest overall.
- */
 router.get('/by-player-name', async (req: Request, res: Response): Promise<void> => {
   const normalized = normalizeName(req.query.name);
   if (!normalized) {

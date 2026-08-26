@@ -11,7 +11,6 @@ import {
   type UpcomingPredictionRow,
 } from '../../src/services/playerPredictions.js';
 
-// the pivot rules and the query-parameter grammar, without a database.
 
 function row(over: Partial<UpcomingPredictionRow> = {}): UpcomingPredictionRow {
   return {
@@ -30,8 +29,6 @@ function row(over: Partial<UpcomingPredictionRow> = {}): UpcomingPredictionRow {
 
 describe('parseFromDate', () => {
   it('treats an absent parameter as no filter rather than as today', () => {
-    // the only stored run is a January backtest; defaulting to today would
-    // render every player empty while looking healthy.
     expect(parseFromDate(undefined)).toBeNull();
     expect(parseFromDate('')).toBeNull();
     expect(parseFromDate(null)).toBeNull();
@@ -95,21 +92,17 @@ describe('orderStatKeys', () => {
 
 describe('pivotUpcomingRows', () => {
   it('groups the long format into one entry per game, date-ordered', () => {
-    // arrange — deliberately out of order
     const rows = [
       row({ nba_game_id: '0022500601', game_date: new Date(2026, 0, 17), stat: 'pts', value: 27 }),
       row({ stat: 'pts', value: 30 }),
     ];
 
-    // act
     const games = pivotUpcomingRows(rows, 'LAL');
 
-    // assert
     expect(games.map((g) => g.game_date)).toEqual(['2026-01-15', '2026-01-17']);
   });
 
   it('splits conditional, unconditional and quantile rows into one stat line', () => {
-    // arrange
     const rows = [
       row({ stat: 'minutes', quantile: null, value: 36.333 }),
       row({ stat: 'minutes', quantile: 0.1, value: 28.475 }),
@@ -118,10 +111,8 @@ describe('pivotUpcomingRows', () => {
       row({ stat: 'minutes_uncond', quantile: null, value: 33.232, conditional: false }),
     ];
 
-    // act
     const [game] = pivotUpcomingRows(rows, 'LAL');
 
-    // assert — `_uncond` folds into the base stat rather than becoming its own key
     expect(Object.keys(game.stats)).toEqual(['minutes']);
     expect(game.stats.minutes).toEqual({
       expected: 36.33,
@@ -133,13 +124,10 @@ describe('pivotUpcomingRows', () => {
   });
 
   it('serves a partial band instead of dropping it', () => {
-    // arrange — a run with a median but no tails
     const rows = [row({ stat: 'pts', quantile: 0.5, value: 24.5 })];
 
-    // act
     const [game] = pivotUpcomingRows(rows, 'LAL');
 
-    // assert
     expect(game.stats.pts).toEqual({
       expected: null,
       p10: null,
@@ -150,47 +138,39 @@ describe('pivotUpcomingRows', () => {
   });
 
   it('lifts the two availability stats out of the stat map and clamps them', () => {
-    // arrange
     const rows = [
       row({ stat: 'prob_active', value: 1.4, conditional: false }),
       row({ stat: 'prob_active_model', value: -0.2, conditional: false }),
       row({ stat: 'pts', value: 30 }),
     ];
 
-    // act
     const [game] = pivotUpcomingRows(rows, 'LAL');
 
-    // assert
     expect(game.prob_active).toBe(1);
     expect(game.prob_active_model).toBe(0);
     expect(Object.keys(game.stats)).toEqual(['pts']);
   });
 
   it('never nulls a stat line out for a player the model expects to sit', () => {
-    // arrange — prob_active encodes the absence; the numbers stay visible
     const rows = [
       row({ stat: 'prob_active', value: 0.04, conditional: false }),
       row({ stat: 'pts', quantile: 0.5, value: 22.1 }),
       row({ stat: 'pts_uncond', quantile: null, value: 0.9, conditional: false }),
     ];
 
-    // act
     const [game] = pivotUpcomingRows(rows, 'LAL');
 
-    // assert
     expect(game.prob_active).toBe(0.04);
     expect(game.stats.pts.p50).toBe(22.1);
     expect(game.stats.pts.unconditional).toBe(0.9);
   });
 
   it('reads home/away off the player team and picks the other side as the opponent', () => {
-    // arrange + act
     const [home] = pivotUpcomingRows([row()], 'LAL');
     const [away] = pivotUpcomingRows([row()], 'CHA');
     const [neither] = pivotUpcomingRows([row()], 'BOS');
     const [unknown] = pivotUpcomingRows([row()], null);
 
-    // assert
     expect([home.is_home, home.opponent_abbr]).toEqual([true, 'CHA']);
     expect([away.is_home, away.opponent_abbr]).toEqual([false, 'LAL']);
     expect([neither.is_home, neither.opponent_abbr]).toEqual([null, null]);
@@ -198,27 +178,22 @@ describe('pivotUpcomingRows', () => {
   });
 
   it('skips rows with no usable game id or date', () => {
-    // arrange + act
     const games = pivotUpcomingRows([row({ nba_game_id: null }), row({ game_date: null })], 'LAL');
 
-    // assert
     expect(games).toEqual([]);
   });
 });
 
 describe('collectStatKeys', () => {
   it('unions the stat keys across games in display order', () => {
-    // arrange
     const rows = [
       row({ stat: 'pts', value: 30 }),
       row({ nba_game_id: '0022500601', game_date: new Date(2026, 0, 17), stat: 'reb', value: 8 }),
       row({ nba_game_id: '0022500601', game_date: new Date(2026, 0, 17), stat: 'minutes', value: 33 }),
     ];
 
-    // act
     const keys = collectStatKeys(pivotUpcomingRows(rows, 'LAL'));
 
-    // assert
     expect(keys).toEqual(['minutes', 'pts', 'reb']);
   });
 });

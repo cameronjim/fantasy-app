@@ -4,10 +4,6 @@ import { getCurrentBenchmarks } from '../services/benchmarks.js';
 
 const router = Router();
 
-/**
- * Returns the latest update timestamp for each data source.
- * Used by the frontend status badge so users can see when stats were last refreshed.
- */
 router.get('/', async (_req: Request, res: Response): Promise<void> => {
   try {
     const result = await query(`
@@ -22,11 +18,6 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
   }
 });
 
-/**
- * Live league benchmarks computed from the current player pool. Powers the
- * AI's "strong/average/weak" thresholds; also handy for the UI if we ever
- * want to surface the league average alongside the user's team averages.
- */
 router.get('/benchmarks', async (_req: Request, res: Response): Promise<void> => {
   try {
     const benchmarks = await getCurrentBenchmarks();

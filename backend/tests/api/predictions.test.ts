@@ -12,7 +12,6 @@ const { IMPACT_POOL_KEY, IMPACT_POOL_LABEL, IMPACT_POOL_DEFINITION, POINTS_UNCON
   await import('../../src/services/slate.js');
 const queryMock = vi.mocked(query);
 
-/** The pool descriptor every slate response echoes, for a pool of `size`. */
 function poolOf(size: number): Record<string, unknown> {
   return {
     key: IMPACT_POOL_KEY,
@@ -22,15 +21,8 @@ function poolOf(size: number): Record<string, unknown> {
   };
 }
 
-/** The baseline descriptor both responses echo, verbatim from the service. */
 const baseline = baselineDescriptor();
 
-/**
- * The baseline that exactly matches `watchRow`'s projected line, so a candidate
- * deviates from his usual only in the stats a test explicitly moves. A helper
- * that set every stat to one number instead would hand every player a large
- * negative deviation in the peripheral categories and quietly drop him.
- */
 const FLAT_BASELINE: Record<string, number> = {
   minutes: 31,
   pts: 8,
@@ -42,7 +34,6 @@ const FLAT_BASELINE: Record<string, number> = {
   fga: 7,
 };
 
-/** One row of `baselines.ts::fetchBaselines`. */
 function baselineRow(
   nbaPlayerId: string,
   overrides: Record<string, unknown> = {}
@@ -58,23 +49,7 @@ function baselineRow(
   return { ...row, ...overrides };
 }
 
-// the slate route issues its queries in a fixed order:
-//   1. the day's schedule
-//   2. the latest complete prediction run
-//   3. team_id -> abbreviation
-//   4. the run's per-player predictions (skipped when there is no run)
-//   5. the vs-usual baselines (skipped when the run projected nobody)
-//   6. the injury overlay (same skip rule as the baselines)
-//
-// the watchlist route:
-//   1. the latest complete prediction run
-//   2. the run's per-player predictions, conditional AND unconditional
-//   3. the vs-usual baselines
-//   4. the schedule's team abbreviations, for naming the opponent
-// each of 2-4 is skipped once an earlier one has established there is nothing
-// to rank.
 
-/** pg's "relation does not exist" — what an unapplied migration looks like. */
 function undefinedTable(relation: string): Error & { code: string } {
   const err = new Error(`relation "${relation}" does not exist`) as Error & { code: string };
   err.code = '42P01';
@@ -101,11 +76,6 @@ const runRow = {
   predicted_at: new Date('2026-02-04T11:00:00.000Z'),
 };
 
-/**
- * One pivoted prediction row as `fetchPredictions` returns it: the box-score
- * columns are the run's UNCONDITIONAL expectations (`<stat>_uncond`), which is
- * what makes them comparable across a slate.
- */
 function predictionRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     nba_game_id: '0022500555',
@@ -135,7 +105,6 @@ beforeEach(() => {
 
 describe('GET /api/predictions/slate', () => {
   it('returns each scheduled game with its top projected players', async () => {
-    // arrange
     queryMock
       .mockResolvedValueOnce(pgResult(scheduleRows))
       .mockResolvedValueOnce(pgResult([runRow]))
@@ -156,10 +125,8 @@ describe('GET /api/predictions/slate', () => {
       .mockResolvedValueOnce(pgResult([baselineRow('201939', { minutes: 30, pts: 30 }), baselineRow('2544', { minutes: 30, pts: 30 })]))
       .mockResolvedValueOnce(pgResult([]));
 
-    // act
     const res = await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.date).toBe('2026-02-04');
     expect(res.body.run).toEqual({
@@ -176,8 +143,6 @@ describe('GET /api/predictions/slate', () => {
       away_team_id: '1610612744',
       away_team_abbr: 'GSW',
     });
-    // the two rows are identical except for points, so points is the only
-    // category that separates them and the better scorer leads on impact.
     expect(res.body.games[0].players[0]).toEqual({
       nba_player_id: '201939',
       name: 'Stephen Curry',
@@ -206,9 +171,6 @@ describe('GET /api/predictions/slate', () => {
   });
 
   it('overlays the current injury designation and flags a post-run change', async () => {
-    // arrange — two players: one ruled OUT after the run published (no
-    // designation existed at the run's boundary), one QUESTIONABLE that the
-    // run already knew about. Only the first is a change.
     queryMock
       .mockResolvedValueOnce(pgResult(scheduleRows))
       .mockResolvedValueOnce(pgResult([runRow]))
@@ -241,10 +203,8 @@ describe('GET /api/predictions/slate', () => {
         ])
       );
 
-    // act
     const res = await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
 
-    // assert
     expect(res.status).toBe(200);
     const byId = new Map(
       (res.body.games[0].players as Array<Record<string, unknown>>).map((p) => [
@@ -267,9 +227,6 @@ describe('GET /api/predictions/slate', () => {
   });
 
   it('reads the unconditional stat names, not `conditional = false` on the bare ones', async () => {
-    // arrange — the contradictory predicate this endpoint used to carry matched
-    // zero rows, which showed up as "- pts" for every player rather than as an
-    // error. See the STAT VOCABULARY block in services/slate.ts.
     queryMock
       .mockResolvedValueOnce(pgResult(scheduleRows))
       .mockResolvedValueOnce(pgResult([runRow]))
@@ -278,10 +235,8 @@ describe('GET /api/predictions/slate', () => {
       .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult([]));
 
-    // act
     await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
 
-    // assert
     const [sql, params] = queryMock.mock.calls[3];
     expect(params).toContain(POINTS_UNCOND_STAT);
     expect(params).not.toContain('pts');
@@ -289,7 +244,6 @@ describe('GET /api/predictions/slate', () => {
   });
 
   it('caps each game at eight players', async () => {
-    // arrange
     const many = Array.from({ length: 15 }, (_, i) =>
       predictionRow({ nba_player_id: String(i), name: `Player ${i}`, pts: i })
     );
@@ -301,18 +255,13 @@ describe('GET /api/predictions/slate', () => {
       .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult([]));
 
-    // act
     const res = await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
 
-    // assert
     expect(res.body.games[0].players).toHaveLength(8);
     expect(res.body.games[0].players[0].name).toBe('Player 14');
   });
 
   it('labels a player with no roster row instead of rendering a blank name', async () => {
-    // arrange — an offseason addition the season-stats scrape has not written
-    // yet: predictions exist, `players` has nothing, so the LEFT JOIN gives a
-    // NULL name. As an empty string it also sorted FIRST alphabetically.
     queryMock
       .mockResolvedValueOnce(pgResult(scheduleRows))
       .mockResolvedValueOnce(pgResult([runRow]))
@@ -326,10 +275,8 @@ describe('GET /api/predictions/slate', () => {
       .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult([]));
 
-    // act
     const res = await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
 
-    // assert
     const [first, second] = res.body.games[0].players;
     expect(first.name).toBe('Stephen Curry');
     expect(second.name).toBe('NBA #1642850 (new roster)');
@@ -338,7 +285,6 @@ describe('GET /api/predictions/slate', () => {
   });
 
   it('spotlights the top impact players per game and across the slate', async () => {
-    // arrange — five players in one game, separated only by points
     queryMock
       .mockResolvedValueOnce(pgResult(scheduleRows))
       .mockResolvedValueOnce(pgResult([runRow]))
@@ -353,10 +299,8 @@ describe('GET /api/predictions/slate', () => {
       .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult([]));
 
-    // act
     const res = await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
 
-    // assert — three per game, and all five are inside the slate's top ten
     const players = res.body.games[0].players;
     expect(players.map((p: { spotlight: boolean }) => p.spotlight)).toEqual([
       true,
@@ -366,13 +310,10 @@ describe('GET /api/predictions/slate', () => {
       false,
     ]);
     expect(players.every((p: { slate_spotlight: boolean }) => p.slate_spotlight)).toBe(true);
-    // impact is a z-score sum, so an average night on this slate is 0
     expect(players[2].impact).toBe(0);
   });
 
   it('orders the game cards by the biggest projected impact on them', async () => {
-    // arrange — the star is in the game with the LATER id, which is where the
-    // old schedule-order listing would have buried him
     queryMock
       .mockResolvedValueOnce(
         pgResult([
@@ -391,10 +332,8 @@ describe('GET /api/predictions/slate', () => {
       .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult([]));
 
-    // act
     const res = await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
 
-    // assert
     expect(res.body.games.map((g: { nba_game_id: string }) => g.nba_game_id)).toEqual([
       '0022500999',
       '0022500111',
@@ -403,32 +342,25 @@ describe('GET /api/predictions/slate', () => {
   });
 
   it('still lists the games when no run has finished yet', async () => {
-    // arrange — schedule present, no complete run
     queryMock
       .mockResolvedValueOnce(pgResult(scheduleRows))
       .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult(teamRows));
 
-    // act
     const res = await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.run).toBeNull();
     expect(res.body.games).toHaveLength(1);
     expect(res.body.games[0].players).toEqual([]);
-    // the prediction query is never issued without a run to read
     expect(queryMock).toHaveBeenCalledTimes(3);
   });
 
   it('returns an empty slate for a day with no games', async () => {
-    // arrange
     queryMock.mockResolvedValueOnce(pgResult([])).mockResolvedValueOnce(pgResult([runRow]));
 
-    // act
     const res = await request(app).get('/api/predictions/slate').query({ date: '2026-07-04' });
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       date: '2026-07-04',
@@ -440,13 +372,10 @@ describe('GET /api/predictions/slate', () => {
   });
 
   it('degrades to an empty slate when the prediction tables do not exist yet', async () => {
-    // arrange — deployed ahead of the migration
     queryMock.mockRejectedValue(undefinedTable('nba_schedule'));
 
-    // act
     const res = await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       date: '2026-02-04',
@@ -458,76 +387,56 @@ describe('GET /api/predictions/slate', () => {
   });
 
   it('keeps the games when only the prediction tables are missing', async () => {
-    // arrange — 013 applied, 014 not
     queryMock
       .mockResolvedValueOnce(pgResult(scheduleRows))
       .mockRejectedValueOnce(undefinedTable('prediction_runs'))
       .mockResolvedValueOnce(pgResult(teamRows));
 
-    // act
     const res = await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.run).toBeNull();
     expect(res.body.games).toHaveLength(1);
   });
 
   it('defaults to today when no date is given', async () => {
-    // arrange
     queryMock.mockResolvedValueOnce(pgResult([])).mockResolvedValueOnce(pgResult([]));
 
-    // act
     const res = await request(app).get('/api/predictions/slate');
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(queryMock.mock.calls[0][1]).toEqual([res.body.date]);
   });
 
   it('returns 400 for a malformed date without touching the database', async () => {
-    // act
     const res = await request(app).get('/api/predictions/slate').query({ date: '04-02-2026' });
 
-    // assert
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/YYYY-MM-DD/);
     expect(queryMock).not.toHaveBeenCalled();
   });
 
   it('returns 500 when the database is actually down', async () => {
-    // arrange — an outage must not be reported as a quiet day with no games
     queryMock.mockRejectedValue(new Error('db down'));
 
-    // act
     const res = await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
 
-    // assert
     expect(res.status).toBe(500);
     expect(res.body.error).toBe('Failed to fetch slate');
   });
 
   it('binds the date as a query parameter rather than interpolating it', async () => {
-    // arrange
     queryMock.mockResolvedValueOnce(pgResult([])).mockResolvedValueOnce(pgResult([]));
 
-    // act
     await request(app).get('/api/predictions/slate').query({ date: '2026-02-04' });
 
-    // assert
     const [sql, params] = queryMock.mock.calls[0];
     expect(params).toEqual(['2026-02-04']);
     expect(sql).toContain('$1');
   });
 });
 
-/**
- * One pivoted watchlist prediction row. Unlike the slate's pivot this one
- * carries BOTH series: `u_*` are the unconditional expectations the impact score
- * is built from, `c_*` the conditional ("given he plays") ones the deviations
- * are. See the two-pivot block in services/watchlist.ts.
- */
 function watchRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   const row: Record<string, unknown> = {
     game_date: '2026-02-04',
@@ -539,7 +448,6 @@ function watchRow(overrides: Record<string, unknown> = {}): Record<string, unkno
     prob_active: 0.88,
     proj_min_p50: 31,
   };
-  // an unremarkable line, so a test only has to state what it changes.
   const uncond: Record<string, number> = {
     pts: 8,
     reb: 3,
@@ -560,11 +468,6 @@ function watchRow(overrides: Record<string, unknown> = {}): Record<string, unkno
   return { ...row, ...overrides };
 }
 
-/**
- * Bench filler so the impact percentiles have a realistic pool: a run projects
- * every rostered player, and `IMPACT_PERCENTILE_FLOOR` is a percentile of THAT.
- * None of these deviate from their own baseline.
- */
 function benchPool(count: number): Record<string, unknown>[] {
   return Array.from({ length: count }, (_, i) =>
     watchRow({
@@ -584,10 +487,6 @@ function benchBaselines(count: number): Record<string, unknown>[] {
 
 const gameTeamRows = [{ nba_game_id: '0022500555', home_team_abbr: 'OKC', away_team_abbr: 'LAL' }];
 
-/**
- * The same player-game on another date, with its own game id so the opponent
- * lookup and the teammate grouping stay per-game.
- */
 function watchRowOn(
   date: string,
   overrides: Record<string, unknown> = {}
@@ -605,7 +504,6 @@ function benchPoolOn(date: string, count: number): Record<string, unknown>[] {
 
 describe('GET /api/watchlist', () => {
   it('ranks a role increase with its deltas, both score factors and its reasons', async () => {
-    // arrange — a 22-minute player projected 31, inside a pool of bench filler
     queryMock
       .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(pgResult([watchRow({ u_pts: 20, c_pts: 20 }), ...benchPool(60)]))
@@ -614,10 +512,8 @@ describe('GET /api/watchlist', () => {
       )
       .mockResolvedValueOnce(pgResult(gameTeamRows));
 
-    // act
     const res = await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.date).toBe('2026-02-04');
     expect(res.body.run).toEqual({
@@ -638,7 +534,6 @@ describe('GET /api/watchlist', () => {
     expect(candidate.points).toEqual({ usual: 11, projected: 20, delta: 9 });
     expect(candidate.baseline_games).toBe(15);
     expect(candidate.reasons).toContain('ROLE_INCREASE');
-    // the score is the pre-registered product, and the payload shows both halves
     expect(candidate.score).toBeCloseTo(candidate.upside * candidate.relevance, 3);
     expect(candidate.relevance).toBeGreaterThan(0);
     expect(candidate.impact_percentile).toBeGreaterThan(IMPACT_PERCENTILE_FLOOR);
@@ -646,8 +541,6 @@ describe('GET /api/watchlist', () => {
   });
 
   it('keeps a bench jump off the list however large the jump is', async () => {
-    // arrange — 5 minutes to 15 is a bigger relative jump than any starter's,
-    // and still nothing worth a lineup slot. This is the binding constraint.
     queryMock
       .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(
@@ -665,10 +558,8 @@ describe('GET /api/watchlist', () => {
       .mockResolvedValueOnce(pgResult([baselineRow('scrub', { minutes: 5, pts: 2 }), ...benchBaselines(60)]))
       .mockResolvedValueOnce(pgResult(gameTeamRows));
 
-    // act
     const res = await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.players.map((p: { nba_player_id: string }) => p.nba_player_id)).not.toContain(
       'scrub'
@@ -676,7 +567,6 @@ describe('GET /api/watchlist', () => {
   });
 
   it('flags a teammate the run does not expect to play, with the minutes it frees', async () => {
-    // arrange — the star on the same team in the same game is a 0.05 to play
     queryMock
       .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(
@@ -700,10 +590,8 @@ describe('GET /api/watchlist', () => {
       )
       .mockResolvedValueOnce(pgResult(gameTeamRows));
 
-    // act
     const res = await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
 
-    // assert
     const candidate = res.body.players.find(
       (p: { nba_player_id: string }) => p.nba_player_id === '1630559'
     );
@@ -714,7 +602,6 @@ describe('GET /api/watchlist', () => {
   });
 
   it('does not count a player as his own absent teammate', async () => {
-    // arrange — the only unavailable OKC player would be the candidate himself
     queryMock
       .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(
@@ -725,15 +612,12 @@ describe('GET /api/watchlist', () => {
       )
       .mockResolvedValueOnce(pgResult(gameTeamRows));
 
-    // act
     const res = await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
 
-    // assert
     expect(res.body.players[0].reasons).not.toContain('TEAMMATE_ABSENCE');
   });
 
   it('drops a player with too little history to have a usual', async () => {
-    // arrange — a rookie: projections, and four games of NBA baseline
     queryMock
       .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(pgResult([watchRow({ u_pts: 20, c_pts: 20 }), ...benchPool(60)]))
@@ -742,24 +626,18 @@ describe('GET /api/watchlist', () => {
       )
       .mockResolvedValueOnce(pgResult(gameTeamRows));
 
-    // act
     const res = await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
 
-    // assert
     expect(res.body.players.map((p: { nba_player_id: string }) => p.nba_player_id)).not.toContain(
       '1630559'
     );
   });
 
   it('answers with an empty list when no run has completed', async () => {
-    // arrange — production before the first model run. Unlike the old rules-only
-    // ranking, projection-minus-baseline has nothing to say without projections.
     queryMock.mockResolvedValueOnce(pgResult([]));
 
-    // act
     const res = await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       date: '2026-02-04',
@@ -772,18 +650,14 @@ describe('GET /api/watchlist', () => {
       position_coverage: { known: 0, unknown: 0 },
       players: [],
     });
-    // no run means the remaining round trips are never issued
     expect(queryMock).toHaveBeenCalledTimes(1);
   });
 
   it('answers with an empty list when the run projected nothing for the date', async () => {
-    // arrange
     queryMock.mockResolvedValueOnce(pgResult([runRow])).mockResolvedValueOnce(pgResult([]));
 
-    // act
     const res = await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.players).toEqual([]);
     expect(res.body.run).not.toBeNull();
@@ -791,92 +665,74 @@ describe('GET /api/watchlist', () => {
   });
 
   it('degrades to an empty list when the prediction tables do not exist yet', async () => {
-    // arrange — deployed ahead of migration 014
     queryMock.mockRejectedValue(undefinedTable('prediction_runs'));
 
-    // act
     const res = await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.players).toEqual([]);
     expect(res.body.run).toBeNull();
   });
 
   it('degrades to an empty list when the game logs do not exist yet', async () => {
-    // arrange — 014 applied, 013 not: projections with nothing to compare against
     queryMock
       .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(pgResult([watchRow()]))
       .mockRejectedValueOnce(undefinedTable('player_game_logs'))
       .mockResolvedValueOnce(pgResult([]));
 
-    // act
     const res = await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.players).toEqual([]);
   });
 
   it('returns 400 for a malformed date without touching the database', async () => {
-    // act
     const res = await request(app).get('/api/watchlist').query({ date: 'yesterday' });
 
-    // assert
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/YYYY-MM-DD/);
     expect(queryMock).not.toHaveBeenCalled();
   });
 
   it('returns 500 when the database is actually down', async () => {
-    // arrange
     queryMock.mockRejectedValue(new Error('db down'));
 
-    // act
     const res = await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
 
-    // assert
     expect(res.status).toBe(500);
     expect(res.body.error).toBe('Failed to fetch watchlist');
   });
 
   it('reads baselines only from games strictly before the requested date', async () => {
-    // arrange
     queryMock
       .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(pgResult([watchRow()]))
       .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult([]));
 
-    // act
     await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
 
-    // assert — the cutoff is what keeps this a forecast rather than hindsight
     const [sql, params] = queryMock.mock.calls[2];
     expect(sql).toContain('g.game_date < $1');
     expect(params?.[0]).toBe('2026-02-04');
   });
 
   it('binds the run and the window as parameters rather than interpolating them', async () => {
-    // arrange
     queryMock
       .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(pgResult([watchRow()]))
       .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult([]));
 
-    // act
     await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
 
-    // assert
     const [sql, params] = queryMock.mock.calls[1];
     expect(params?.slice(0, 3)).toEqual([42, '2026-02-04', '2026-02-04']);
     expect(sql).toContain('$1');
   });
 
   it('carries the position and the games count on every row', async () => {
-    // arrange
     queryMock
       .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(pgResult([watchRow({ u_pts: 20, c_pts: 20 }), ...benchPool(60)]))
@@ -885,10 +741,8 @@ describe('GET /api/watchlist', () => {
       )
       .mockResolvedValueOnce(pgResult(gameTeamRows));
 
-    // act
     const res = await request(app).get('/api/watchlist').query({ date: '2026-02-04' });
 
-    // assert
     const candidate = res.body.players[0];
     expect(candidate.position).toBe('SG/SF');
     expect(candidate.games_count).toBe(1);
@@ -906,11 +760,9 @@ describe('GET /api/watchlist', () => {
 });
 
 describe('GET /api/watchlist over a window', () => {
-  /** Three dates of the same slate shape, from a single ranged query. */
   const DATES = ['2026-02-04', '2026-02-05', '2026-02-06'];
 
   it('sums a player over the window and lists his games', async () => {
-    // arrange — four nights of the same big projection, one ranged query
     const rows = DATES.flatMap((date) => [
       watchRowOn(date, { u_pts: 20, c_pts: 20 }),
       ...benchPoolOn(date, 60),
@@ -923,35 +775,29 @@ describe('GET /api/watchlist over a window', () => {
       )
       .mockResolvedValueOnce(pgResult([]));
 
-    // act
     const res = await request(app)
       .get('/api/watchlist')
       .query({ date: '2026-02-04', days: 3 });
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.window).toEqual({ from: '2026-02-04', to: '2026-02-06', days: 3 });
     const candidate = res.body.players[0];
     expect(candidate.games_count).toBe(3);
     expect(candidate.games.map((g: { game_date: string }) => g.game_date)).toEqual(DATES);
-    // three identical nights, so the total is three times the per-game product
     expect(candidate.score).toBeCloseTo(3 * candidate.score_per_game, 3);
     expect(candidate.score).toBeGreaterThan(candidate.upside * candidate.relevance);
     expect(candidate.totals.pts).toBe(60);
   });
 
   it('takes three round trips regardless of how many days the window covers', async () => {
-    // arrange
     queryMock
       .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(pgResult(DATES.flatMap((date) => [watchRowOn(date)])))
       .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult([]));
 
-    // act
     await request(app).get('/api/watchlist').query({ date: '2026-02-04', days: 14 });
 
-    // assert — the run, one ranged prediction query, the baselines, the schedule
     expect(queryMock).toHaveBeenCalledTimes(4);
     const [, predictionParams] = queryMock.mock.calls[1];
     expect(predictionParams?.slice(0, 3)).toEqual([42, '2026-02-04', '2026-02-17']);
@@ -960,24 +806,20 @@ describe('GET /api/watchlist over a window', () => {
   });
 
   it('takes the baseline once, as of the window start', async () => {
-    // arrange
     queryMock
       .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(pgResult(DATES.flatMap((date) => [watchRowOn(date)])))
       .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult([]));
 
-    // act
     await request(app).get('/api/watchlist').query({ date: '2026-02-04', days: 7 });
 
-    // assert — a baseline at date+3 would average in games that have not been played
     const [sql, params] = queryMock.mock.calls[2];
     expect(sql).toContain('g.game_date < $1');
     expect(params?.[0]).toBe('2026-02-04');
   });
 
   it('lets a four-game week beat a two-game week for a better player', async () => {
-    // arrange — the busy wing is projected LOWER every single night
     const busy = DATES.map((date) =>
       watchRowOn(date, { nba_player_id: 'busy', name: 'Busy Wing', u_pts: 17, c_pts: 17 })
     );
@@ -997,19 +839,16 @@ describe('GET /api/watchlist over a window', () => {
       )
       .mockResolvedValueOnce(pgResult([]));
 
-    // act
     const res = await request(app)
       .get('/api/watchlist')
       .query({ date: '2026-02-04', days: 3 });
 
-    // assert — this is the whole point of the window being a sum
     const ids = res.body.players.map((p: { nba_player_id: string }) => p.nba_player_id);
     expect(ids.indexOf('busy')).toBeLessThan(ids.indexOf('rested'));
     const busyRow = res.body.players.find((p: { nba_player_id: string }) => p.nba_player_id === 'busy');
     const restedRow = res.body.players.find(
       (p: { nba_player_id: string }) => p.nba_player_id === 'rested'
     );
-    // he wins on volume alone: the rested wing is projected higher on his one night
     expect(busyRow.games_count).toBe(3);
     expect(restedRow.games_count).toBe(1);
     expect(busyRow.points.projected).toBeLessThan(restedRow.points.projected);
@@ -1017,7 +856,6 @@ describe('GET /api/watchlist over a window', () => {
   });
 
   it('filters to a roster slot, and echoes which filter it applied', async () => {
-    // arrange — a guard and a centre, both worth a row
     const rows = [
       watchRow({ nba_player_id: 'guard', name: 'Combo Guard', position: 'PG,SG', u_pts: 20, c_pts: 20 }),
       watchRow({ nba_player_id: 'big', name: 'Starting Five', position: 'C,PF', u_pts: 20, c_pts: 20 }),
@@ -1034,12 +872,10 @@ describe('GET /api/watchlist over a window', () => {
       .mockResolvedValueOnce(pgResult(baselines))
       .mockResolvedValueOnce(pgResult(gameTeamRows));
 
-    // act
     const res = await request(app)
       .get('/api/watchlist')
       .query({ date: '2026-02-04', position: 'G' });
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.position).toBe('G');
     expect(res.body.players.map((p: { nba_player_id: string }) => p.nba_player_id)).toEqual([
@@ -1049,7 +885,6 @@ describe('GET /api/watchlist over a window', () => {
   });
 
   it('counts the candidates it could not place at a position', async () => {
-    // arrange — a projected player with no roster row has no position
     const rows = [
       watchRow({ nba_player_id: 'guard', position: 'PG,SG', u_pts: 20, c_pts: 20 }),
       watchRow({ nba_player_id: 'ghost', name: null, position: null, u_pts: 20, c_pts: 20 }),
@@ -1066,12 +901,10 @@ describe('GET /api/watchlist over a window', () => {
       .mockResolvedValueOnce(pgResult(baselines))
       .mockResolvedValueOnce(pgResult(gameTeamRows));
 
-    // act
     const res = await request(app)
       .get('/api/watchlist')
       .query({ date: '2026-02-04', position: 'G' });
 
-    // assert — "unknown" is excluded from a specific filter and counted, not hidden
     expect(res.body.position_coverage).toEqual({ known: 61, unknown: 1 });
     expect(res.body.players.map((p: { nba_player_id: string }) => p.nba_player_id)).toEqual([
       'guard',
@@ -1079,7 +912,6 @@ describe('GET /api/watchlist over a window', () => {
   });
 
   it('rejects a window it will not answer for, without touching the database', async () => {
-    // act
     const tooLong = await request(app)
       .get('/api/watchlist')
       .query({ date: '2026-02-04', days: MAX_WINDOW_DAYS + 1 });
@@ -1087,7 +919,6 @@ describe('GET /api/watchlist over a window', () => {
       .get('/api/watchlist')
       .query({ date: '2026-02-04', days: '3.5' });
 
-    // assert — clamping 30 to 14 would be a wrong answer that looks right
     expect(tooLong.status).toBe(400);
     expect(tooLong.body.error).toMatch(new RegExp(`between 1 and ${MAX_WINDOW_DAYS}`));
     expect(fractional.status).toBe(400);
@@ -1095,12 +926,10 @@ describe('GET /api/watchlist over a window', () => {
   });
 
   it('rejects a position it does not publish, without touching the database', async () => {
-    // act
     const res = await request(app)
       .get('/api/watchlist')
       .query({ date: '2026-02-04', position: 'WING' });
 
-    // assert
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/position must be one of/);
     expect(queryMock).not.toHaveBeenCalled();

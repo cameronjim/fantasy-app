@@ -45,7 +45,6 @@ import {
 } from '../../src/services/watchlist.js';
 import { PROJECTED_STATS, poolDescriptor } from '../../src/services/slate.js';
 
-/** An all-null unconditional line, so a test only states what it moves. */
 function uncondLine(overrides: Partial<Record<string, number>> = {}) {
   const line = {} as Record<string, number | null>;
   for (const stat of PROJECTED_STATS) line[stat] = overrides[stat] ?? null;
@@ -80,7 +79,6 @@ function candidate(overrides: Partial<WatchlistCandidate> = {}): WatchlistCandid
   };
 }
 
-/** A candidate whose minutes jumped, with the deltas and the pair in agreement. */
 function jumper(
   id: string,
   usualMin: number,
@@ -100,25 +98,20 @@ function jumper(
 
 describe('deviationScales', () => {
   it('measures each stat in the spread of that stat across the pool', () => {
-    // arrange — minutes vary by 2, points by 4
     const pool = [
       { minutes: -2, pts: -4 },
       { minutes: 2, pts: 4 },
     ];
 
-    // act
     const scales = deviationScales(pool);
 
-    // assert
     expect(scales.get('minutes')).toBe(2);
     expect(scales.get('pts')).toBe(4);
   });
 
   it('omits a stat nobody in the pool has a deviation for', () => {
-    // act — the January run projects minutes/pts/ast and nothing else
     const scales = deviationScales([{ minutes: 3 }, { minutes: -1 }]);
 
-    // assert
     expect(scales.has('minutes')).toBe(true);
     expect(scales.has('blk')).toBe(false);
   });
@@ -126,33 +119,27 @@ describe('deviationScales', () => {
 
 describe('upsideOf', () => {
   it('is positive only when the projection is above the baseline', () => {
-    // arrange
     const scales = new Map<DeviationStat, number>([['minutes', 4]]);
 
-    // act + assert — the sign survives because the pool mean is NOT subtracted
     expect(upsideOf({ minutes: 8 }, scales).upside).toBe(2);
     expect(upsideOf({ minutes: -8 }, scales).upside).toBe(-2);
     expect(upsideOf({ minutes: 0 }, scales).upside).toBe(0);
   });
 
   it('weights minutes above points, because minutes are the mechanism', () => {
-    // arrange — the same scaled deviation in each stat, one at a time
     const scales = new Map<DeviationStat, number>([
       ['minutes', 1],
       ['pts', 1],
     ]);
 
-    // act
     const fromMinutes = upsideOf({ minutes: 1, pts: 0 }, scales).upside as number;
     const fromPoints = upsideOf({ minutes: 0, pts: 1 }, scales).upside as number;
 
-    // assert
     expect(fromMinutes).toBeGreaterThan(fromPoints);
     expect(DEVIATION_WEIGHTS.minutes).toBeGreaterThan(DEVIATION_WEIGHTS.pts);
   });
 
   it('averages rather than sums, so a wider run does not score higher', () => {
-    // arrange — every stat one scaled unit up
     const two = new Map<DeviationStat, number>([
       ['minutes', 1],
       ['pts', 1],
@@ -160,30 +147,24 @@ describe('upsideOf', () => {
     const all = new Map<DeviationStat, number>(DEVIATION_STATS.map((stat) => [stat, 1]));
     const deltas = Object.fromEntries(DEVIATION_STATS.map((stat) => [stat, 1]));
 
-    // act + assert — both are 1.0, not 2 and 7
     expect(upsideOf(deltas, two).upside).toBe(1);
     expect(upsideOf(deltas, all).upside).toBe(1);
   });
 
   it('reports the deviations that point up, biggest contribution first', () => {
-    // arrange
     const scales = new Map<DeviationStat, number>([
       ['minutes', 1],
       ['pts', 1],
       ['reb', 1],
     ]);
 
-    // act
     const { drivers } = upsideOf({ minutes: 1, pts: 3, reb: -2 }, scales);
 
-    // assert — points contributes 1.5 x 3, minutes 2 x 1; rebounds points down
     expect(drivers.map((d) => d.stat)).toEqual(['pts', 'minutes']);
     expect(drivers[0]).toEqual({ stat: 'pts', delta: 3, scaled: 3 });
   });
 
   it('lets a row explain a positive score whose minutes and points are flat', () => {
-    // arrange — this is the case a cold-start run produces, and the case that
-    // reads as a self-contradiction without the drivers
     const scales = new Map<DeviationStat, number>([
       ['minutes', 1],
       ['pts', 1],
@@ -191,24 +172,19 @@ describe('upsideOf', () => {
       ['blk', 1],
     ]);
 
-    // act
     const { upside, drivers } = upsideOf({ minutes: -0.2, pts: -0.1, stl: 1, blk: 1 }, scales);
 
-    // assert
     expect(upside as number).toBeGreaterThan(0);
     expect(drivers.map((d) => d.stat)).toEqual(['stl', 'blk']);
   });
 
   it('contributes zero for a stat the whole pool deviates on identically', () => {
-    // arrange — a zero scale would otherwise divide to Infinity
     const scales = new Map<DeviationStat, number>([['minutes', 0]]);
 
-    // act + assert
     expect(upsideOf({ minutes: 5 }, scales).upside).toBe(0);
   });
 
   it('is null when there is no deviation at all to score', () => {
-    // act + assert — no baseline means unknown, and unknown never ranks
     expect(upsideOf({}, new Map([['minutes', 3]])).upside).toBeNull();
     expect(upsideOf({ minutes: 3 }, new Map()).upside).toBeNull();
   });
@@ -216,15 +192,12 @@ describe('upsideOf', () => {
 
 describe('upsideScores', () => {
   it('scores a pool against its own spread, in input order', () => {
-    // act
     const scores = upsideScores([{ minutes: -2 }, { minutes: 2 }]);
 
-    // assert
     expect(scores).toEqual([-1, 1]);
   });
 
   it('returns nothing for an empty pool', () => {
-    // act + assert
     expect(upsideScores([])).toEqual([]);
   });
 });
@@ -233,53 +206,43 @@ describe('relevanceFor', () => {
   const pool = Array.from({ length: 100 }, (_, i) => i);
 
   it('is exactly zero at and below the floor', () => {
-    // act + assert — the floor is a hard gate, not a soft discount
     expect(relevanceFor(0, pool)).toBe(0);
     expect(relevanceFor(IMPACT_PERCENTILE_FLOOR - 10, pool)).toBe(0);
   });
 
   it('ramps to one at the top of the pool', () => {
-    // act
     const best = relevanceFor(99, pool) as number;
 
-    // assert
     expect(best).toBeGreaterThan(0.9);
     expect(best).toBeLessThanOrEqual(1);
   });
 
   it('rises with the impact percentile', () => {
-    // act
     const good = relevanceFor(90, pool) as number;
     const better = relevanceFor(95, pool) as number;
 
-    // assert
     expect(better).toBeGreaterThan(good);
   });
 
   it('is null when the run has no impact score for him', () => {
-    // act + assert — nothing to clear the floor with is unknown, not bad
     expect(relevanceFor(null, pool)).toBeNull();
   });
 });
 
 describe('watchlistScore', () => {
   it('multiplies the two terms', () => {
-    // act + assert
     expect(watchlistScore(2, 0.5)).toBe(1);
   });
 
   it('clamps a projection below the baseline to zero rather than going negative', () => {
-    // act + assert
     expect(watchlistScore(-3, 0.9)).toBe(0);
   });
 
   it('zeroes out a huge jump that clears no absolute floor', () => {
-    // act + assert — this is the binding product constraint, in one line
     expect(watchlistScore(5, 0)).toBe(0);
   });
 
   it('is null when either factor is unknown', () => {
-    // act + assert
     expect(watchlistScore(null, 0.5)).toBeNull();
     expect(watchlistScore(2, null)).toBeNull();
   });
@@ -287,82 +250,67 @@ describe('watchlistScore', () => {
 
 describe('hasRoleIncrease', () => {
   it('fires exactly at the threshold', () => {
-    // act + assert
     expect(hasRoleIncrease(ROLE_INCREASE_MIN_DELTA)).toBe(true);
   });
 
   it('stays quiet just below it, and on a minutes drop', () => {
-    // act + assert
     expect(hasRoleIncrease(ROLE_INCREASE_MIN_DELTA - 0.1)).toBe(false);
     expect(hasRoleIncrease(-8)).toBe(false);
   });
 
   it('needs a measurable deviation', () => {
-    // act + assert
     expect(hasRoleIncrease(null)).toBe(false);
   });
 });
 
 describe('hasShotVolumeSurge', () => {
   it('fires exactly at the threshold', () => {
-    // act + assert
     expect(hasShotVolumeSurge(SHOT_VOLUME_SURGE_FGA_DELTA)).toBe(true);
     expect(hasShotVolumeSurge(SHOT_VOLUME_SURGE_FGA_DELTA - 0.1)).toBe(false);
   });
 
   it('needs a measurable deviation', () => {
-    // act + assert
     expect(hasShotVolumeSurge(null)).toBe(false);
   });
 });
 
 describe('isReturningFromAbsence', () => {
   it('fires on a gap at the threshold when he is expected to play', () => {
-    // act + assert
     expect(isReturningFromAbsence(RETURN_GAP_DAYS, 0.95)).toBe(true);
   });
 
   it('ignores a shorter gap, which is just a rest day', () => {
-    // act + assert
     expect(isReturningFromAbsence(RETURN_GAP_DAYS - 1, 0.95)).toBe(false);
   });
 
   it('ignores an offseason — every player would fire on opening night', () => {
-    // act + assert
     expect(isReturningFromAbsence(RETURN_GAP_MAX_DAYS + 1, 0.95)).toBe(false);
     expect(isReturningFromAbsence(190, 0.95)).toBe(false);
   });
 
   it('does not call a player who is still out a returning player', () => {
-    // act + assert
     expect(isReturningFromAbsence(21, RETURN_MIN_PROB_ACTIVE - 0.01)).toBe(false);
     expect(isReturningFromAbsence(21, null)).toBe(false);
   });
 
   it('needs a measurable gap', () => {
-    // act + assert
     expect(isReturningFromAbsence(null, 0.95)).toBe(false);
   });
 });
 
 describe('isHotStreak', () => {
   it('fires when recent scoring beats the baseline by the stddev multiple', () => {
-    // arrange — sd 4, so the bar is +6
-    // act + assert
     expect(isHotStreak(20, 14, 4)).toBe(true);
     expect(isHotStreak(19.9, 14, 4)).toBe(false);
   });
 
   it('scales the bar by the player, not by a fixed point total', () => {
-    // arrange — the same +5 swing, different volatility
-    // act + assert
     expect(isHotStreak(19, 14, 2)).toBe(true);
     expect(isHotStreak(19, 14, 10)).toBe(false);
     expect(HOT_STREAK_STDDEV_MULTIPLE).toBe(1.5);
   });
 
   it('never fires with no volatility to scale by, or on a cold stretch', () => {
-    // act + assert
     expect(isHotStreak(20, 14, 0)).toBe(false);
     expect(isHotStreak(20, 14, null)).toBe(false);
     expect(isHotStreak(8, 14, 3)).toBe(false);
@@ -377,12 +325,10 @@ describe('findAbsentTeammate', () => {
   });
 
   it('returns a rotation teammate the run does not expect to play', () => {
-    // act
     const found = findAbsentTeammate([
       mate('Star Guard', TEAMMATE_ABSENCE_MIN_MINUTES, TEAMMATE_ABSENCE_MAX_PROB_ACTIVE),
     ]);
 
-    // assert
     expect(found).toEqual({
       name: 'Star Guard',
       usual_minutes: TEAMMATE_ABSENCE_MIN_MINUTES,
@@ -391,12 +337,10 @@ describe('findAbsentTeammate', () => {
   });
 
   it('ignores a low-minutes teammate whose absence opens nothing', () => {
-    // act + assert
     expect(findAbsentTeammate([mate('Deep Bench', 12, 0.05)])).toBeNull();
   });
 
   it('ignores a teammate the run still expects on the floor', () => {
-    // act + assert — a coin-flip availability is not an opening
     expect(
       findAbsentTeammate([mate('Star Guard', 34, TEAMMATE_ABSENCE_MAX_PROB_ACTIVE + 0.01)])
     ).toBeNull();
@@ -404,22 +348,18 @@ describe('findAbsentTeammate', () => {
   });
 
   it('picks the highest-minutes absence, which is the usage actually freed', () => {
-    // act
     const found = findAbsentTeammate([mate('Third Option', 29, 0.1), mate('Franchise', 36, 0.1)]);
 
-    // assert
     expect(found?.name).toBe('Franchise');
   });
 
   it('finds nobody on a slate with no injury news', () => {
-    // act + assert — a preseason run has no absences, and that is an answer
     expect(findAbsentTeammate([mate('Star Guard', 34, 0.92), mate('Wing', 30, 0.88)])).toBeNull();
   });
 });
 
 describe('reasonsFor', () => {
   it('returns nothing for a player whose situation is unchanged', () => {
-    // act + assert
     expect(
       reasonsFor(
         candidate({
@@ -431,7 +371,6 @@ describe('reasonsFor', () => {
   });
 
   it('stacks every rule that fires, in code order', () => {
-    // arrange
     const stacked = candidate({
       minutes: { usual: 22, projected: 31, delta: 9 },
       shots: { usual: 9, projected: 13, delta: 4 },
@@ -443,14 +382,12 @@ describe('reasonsFor', () => {
       teammate_out: { name: 'Star Guard', usual_minutes: 34, prob_active: 0.1 },
     });
 
-    // act + assert
     expect(reasonsFor(stacked)).toEqual([...REASON_CODES]);
   });
 });
 
 describe('evidenceFor', () => {
   it('reports the numbers behind the reasons that fired, and nothing else', () => {
-    // arrange — a shot surge and a hot streak, no absence and no return
     const c = candidate({
       shots: { usual: 9.14, projected: 13.2, delta: 4.06 },
       points: { usual: 12, projected: 14, delta: 2 },
@@ -459,10 +396,8 @@ describe('evidenceFor', () => {
     });
     const reasons = reasonsFor(c);
 
-    // act
     const evidence = evidenceFor(c, reasons);
 
-    // assert
     expect(reasons).toEqual(['SHOT_VOLUME_SURGE', 'HOT_STREAK']);
     expect(evidence).toEqual({
       fga_usual: 9.1,
@@ -477,15 +412,12 @@ describe('evidenceFor', () => {
   });
 
   it('names the absent teammate and the minutes his absence frees', () => {
-    // arrange
     const c = candidate({
       teammate_out: { name: 'Franchise Player', usual_minutes: 34.62, prob_active: 0.1234 },
     });
 
-    // act
     const evidence = evidenceFor(c, reasonsFor(c));
 
-    // assert
     expect(evidence).toEqual({
       teammate_out: 'Franchise Player',
       teammate_out_minutes: 34.6,
@@ -494,30 +426,25 @@ describe('evidenceFor', () => {
   });
 
   it('carries the return date alongside the gap', () => {
-    // arrange
     const c = candidate({
       days_since_played: 12,
       last_played_date: '2026-01-23',
       prob_active: 0.9,
     });
 
-    // act
     const evidence = evidenceFor(c, reasonsFor(c));
 
-    // assert
     expect(evidence).toEqual({ days_since_played: 12, last_played_date: '2026-01-23' });
   });
 });
 
 describe('opponentOf', () => {
   it('names the other side of the game', () => {
-    // act + assert
     expect(opponentOf('LAL', ['LAL', 'GSW'])).toBe('GSW');
     expect(opponentOf('GSW', ['LAL', 'GSW'])).toBe('LAL');
   });
 
   it('is null when the team is not in the game, or either side is unknown', () => {
-    // act + assert — a stale roster row must not invent an opponent
     expect(opponentOf('BOS', ['LAL', 'GSW'])).toBeNull();
     expect(opponentOf(null, ['LAL', 'GSW'])).toBeNull();
     expect(opponentOf('LAL', undefined)).toBeNull();
@@ -526,13 +453,10 @@ describe('opponentOf', () => {
 
 describe('scoreCandidates', () => {
   it('scores every candidate without filtering, in input order', () => {
-    // arrange — one would be dropped from the ranking, one would not
     const pool = [jumper('1', 22, 31, 5), jumper('2', 22, 18, -5)];
 
-    // act
     const scored = scoreCandidates(pool);
 
-    // assert — the harness needs the whole universe as its denominator
     expect(scored).toHaveLength(2);
     expect(scored.map((s) => s.candidate.nba_player_id)).toEqual(['1', '2']);
     expect(scored[1].score).toBe(0);
@@ -540,11 +464,6 @@ describe('scoreCandidates', () => {
 });
 
 describe('rankCandidates', () => {
-  /**
-   * A realistic pool for the impact percentiles to be measured against: a run
-   * projects every rostered player, so most of the pool is bench-level impact
-   * spread over a wide range, and nobody in it deviates from his own baseline.
-   */
   function filler(count: number, lo = -3, hi = 3): WatchlistCandidate[] {
     return Array.from({ length: count }, (_, i) =>
       jumper(`f${i}`, 10, 10, lo + ((hi - lo) * i) / Math.max(1, count - 1), {
@@ -554,63 +473,47 @@ describe('rankCandidates', () => {
   }
 
   it('keeps a rotation player stepping into starter minutes above a bench jump', () => {
-    // arrange — the binding constraint, stated as the product requires it. The
-    // scrub's relative jump is far larger; his absolute impact is far worse.
     const scrub = jumper('scrub', 5, 15, -2);
     const rotation = jumper('rotation', 24, 32, 4);
 
-    // act
     const ranked = rankCandidates([scrub, rotation, ...filler(100)]);
 
-    // assert
     expect(ranked[0].nba_player_id).toBe('rotation');
     expect(ranked.map((p) => p.nba_player_id)).not.toContain('scrub');
   });
 
   it('drops a player projected below his own usual, however good he is', () => {
-    // arrange — a star having an ordinary night is the Projections tab's job
     const star = jumper('star', 36, 33, 9);
 
-    // act
     const ranked = rankCandidates([star, ...filler(100)]);
 
-    // assert
     expect(ranked.map((p) => p.nba_player_id)).not.toContain('star');
   });
 
   it('drops a player the run has no impact score for', () => {
-    // arrange
     const unscored = jumper('unscored', 22, 31, 0);
 
-    // act
     const ranked = rankCandidates([{ ...unscored, impact: null }, ...filler(100)]);
 
-    // assert
     expect(ranked).toHaveLength(0);
   });
 
   it('drops a player with no deviation to score at all', () => {
-    // arrange — no baseline reached the candidate, so there are no deltas
     const noBaseline = candidate({ nba_player_id: 'nb', impact: 9, deltas: {} });
 
-    // act
     const ranked = rankCandidates([noBaseline, ...filler(100)]);
 
-    // assert
     expect(ranked.map((p) => p.nba_player_id)).not.toContain('nb');
   });
 
   it('carries the deltas, the two factors and the reason codes on every row', () => {
-    // arrange
     const stepping = jumper('rotation', 22, 31, 6, {
       points: { usual: 11.6, projected: 20, delta: 8.4 },
       deltas: { minutes: 9, pts: 8.4 },
     });
 
-    // act
     const [row] = rankCandidates([stepping, ...filler(100)]);
 
-    // assert
     expect(row.minutes).toEqual({ usual: 22, projected: 31, delta: 9 });
     expect(row.points).toEqual({ usual: 11.6, projected: 20, delta: 8.4 });
     expect(row.reasons).toContain('ROLE_INCREASE');
@@ -622,42 +525,33 @@ describe('rankCandidates', () => {
   });
 
   it('orders by score, and lets a named player win a tie against a placeholder', () => {
-    // arrange — identical numbers, one of them unidentified
     const named = jumper('named', 22, 31, 5, { name: 'Aaa Named' });
     const placeholder = jumper('ph', 22, 31, 5, {
       name: 'NBA #99 (new roster)',
       name_is_placeholder: true,
     });
 
-    // act
     const ranked = rankCandidates([placeholder, named, ...filler(100)]);
 
-    // assert
     expect(ranked[0].nba_player_id).toBe('named');
   });
 
   it('caps the list at the published limit, and respects an explicit one', () => {
-    // arrange — 25 qualifying candidates with descending impact
     const many = Array.from({ length: 25 }, (_, i) => jumper(`p${i}`, 22, 31, 5 + i * 0.1));
 
-    // act + assert
     expect(rankCandidates([...many, ...filler(100)])).toHaveLength(WATCHLIST_LIMIT);
     expect(rankCandidates([...many, ...filler(100)], 3)).toHaveLength(3);
   });
 
   it('returns an empty list when nothing clears both terms', () => {
-    // act + assert — a quiet night is an answer, not a bug
     expect(rankCandidates(filler(100))).toEqual([]);
   });
 
   it('reports one game and a per-game score equal to the total for one date', () => {
-    // arrange
     const stepping = jumper('rotation', 22, 31, 6);
 
-    // act
     const [row] = rankCandidates([stepping, ...filler(100)]);
 
-    // assert — a one-day window must read exactly as it did before windows
     expect(row.games_count).toBe(1);
     expect(row.score_per_game).toBe(row.score);
     expect(row.score).toBeCloseTo(row.upside * row.relevance, 3);
@@ -666,21 +560,17 @@ describe('rankCandidates', () => {
   });
 
   it('carries the position through to the row, and null when there is none', () => {
-    // arrange
     const guard = jumper('guard', 22, 31, 6, { position: parsePositions('PG,SG') });
     const unknown = jumper('unknown', 22, 31, 5, { position: parsePositions(null) });
 
-    // act
     const ranked = rankCandidates([guard, unknown, ...filler(100)]);
 
-    // assert
     expect(ranked.find((p) => p.nba_player_id === 'guard')?.position).toBe('PG/SG');
     expect(ranked.find((p) => p.nba_player_id === 'unknown')?.position).toBeNull();
   });
 });
 
 describe('rankCandidates over a window', () => {
-  /** Filler for one date, so each night has a realistic pool of its own. */
   function fillerOn(date: string, count: number, lo = -3, hi = 3): WatchlistCandidate[] {
     return Array.from({ length: count }, (_, i) =>
       jumper(`f${date}${i}`, 10, 10, lo + ((hi - lo) * i) / Math.max(1, count - 1), {
@@ -691,7 +581,6 @@ describe('rankCandidates over a window', () => {
     );
   }
 
-  /** One player-game for a player on a given date. */
   function gameOn(
     id: string,
     date: string,
@@ -710,18 +599,14 @@ describe('rankCandidates over a window', () => {
   const WEEK = ['2026-02-04', '2026-02-05', '2026-02-06', '2026-02-07', '2026-02-08'];
 
   it('lets four decent games outrank two better ones — the streaming argument', () => {
-    // arrange — the busy player is WORSE on any given night: a smaller minutes
-    // jump and a lower absolute impact. He simply plays twice as often.
     const busy = WEEK.slice(0, 4).map((date) => gameOn('busy', date, 24, 30, 4));
     const rested = WEEK.slice(0, 2).map((date) => gameOn('rested', date, 24, 33, 6));
     const pool = WEEK.flatMap((date) => fillerOn(date, 60));
 
-    // act
     const ranked = rankCandidates([...busy, ...rested, ...pool]);
     const busyRow = ranked.find((p) => p.nba_player_id === 'busy');
     const restedRow = ranked.find((p) => p.nba_player_id === 'rested');
 
-    // assert — the sum is what produces this, and a per-game mean would invert it
     expect(busyRow?.games_count).toBe(4);
     expect(restedRow?.games_count).toBe(2);
     expect(busyRow!.score).toBeGreaterThan(restedRow!.score);
@@ -730,57 +615,45 @@ describe('rankCandidates over a window', () => {
   });
 
   it('sums the per-game scores rather than averaging them', () => {
-    // arrange — two identical nights
     const two = WEEK.slice(0, 2).map((date) => gameOn('twice', date, 22, 31, 6));
     const pool = WEEK.slice(0, 2).flatMap((date) => fillerOn(date, 60));
 
-    // act
     const [row] = rankCandidates([...two, ...pool]);
 
-    // assert — the total is twice the per-game product, which is what `score_per_game` reports
     expect(row.games_count).toBe(2);
     expect(row.score).toBeCloseTo(2 * row.score_per_game, 3);
-    // to 2dp: each per-game score is rounded before it is summed
     expect(row.score).toBeCloseTo(2 * row.upside * row.relevance, 2);
   });
 
   it('never lets a flat night debit a big one', () => {
-    // arrange — one big night, then one where he is projected well BELOW his usual
     const mixed = [gameOn('mixed', WEEK[0], 22, 31, 6), gameOn('mixed', WEEK[1], 22, 14, 6)];
     const onlyBig = [gameOn('onlyBig', WEEK[0], 22, 31, 6)];
     const pool = WEEK.slice(0, 2).flatMap((date) => fillerOn(date, 60));
 
-    // act
     const ranked = rankCandidates([...mixed, ...onlyBig, ...pool]);
     const mixedRow = ranked.find((p) => p.nba_player_id === 'mixed');
 
-    // assert — the flat night contributes exactly 0, so an extra game is never a risk
     expect(mixedRow?.games_count).toBe(2);
     expect(mixedRow!.games.find((g) => g.game_date === WEEK[1])?.score).toBe(0);
     expect(mixedRow!.score).toBeGreaterThan(0);
   });
 
   it('scores each night against its own slate, not against the window', () => {
-    // arrange — the SAME player-game on a two-player night and a 60-player night.
-    // Pooling the window would give him one relevance; per-night pools give two.
     const quiet = [
       gameOn('same', WEEK[0], 22, 31, 2),
       ...fillerOn(WEEK[0], 2, -1, 0),
     ];
     const loaded = [gameOn('same', WEEK[1], 22, 31, 2), ...fillerOn(WEEK[1], 60, 3, 9)];
 
-    // act
     const [row] = rankCandidates([...quiet, ...loaded]);
     const quietGame = row.games.find((g) => g.game_date === WEEK[0]);
     const loadedGame = row.games.find((g) => g.game_date === WEEK[1]);
 
-    // assert — top of a small slate scores; bottom of a strong one does not
     expect(quietGame!.score).toBeGreaterThan(0);
     expect(loadedGame!.score).toBe(0);
   });
 
   it('explains a row with its best-scoring game, and lists the rest in order', () => {
-    // arrange — the middle date is the big one, and the games arrive out of order
     const games = [
       gameOn('wing', WEEK[2], 22, 24, 6),
       gameOn('wing', WEEK[0], 22, 34, 6, { shots: { usual: 8, projected: 13, delta: 5 } }),
@@ -788,10 +661,8 @@ describe('rankCandidates over a window', () => {
     ];
     const pool = WEEK.slice(0, 3).flatMap((date) => fillerOn(date, 60));
 
-    // act
     const [row] = rankCandidates([...games, ...pool]);
 
-    // assert
     expect(row.game_date).toBe(WEEK[0]);
     expect(row.reasons).toContain('SHOT_VOLUME_SURGE');
     expect(row.evidence.fga_delta).toBe(5);
@@ -799,7 +670,6 @@ describe('rankCandidates over a window', () => {
   });
 
   it('averages the intensities and sums the quantities', () => {
-    // arrange — 30 then 34 projected minutes against a 22-minute usual
     const games = [gameOn('wing', WEEK[0], 22, 30, 6), gameOn('wing', WEEK[1], 22, 34, 6)];
     games[0].uncond = { ...games[0].uncond, pts: 18 };
     games[1].uncond = { ...games[1].uncond, pts: 22 };
@@ -807,10 +677,8 @@ describe('rankCandidates over a window', () => {
     games[1].prob_active = 0.7;
     const pool = WEEK.slice(0, 2).flatMap((date) => fillerOn(date, 60));
 
-    // act
     const [row] = rankCandidates([...games, ...pool]);
 
-    // assert
     expect(row.minutes).toEqual({ usual: 22, projected: 32, delta: 10 });
     expect(row.prob_active).toBe(0.8);
     expect(row.totals.pts).toBe(40);
@@ -819,45 +687,36 @@ describe('rankCandidates over a window', () => {
   });
 
   it('counts a night the run cannot score as a game that contributes nothing', () => {
-    // arrange — no impact score on the second night means no floor to clear
     const games = [
       gameOn('wing', WEEK[0], 22, 31, 6),
       gameOn('wing', WEEK[1], 22, 31, 6, { impact: null }),
     ];
     const pool = WEEK.slice(0, 2).flatMap((date) => fillerOn(date, 60));
 
-    // act
     const [row] = rankCandidates([...games, ...pool]);
 
-    // assert — a null is unknown, not bad, and unknown never adds to a total
     expect(row.games_count).toBe(2);
     expect(row.games.find((g) => g.game_date === WEEK[1])?.score).toBe(0);
     expect(row.score).toBe(row.games[0].score);
   });
 
   it('drops a player whose every night in the window is flat', () => {
-    // act + assert — a quiet week is an answer, not a bug
     expect(rankCandidates(WEEK.flatMap((date) => fillerOn(date, 60)))).toEqual([]);
   });
 
   it('keeps the limit a count of PLAYERS, not of player-games', () => {
-    // arrange — 25 qualifying players, each with three games
     const many = Array.from({ length: 25 }, (_, i) =>
       WEEK.slice(0, 3).map((date) => gameOn(`p${i}`, date, 22, 31, 5 + i * 0.1))
     ).flat();
     const pool = WEEK.slice(0, 3).flatMap((date) => fillerOn(date, 60));
 
-    // act
     const ranked = rankCandidates([...many, ...pool]);
 
-    // assert
     expect(ranked).toHaveLength(WATCHLIST_LIMIT);
     expect(new Set(ranked.map((p) => p.nba_player_id)).size).toBe(WATCHLIST_LIMIT);
   });
 
   it('filters to a position after scoring, so the limit fills with that position', () => {
-    // arrange — three guards below twenty better forwards. Filtering the top
-    // twenty would return nothing; filtering the ranking returns the guards.
     const forwards = Array.from({ length: 20 }, (_, i) =>
       gameOn(`fwd${i}`, WEEK[0], 22, 31, 6 + i * 0.1, { position: parsePositions('SF,PF') })
     );
@@ -866,22 +725,18 @@ describe('rankCandidates over a window', () => {
     );
     const pool = fillerOn(WEEK[0], 60);
 
-    // act
     const all = rankCandidates([...forwards, ...guards, ...pool]);
     const onlyGuards = rankCandidates([...forwards, ...guards, ...pool], WATCHLIST_LIMIT, 'G');
 
-    // assert
     expect(all.map((p) => p.nba_player_id)).not.toContain('gd0');
     expect(onlyGuards).toHaveLength(3);
     expect(onlyGuards.every((p) => p.position === 'PG/SG')).toBe(true);
   });
 
   it('includes a player with no position only when no position is asked for', () => {
-    // arrange
     const unknown = gameOn('unknown', WEEK[0], 22, 31, 6, { position: parsePositions(null) });
     const pool = fillerOn(WEEK[0], 60);
 
-    // act + assert — "unknown" must never be rendered as "not a guard"
     expect(rankCandidates([unknown, ...pool]).map((p) => p.nba_player_id)).toContain('unknown');
     expect(rankCandidates([unknown, ...pool], WATCHLIST_LIMIT, 'G')).toEqual([]);
     expect(rankCandidates([unknown, ...pool], WATCHLIST_LIMIT, 'C')).toEqual([]);
@@ -890,63 +745,50 @@ describe('rankCandidates over a window', () => {
 
 describe('groupByDate', () => {
   it('splits a window into one pool per date, earliest first', () => {
-    // arrange
     const rows = [
       candidate({ nba_player_id: 'b', game_date: '2026-02-06' }),
       candidate({ nba_player_id: 'a', game_date: '2026-02-04' }),
       candidate({ nba_player_id: 'c', game_date: '2026-02-04' }),
     ];
 
-    // act
     const grouped = groupByDate(rows);
 
-    // assert
     expect(grouped.map((g) => g.date)).toEqual(['2026-02-04', '2026-02-06']);
     expect(grouped[0].candidates.map((c) => c.nba_player_id)).toEqual(['a', 'c']);
   });
 
   it('returns nothing for nothing', () => {
-    // act + assert
     expect(groupByDate([])).toEqual([]);
   });
 });
 
 describe('parsePositions', () => {
   it('reads the comma-joined form the players table actually stores', () => {
-    // act
     const parsed = parsePositions('PG,SG');
 
-    // assert — the order is the source's, primary first
     expect(parsed.positions).toEqual(['PG', 'SG']);
     expect(parsed.buckets).toEqual(['G']);
     expect(parsed.label).toBe('PG/SG');
   });
 
   it('puts a combo player in both of his buckets', () => {
-    // act — a shooting guard who plays small forward is a guard AND a forward
     const parsed = parsePositions('SG,SF');
 
-    // assert
     expect(parsed.buckets).toEqual(['G', 'F']);
     expect(parsed.label).toBe('SG/SF');
   });
 
   it('buckets a centre as a centre, in both vocabularies', () => {
-    // act
     const parsed = parsePositions('C,PF');
 
-    // assert — the C bucket and the C position are the same set, deliberately
     expect(parsed.positions).toEqual(['C', 'PF']);
     expect(parsed.buckets).toEqual(['F', 'C']);
   });
 
   it('accepts slashes and the bucket-only shorthand a different scrape may write', () => {
-    // act
     const slashed = parsePositions('PG/SG');
     const shorthand = parsePositions('G-F');
 
-    // assert — "he is a guard" does not say he is a POINT guard, so no specific
-    // position is invented from a bare bucket
     expect(slashed.positions).toEqual(['PG', 'SG']);
     expect(shorthand.positions).toEqual([]);
     expect(shorthand.buckets).toEqual(['G', 'F']);
@@ -954,15 +796,12 @@ describe('parsePositions', () => {
   });
 
   it('normalises case and whitespace, and drops what it cannot read', () => {
-    // act
-    // assert
     expect(parsePositions(' pg , sg ').positions).toEqual(['PG', 'SG']);
     expect(parsePositions('PG,WING').positions).toEqual(['PG']);
     expect(parsePositions('PG,PG').positions).toEqual(['PG']);
   });
 
   it('has nothing to say about a player with no roster row', () => {
-    // act + assert — null is "unknown", which is not a position
     for (const raw of [null, undefined, '', '   ', 'utility']) {
       expect(parsePositions(raw)).toEqual({ positions: [], buckets: [], label: null });
     }
@@ -975,27 +814,23 @@ describe('matchesPosition', () => {
   const nothing = parsePositions(null);
 
   it('answers a bucket filter from the buckets', () => {
-    // act + assert
     expect(matchesPosition(combo, 'G')).toBe(true);
     expect(matchesPosition(combo, 'F')).toBe(true);
     expect(matchesPosition(combo, 'C')).toBe(false);
   });
 
   it('answers a specific filter from the specific positions', () => {
-    // act + assert
     expect(matchesPosition(combo, 'SG')).toBe(true);
     expect(matchesPosition(combo, 'PG')).toBe(false);
     expect(matchesPosition(center, 'C')).toBe(true);
   });
 
   it('matches everyone when no position is asked for, including the unknowns', () => {
-    // act + assert
     expect(matchesPosition(nothing, null)).toBe(true);
     expect(matchesPosition(combo, null)).toBe(true);
   });
 
   it('excludes an unknown position from every specific filter', () => {
-    // act + assert
     for (const filter of POSITION_FILTERS) {
       expect(matchesPosition(nothing, filter)).toBe(false);
     }
@@ -1004,7 +839,6 @@ describe('matchesPosition', () => {
 
 describe('parsePositionFilter', () => {
   it('reads every published filter, in any case', () => {
-    // act + assert
     for (const filter of POSITION_FILTERS) {
       expect(parsePositionFilter(filter)).toBe(filter);
       expect(parsePositionFilter(filter.toLowerCase())).toBe(filter);
@@ -1012,14 +846,12 @@ describe('parsePositionFilter', () => {
   });
 
   it('treats absent, empty and "any" as no filter at all', () => {
-    // act + assert
     for (const raw of [undefined, null, '', '  ', 'any', 'ALL']) {
       expect(parsePositionFilter(raw)).toBeNull();
     }
   });
 
   it('rejects a value it cannot honour rather than ignoring it', () => {
-    // act + assert — a typo must be a 400, not a list answering another question
     expect(parsePositionFilter('WING')).toBe(false);
     expect(parsePositionFilter('pg,sg')).toBe(false);
     expect(parsePositionFilter(3)).toBe(false);
@@ -1028,20 +860,17 @@ describe('parsePositionFilter', () => {
 
 describe('parseWindowDays', () => {
   it('defaults to a single day, which is what an older client asked for', () => {
-    // act + assert
     expect(parseWindowDays(undefined)).toBe(DEFAULT_WINDOW_DAYS);
     expect(parseWindowDays('')).toBe(1);
   });
 
   it('accepts every whole number up to the cap', () => {
-    // act + assert
     expect(parseWindowDays('1')).toBe(1);
     expect(parseWindowDays('7')).toBe(7);
     expect(parseWindowDays(String(MAX_WINDOW_DAYS))).toBe(MAX_WINDOW_DAYS);
   });
 
   it('rejects rather than clamps, so a wrong answer never looks right', () => {
-    // act + assert
     expect(parseWindowDays('0')).toBeNull();
     expect(parseWindowDays(String(MAX_WINDOW_DAYS + 1))).toBeNull();
     expect(parseWindowDays('7.5')).toBeNull();
@@ -1052,14 +881,12 @@ describe('parseWindowDays', () => {
 
 describe('shiftIsoDate and windowRange', () => {
   it('walks the calendar in UTC, across a month boundary', () => {
-    // act + assert
     expect(shiftIsoDate('2026-02-04', 6)).toBe('2026-02-10');
     expect(shiftIsoDate('2026-02-25', 7)).toBe('2026-03-04');
     expect(shiftIsoDate('2026-02-04', 0)).toBe('2026-02-04');
   });
 
   it('makes a one-day window start and end on the same date', () => {
-    // act + assert — inclusive at both ends, so `days` is the count of dates
     expect(windowRange('2026-02-04', 1)).toEqual({
       from: '2026-02-04',
       to: '2026-02-04',
@@ -1075,15 +902,12 @@ describe('shiftIsoDate and windowRange', () => {
 
 describe('watchlistPool', () => {
   it('echoes the slate descriptor verbatim for a single day', () => {
-    // act + assert — the numbers are the slate's, so the words must be too
     expect(watchlistPool(244, 1)).toEqual(poolDescriptor(244));
   });
 
   it('says a longer window is scored one night at a time', () => {
-    // act
     const pool = watchlistPool(1200, 7);
 
-    // assert — "tonight's slate" would be a false description of a week
     expect(pool.key).toBe(poolDescriptor(0).key);
     expect(pool.sample_size).toBe(1200);
     expect(pool.label).toBe("Each night's slate");

@@ -9,17 +9,13 @@ import {
   parsePlayerId,
 } from '../services/analytics.js';
 
-// public, no auth — same as /api/players. these are league stats, not user data.
 
 const INVALID_PLAYER_ID = 'A numeric player id is required';
 const INVALID_STAT = `stat must be one of: ${ANALYTICS_STATS.join(', ')}`;
 const INVALID_POOL = `pool must be "${POOL_KEY}"`;
 
-// mounted under /api/players so the analytics for a player live next to the
-// player itself. /:id/analytics can't collide with players.ts's /:id.
 const playerAnalyticsRouter = Router();
 
-/** Percentiles, pool distributions, and recent-form trends for one player. */
 playerAnalyticsRouter.get('/:id/analytics', async (req: Request, res: Response): Promise<void> => {
   const playerId = parsePlayerId(req.params.id);
   if (playerId === null) {
@@ -41,7 +37,6 @@ playerAnalyticsRouter.get('/:id/analytics', async (req: Request, res: Response):
 
 const analyticsRouter = Router();
 
-/** One stat's league-wide distribution across the pool. */
 analyticsRouter.get('/distributions', async (req: Request, res: Response): Promise<void> => {
   const stat = parseAnalyticsStat(req.query.stat);
   if (!stat) {

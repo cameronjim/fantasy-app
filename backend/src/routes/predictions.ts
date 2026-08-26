@@ -16,8 +16,6 @@ import {
   parseLimit,
 } from '../services/playerPredictions.js';
 
-// public, no auth — the same league data as /api/players and /api/analytics.
-// nothing here is user-scoped.
 
 const INVALID_DATE = 'date must be a calendar day formatted YYYY-MM-DD';
 const INVALID_FROM = 'from must be a calendar day formatted YYYY-MM-DD';
@@ -26,14 +24,8 @@ const INVALID_PLAYER_ID = 'A numeric player id is required';
 const INVALID_DAYS = `days must be a whole number between 1 and ${MAX_WINDOW_DAYS}`;
 const INVALID_POSITION = `position must be one of ${POSITION_FILTERS.join(', ')}, or any`;
 
-/** Mounted at /api/predictions. */
 const predictionsRouter = Router();
 
-/**
- * The day's games with each game's top projected players. Absent `date`
- * defaults to today in Eastern Time, which is the calendar the NBA schedule
- * is published on.
- */
 predictionsRouter.get('/slate', async (req: Request, res: Response): Promise<void> => {
   const date = parsePredictionDate(req.query.date);
   if (date === null) {
@@ -48,19 +40,8 @@ predictionsRouter.get('/slate', async (req: Request, res: Response): Promise<voi
   }
 });
 
-/** Mounted at /api/watchlist — a top-level resource, not a prediction of one. */
 const watchlistRouter = Router();
 
-/**
- * Ranked discovery candidates over a window of `days` starting at `date`, with
- * the rule codes that put them there.
- *
- * `days` defaults to 1 — the request the page made before windows existed, so an
- * older client keeps getting exactly what it got. `position` filters to a roster
- * slot (G/F/C) or an exact position (PG/SG/SF/PF/C); absent means every
- * position. Both are rejected rather than clamped or ignored, so a typo is a 400
- * instead of a list that quietly answers a different question.
- */
 watchlistRouter.get('/', async (req: Request, res: Response): Promise<void> => {
   const date = parsePredictionDate(req.query.date);
   if (date === null) {
@@ -87,23 +68,8 @@ watchlistRouter.get('/', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-/**
- * Mounted under /api/players, next to /:id/analytics, because these are that
- * player's predictions rather than a slice of the league slate. `:id` is the
- * internal `players.id` the rest of the player surface uses; the prediction
- * store keys on `players.nba_id`, which is TEXT, and is only ever passed as a
- * bound parameter.
- */
 const playerPredictionsRouter = Router();
 
-/**
- * Every game the latest complete run predicts for one player, earliest first.
- *
- * The empty answers are 200s, not errors, and they are distinguishable:
- *   `run: null, games: []`  no run has ever completed (production, today).
- *   `run: {...}, games: []` the run exists but has nothing for this player.
- * Only an unknown player id is a 404 — the same rule /:id/analytics follows.
- */
 playerPredictionsRouter.get(
   '/:id/predictions',
   async (req: Request, res: Response): Promise<void> => {

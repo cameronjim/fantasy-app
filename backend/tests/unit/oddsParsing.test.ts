@@ -7,8 +7,6 @@ import {
   type EspnEvent,
 } from '../../src/services/odds.js';
 
-// fixture modeled on a real June 2026 ESPN scoreboard payload: per-side close
-// prices under pointSpread/total/moneyline, plus the legacy flat fields.
 const scheduledEvent = (overrides: Partial<EspnEvent> = {}): EspnEvent => ({
   id: '401859966',
   date: '2026-06-11T00:30Z',
@@ -46,18 +44,15 @@ const scheduledEvent = (overrides: Partial<EspnEvent> = {}): EspnEvent => ({
 
 describe('parseSpreadDetails', () => {
   it('resolves the favorite abbreviation to a home-relative line', () => {
-    // act + assert — favorite is home: line as-is; favorite is away: negated
     expect(parseSpreadDetails('NY -2.5', 'NY', 'SA')).toBe(-2.5);
     expect(parseSpreadDetails('SA -2.5', 'NY', 'SA')).toBe(2.5);
   });
 
   it('treats EVEN as a pick-em', () => {
-    // act + assert
     expect(parseSpreadDetails('EVEN', 'NY', 'SA')).toBe(0);
   });
 
   it('returns undefined for garbage or unknown teams', () => {
-    // act + assert
     expect(parseSpreadDetails('not a spread', 'NY', 'SA')).toBeUndefined();
     expect(parseSpreadDetails('BOS -6.5', 'NY', 'SA')).toBeUndefined();
     expect(parseSpreadDetails(undefined, 'NY', 'SA')).toBeUndefined();
@@ -66,10 +61,8 @@ describe('parseSpreadDetails', () => {
 
 describe('parseEventOdds', () => {
   it('parses all three markets with per-side prices and implied probabilities', () => {
-    // act
     const game = parseEventOdds(scheduledEvent());
 
-    // assert
     expect(game).not.toBeNull();
     expect(game!.nba_game_id).toBe('401859966');
     expect(game!.home_team).toBe('New York Knicks');
@@ -102,7 +95,6 @@ describe('parseEventOdds', () => {
   });
 
   it('falls back to flat fields with default juice when close prices are missing', () => {
-    // arrange — legacy shape: only details/overUnder/spread + team moneylines
     const event = scheduledEvent();
     event.competitions[0].odds = [
       {
@@ -115,10 +107,8 @@ describe('parseEventOdds', () => {
       },
     ];
 
-    // act
     const game = parseEventOdds(event);
 
-    // assert
     expect(game!.markets.spread?.home_line).toBe(-2.5);
     expect(game!.markets.spread?.home_price).toBe(DEFAULT_LINE_PRICE);
     expect(game!.markets.total?.line).toBe(216.5);
@@ -128,36 +118,29 @@ describe('parseEventOdds', () => {
   });
 
   it('returns the game with empty markets when no odds node exists', () => {
-    // arrange
     const event = scheduledEvent();
     event.competitions[0].odds = undefined;
 
-    // act
     const game = parseEventOdds(event);
 
-    // assert
     expect(game).not.toBeNull();
     expect(game!.markets).toEqual({});
   });
 
   it('returns null when competitors are missing', () => {
-    // arrange
     const event = scheduledEvent();
     event.competitions[0].competitors = [];
 
-    // act + assert
     expect(parseEventOdds(event)).toBeNull();
   });
 });
 
 describe('computeOddsHash', () => {
   it('is stable across game order but changes when a line moves', () => {
-    // arrange
     const a = parseEventOdds(scheduledEvent())!;
     const b = parseEventOdds(scheduledEvent({ id: '401859967' }))!;
     const aMoved = { ...a, markets: { ...a.markets, total: { ...a.markets.total!, line: 218.5 } } };
 
-    // act + assert
     expect(computeOddsHash([a, b])).toBe(computeOddsHash([b, a]));
     expect(computeOddsHash([a, b])).not.toBe(computeOddsHash([aMoved, b]));
   });

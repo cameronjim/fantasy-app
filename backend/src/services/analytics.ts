@@ -1,15 +1,7 @@
 import { query } from '../db.js';
 import { getLatestPredictionForPlayer, type PlayerPrediction } from './predictions.js';
 
-// current-season analytics for a single player: where they sit inside the
-// rotation pool, what that pool's distribution looks like, and how their recent
-// form compares to their own baseline.
-//
-// every piece of math lives in an exported pure function operating on plain
-// arrays, so the rules can be unit tested without a database. only the
-// `get*` functions at the bottom of the file touch pg.
 
-/** Stat keys the percentile + distribution views are computed over. */
 export const ANALYTICS_STATS = [
   'pts',
   'reb',
@@ -25,15 +17,8 @@ export const ANALYTICS_STATS = [
 
 export type AnalyticsStat = (typeof ANALYTICS_STATS)[number];
 
-// turnovers are the only category where less is better, so their percentile is
-// flipped — the player who coughs it up least sits at the top of the scale.
 const REVERSED_STATS: ReadonlySet<string> = new Set<AnalyticsStat>(['tov']);
 
-/**
- * Stats the recent-form comparison covers. FG/FT impact are excluded: they are
- * pool-relative measures, so a 10-game slice of them would be comparing the
- * player against a season-long pool percentage rather than against themselves.
- */
 export const TREND_STATS = [
   'pts',
   'reb',
@@ -52,24 +37,12 @@ export const POOL_LABEL = 'Rotation players';
 export const POOL_MIN_GAMES = 15;
 export const POOL_MIN_MINUTES = 12;
 
-/**
- * Deliberately softer than `benchmarks.ts`'s 30 games / 20 minutes. That pool
- * feeds AI prompts in the back half of a season; this one has to produce a
- * usable comparison set in November, when nobody has 30 games yet.
- */
 export const POOL_DEFINITION = 'GP >= 15 and MPG >= 12 this season';
 
-/** Equal-width buckets per distribution — enough shape to read, few enough to render. */
 export const BUCKET_COUNT = 20;
 
-/** How many recent games the trends view returns. */
 export const TREND_GAME_COUNT = 20;
 
-/**
- * Below this many logged games a player's own game-to-game stddev is too noisy
- * to divide by, so the hot/cold z-score is reported as null instead of a number
- * nobody should act on.
- */
 export const MIN_GAMES_FOR_Z = 15;
 
 const TTL_MS = 60 * 60 * 1000; // 1 hour, matching benchmarks.ts
@@ -123,11 +96,6 @@ export interface TrendGame extends TrendValues {
   fta: number;
 }
 
-/**
- * One aligned point per returned game: `<stat>_r5` and `<stat>_r10` trailing
- * means for every trend stat (minutes shortens to `min_`). Null while the
- * window isn't full yet.
- */
 export interface RollingPoint {
   game_date: string | null;
   [rollingKey: string]: number | string | null;
@@ -153,13 +121,6 @@ export interface PlayerAnalytics {
     rolling: RollingPoint[];
     last10_vs_season: Last10Comparison[];
   };
-  /**
-   * The stored forecast for this player's next game, or null when the model has
-   * not made one. Everything above is measured history; this is the only field
-   * that is a claim about the future, and it is served from the append-only
-   * prediction store rather than computed here — a number on this page has to
-   * be the same number a backtest will later be scored against.
-   */
   prediction: PlayerPrediction | null;
 }
 
@@ -177,7 +138,6 @@ function round(value: number, digits: number): number {
   return Math.round(value * factor) / factor;
 }
 
-/** Arithmetic mean. An empty sample has no mean, so it reports 0. */
 export function mean(values: number[]): number {
   if (values.length === 0) return 0;
   let total = 0;
@@ -185,7 +145,6 @@ export function mean(values: number[]): number {
   return total / values.length;
 }
 
-/** Population standard deviation, matching `zScoreRank`'s convention. */
 export function stddev(values: number[]): number {
   if (values.length === 0) return 0;
   const m = mean(values);
@@ -194,16 +153,6 @@ export function stddev(values: number[]): number {
   return Math.sqrt(sum / values.length);
 }
 
-/**
- * Empirical percent-rank of `value` within `values`, 0-100. Ties split the
- * difference (everything strictly below counts fully, equal values count half),
- * so a pool of identical values leaves everyone at the neutral 50 rather than
- * all at 0 or all at 100. No normality assumption — this is the raw position in
- * the sample, which is what a "top 12% of rotation players" claim should mean.
- *
- * `reversed` flips the scale for stats where less is better. An empty pool
- * carries no information at all, so it also reports 50.
- */
 export function percentRank(values: number[], value: number, reversed = false): number {
   if (values.length === 0) return 50;
 
@@ -218,11 +167,6 @@ export function percentRank(values: number[], value: number, reversed = false): 
   return round(reversed ? 100 - pct : pct, 1);
 }
 
-/**
- * Equal-width histogram over [min, max]. A sample where every value is
- * identical has no width to divide, so it collapses to a single bucket instead
- * of 20 degenerate zero-width ones.
- */
 export function buildBuckets(values: number[], bucketCount: number = BUCKET_COUNT): DistributionBucket[] {
   if (values.length === 0 || bucketCount < 1) return [];
 
@@ -237,7 +181,6 @@ export function buildBuckets(values: number[], bucketCount: number = BUCKET_COUN
   const width = (hi - lo) / bucketCount;
   const counts = new Array<number>(bucketCount).fill(0);
   for (const v of values) {
-    // the top value lands exactly on the upper edge; clamp it into the last bucket
     const index = Math.min(bucketCount - 1, Math.floor((v - lo) / width));
     counts[index] += 1;
   }
@@ -249,11 +192,6 @@ export function buildBuckets(values: number[], bucketCount: number = BUCKET_COUN
   }));
 }
 
-/**
- * Trailing mean over `window` values, aligned index-for-index with the input.
- * Positions without a full window are null rather than a short-window average,
- * so a 10-game line never starts on 3 games of data.
- */
 export function rollingMean(values: number[], window: number): Array<number | null> {
   if (window < 1) return values.map(() => null);
 
@@ -267,13 +205,6 @@ export function rollingMean(values: number[], window: number): Array<number | nu
   return out;
 }
 
-/**
- * Attempt-weighted excess makes per game: how many more (or fewer) shots a
- * player converts than a pool-average shooter would on the same volume.
- *
- * A raw FG% percentile rewards a center who takes three dunks a game over a
- * high-volume guard shooting the same rate on 20 attempts; this doesn't.
- */
 export function attemptWeightedImpact(
   made: number,
   attempted: number,
@@ -284,13 +215,6 @@ export function attemptWeightedImpact(
   return round((made - attempted * poolPct) / games, 3);
 }
 
-/**
- * Recent form against the player's own season baseline. `z` divides the delta
- * by the player's own game-to-game stddev, so "up 4 points" reads differently
- * for a metronome than for a player who swings 20 points a night. It is null
- * below `minGamesForZ` games, and null when the player's stddev is 0 (nothing
- * to normalize by).
- */
 export function last10VsSeason(
   games: TrendValues[],
   minGamesForZ: number = MIN_GAMES_FOR_Z
@@ -326,13 +250,11 @@ export interface PoolPlayer {
 export interface PoolSnapshot {
   fetchedAt: number;
   players: PoolPlayer[];
-  /** pool-wide FG% / FT% as fractions, used as the impact baseline. */
   fgPct: number;
   ftPct: number;
   teamAbbrById: Map<string, string>;
 }
 
-/** Pool descriptor echoed verbatim in every response so the UI never hardcodes it. */
 export function poolDescriptor(sampleSize: number): AnalyticsPool {
   return {
     key: POOL_KEY,
@@ -346,7 +268,6 @@ function poolValues(snapshot: PoolSnapshot, stat: AnalyticsStat): number[] {
   return snapshot.players.map((p) => p.values[stat]);
 }
 
-/** Each stat's percentile for one player against the pool. */
 export function buildPercentiles(snapshot: PoolSnapshot, values: StatValues): StatPercentile[] {
   return ANALYTICS_STATS.map((stat) => ({
     stat,
@@ -355,7 +276,6 @@ export function buildPercentiles(snapshot: PoolSnapshot, values: StatValues): St
   }));
 }
 
-/** Each stat's pool-wide shape, with the player's own value marked on it. */
 export function buildDistributions(snapshot: PoolSnapshot, values: StatValues): StatDistribution[] {
   return ANALYTICS_STATS.map((stat) => {
     const pool = poolValues(snapshot, stat);
@@ -369,11 +289,6 @@ export function buildDistributions(snapshot: PoolSnapshot, values: StatValues): 
   });
 }
 
-/**
- * Whitelisted stat key. An unknown stat is rejected rather than defaulted —
- * silently charting points for someone who asked for blocks is a wrong answer,
- * not a clamped one.
- */
 export function parseAnalyticsStat(raw: unknown): AnalyticsStat | null {
   if (typeof raw === 'string' && (ANALYTICS_STATS as readonly string[]).includes(raw)) {
     return raw as AnalyticsStat;
@@ -381,12 +296,10 @@ export function parseAnalyticsStat(raw: unknown): AnalyticsStat | null {
   return null;
 }
 
-/** Whitelisted pool key. Only the rotation pool exists today; absent means rotation. */
 export function isValidPoolKey(raw: unknown): boolean {
   return raw === undefined || raw === null || raw === '' || raw === POOL_KEY;
 }
 
-/** Positive integer players.id, or null when the path segment isn't one. */
 export function parsePlayerId(raw: unknown): number | null {
   const parsed = Number.parseInt(String(raw ?? ''), 10);
   if (!Number.isFinite(parsed) || parsed < 1) return null;
@@ -398,11 +311,6 @@ function num(value: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/**
- * `YYYY-MM-DD` for a pg DATE. Read off the local calendar fields rather than
- * `toISOString()`, which shifts a local-midnight date onto the previous day for
- * any timezone east of UTC.
- */
 function toIsoDay(value: unknown): string | null {
   if (value instanceof Date) {
     const y = String(value.getFullYear()).padStart(4, '0');
@@ -419,21 +327,12 @@ function toIsoDay(value: unknown): string | null {
 
 let cache: PoolSnapshot | null = null;
 
-/** Drops the cached pool so the next request rebuilds it. Used by tests. */
 export function clearAnalyticsCache(): void {
   cache = null;
 }
 
-// the logs table spans seasons; everything here is "this season", which is
-// whichever season the scraper has most recently written. season labels sort
-// lexicographically ("2025-26" > "2024-25"), so MAX is the current one.
 const CURRENT_SEASON = '(SELECT MAX(season) FROM player_game_logs)';
 
-/**
- * Pool membership, its season averages, and the game-log totals behind the
- * FG/FT impact measures. Three aggregate queries over the whole pool, so it is
- * cached for an hour — the scraper only writes every six.
- */
 export async function getPoolSnapshot(): Promise<PoolSnapshot> {
   if (cache && Date.now() - cache.fetchedAt < TTL_MS) return cache;
 
@@ -508,8 +407,6 @@ export async function getPoolSnapshot(): Promise<PoolSnapshot> {
     poolFta += totals.fta;
   }
 
-  // no attempts anywhere means no logs yet; a 0 baseline makes every impact 0,
-  // which is the honest "we can't tell" answer rather than a fabricated edge.
   const fgPct = poolFga > 0 ? poolFgm / poolFga : 0;
   const ftPct = poolFta > 0 ? poolFtm / poolFta : 0;
 
@@ -595,12 +492,6 @@ async function fetchPlayerLogs(nbaPlayerId: string | null): Promise<GameLogRow[]
   }));
 }
 
-/**
- * Everything the player analytics view needs. Null when no such player exists.
- *
- * A player with no game logs still gets percentiles and distributions — those
- * come from the season-average table — and simply has empty trends.
- */
 export async function getPlayerAnalytics(playerId: number): Promise<PlayerAnalytics | null> {
   const playerResult = await query(
     `SELECT id, nba_id, name, team, position, headshot_url,
@@ -624,12 +515,8 @@ export async function getPlayerAnalytics(playerId: number): Promise<PlayerAnalyt
   const nbaId = row.nba_id === null || row.nba_id === undefined ? null : String(row.nba_id);
   const snapshot = await getPoolSnapshot();
   const logs = await fetchPlayerLogs(nbaId);
-  // sequential rather than parallel with the logs query: db.ts runs a pool of
-  // max 1 connection, so Promise.all here would only queue behind itself.
   const prediction = await getLatestPredictionForPlayer(nbaId);
 
-  // the player's own impacts come from their own logs rather than the pool
-  // snapshot, so a player outside the pool still gets a real number.
   let fgm = 0;
   let fga = 0;
   let ftm = 0;
@@ -654,11 +541,6 @@ export async function getPlayerAnalytics(playerId: number): Promise<PlayerAnalyt
     ft_impact: attemptWeightedImpact(ftm, fta, snapshot.ftPct, logs.length),
   };
 
-  // rolling averages are computed across the whole season and then sliced to the
-  // same window as `games`, so the two arrays line up index-for-index and the
-  // 10-game line is already correct at the left edge of the chart. every trend
-  // stat gets a 5- and 10-game series so the chart's stat picker can switch
-  // between categories without a refetch.
   const rollingAll: Record<string, Array<number | null>> = {};
   for (const stat of TREND_STATS) {
     const series = logs.map((g) => g[stat]);
@@ -737,7 +619,6 @@ export async function getPlayerAnalytics(playerId: number): Promise<PlayerAnalyt
   };
 }
 
-/** League-wide shape of one stat, plus every pool player's value and percentile. */
 export async function getStatDistribution(stat: AnalyticsStat): Promise<LeagueDistribution> {
   const snapshot = await getPoolSnapshot();
   const values = poolValues(snapshot, stat);
@@ -750,8 +631,6 @@ export async function getStatDistribution(stat: AnalyticsStat): Promise<LeagueDi
       value: round(p.values[stat], 3),
       percentile: percentRank(values, p.values[stat], reversed),
     }))
-    // best first regardless of direction, so the reversed turnover scale reads
-    // the same way as every other stat.
     .sort((a, b) => b.percentile - a.percentile || a.name.localeCompare(b.name));
 
   return {

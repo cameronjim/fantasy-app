@@ -3,8 +3,6 @@ import request from 'supertest';
 import { pgResult } from '../helpers/mockDb.js';
 import { bearerFor } from '../helpers/authToken.js';
 
-// benchmarks keep a module-level hourly cache that would make query-mock
-// sequencing order-dependent — pin them so every test sees the same key.
 vi.mock('../../src/services/benchmarks.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/services/benchmarks.js')>();
   return {
@@ -25,8 +23,6 @@ beforeEach(() => {
   queryMock.mockReset();
 });
 
-// query order for /team-analysis: buildTeamContext roster join, getRosterHash,
-// getUserPreferences, then the cache lookups (benchmarks are mocked above).
 const rosterRow = {
   name: 'Test Player', team: 'NY', position: 'PG',
   points_per_game: 20, rebounds_per_game: 5, assists_per_game: 7,
@@ -51,35 +47,28 @@ const ANALYSIS = {
 
 describe('GET /api/ai/team-analysis cache behavior', () => {
   it('serves a fresh cache hit as-is, without a stale marker', async () => {
-    // arrange
     mockAnalysisPreamble();
     queryMock.mockResolvedValueOnce(pgResult([{ analysis: ANALYSIS }]));
 
-    // act
     const res = await request(app)
       .get('/api/ai/team-analysis')
       .set('Authorization', bearerFor(1));
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.strengths).toEqual(['scoring']);
     expect(res.body.stale).toBeUndefined();
   });
 
   it('serves the previous analysis with stale:true when the cache key rotated', async () => {
-    // arrange — key-match lookup misses, the by-user fallback finds the old row
     mockAnalysisPreamble();
     queryMock
       .mockResolvedValueOnce(pgResult([]))
       .mockResolvedValueOnce(pgResult([{ analysis: ANALYSIS, created_at: '2026-06-09T12:00:00Z' }]));
 
-    // act
     const res = await request(app)
       .get('/api/ai/team-analysis')
       .set('Authorization', bearerFor(1));
 
-    // assert — the old analysis comes back immediately, flagged for the
-    // client to regenerate in the background.
     expect(res.status).toBe(200);
     expect(res.body.stale).toBe(true);
     expect(res.body.cached_at).toBe('2026-06-09T12:00:00Z');
@@ -93,8 +82,6 @@ const SUGGESTIONS = {
   summary: 'Chase defense.',
 };
 
-// query order for /waiver-suggestions: roster count, getRosterHash,
-// getUserPreferences, then the cache lookups.
 function mockWaiverPreamble(): void {
   queryMock
     .mockResolvedValueOnce(pgResult([{ n: 1 }]))
@@ -104,18 +91,15 @@ function mockWaiverPreamble(): void {
 
 describe('GET /api/ai/waiver-suggestions cache behavior', () => {
   it('serves a fresh cache hit without a stale marker', async () => {
-    // arrange
     mockWaiverPreamble();
     queryMock.mockResolvedValueOnce(
       pgResult([{ suggestions: SUGGESTIONS, created_at: '2026-06-10T08:00:00Z' }])
     );
 
-    // act
     const res = await request(app)
       .get('/api/ai/waiver-suggestions')
       .set('Authorization', bearerFor(1));
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.cached).toBe(true);
     expect(res.body.stale).toBeUndefined();
@@ -123,7 +107,6 @@ describe('GET /api/ai/waiver-suggestions cache behavior', () => {
   });
 
   it('serves expired suggestions with stale:true instead of blocking', async () => {
-    // arrange — fresh lookup misses (ttl/key), fallback finds the old row
     mockWaiverPreamble();
     queryMock
       .mockResolvedValueOnce(pgResult([]))
@@ -131,12 +114,10 @@ describe('GET /api/ai/waiver-suggestions cache behavior', () => {
         pgResult([{ suggestions: SUGGESTIONS, created_at: '2026-06-09T12:00:00Z' }])
       );
 
-    // act
     const res = await request(app)
       .get('/api/ai/waiver-suggestions')
       .set('Authorization', bearerFor(1));
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.stale).toBe(true);
     expect(res.body.cached_at).toBe('2026-06-09T12:00:00Z');

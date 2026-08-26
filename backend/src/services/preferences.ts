@@ -1,11 +1,3 @@
-/**
- * AI preferences: structured user answers that get serialized into prompt text
- * and injected as "user strategy" into every AI call.
- *
- * Stored as JSONB on users.ai_preferences. Schema is intentionally loose so we
- * can add questions without DB migrations — frontend and prompt builder share
- * the shape via this module.
- */
 
 import { query } from '../db.js';
 
@@ -37,13 +29,6 @@ export interface AIPreferences {
 export const VALID_CATEGORIES = ['PTS', 'REB', 'AST', 'STL', 'BLK', 'FG%', 'FT%', '3PM', 'TO'];
 export const VALID_POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
 
-/**
- * Keeps only allowlisted values and drops duplicates, preserving first-seen
- * order. Deduping is what bounds the length: filtering alone accepts an
- * arbitrarily long array of repeated valid values, and these arrays get joined
- * into the system prompt of every AI call, so a caller could otherwise inflate
- * token spend by orders of magnitude. Output can never exceed the allowlist.
- */
 function allowlisted(values: unknown[], allowed: string[]): string[] {
   const seen = new Set<string>();
   for (const v of values) {
@@ -53,14 +38,12 @@ function allowlisted(values: unknown[], allowed: string[]): string[] {
 }
 export const VALID_BET_MARKETS = ['spread', 'total', 'moneyline', 'parlay'];
 
-/** Loads a user's preferences from the DB. Returns {} if none set. */
 export async function getUserPreferences(userId: number): Promise<AIPreferences> {
   const result = await query('SELECT ai_preferences FROM users WHERE id = $1', [userId]);
   if (result.rows.length === 0) return {};
   return (result.rows[0].ai_preferences as AIPreferences) ?? {};
 }
 
-/** Validates the betting sub-object. Strips unknown keys and junk values. */
 function cleanBettingPreferences(betting: BettingPreferences): BettingPreferences {
   const cleaned: BettingPreferences = {};
 
@@ -79,14 +62,6 @@ function cleanBettingPreferences(betting: BettingPreferences): BettingPreference
   return cleaned;
 }
 
-/**
- * Validates and saves preferences. Strips out unknown keys.
- *
- * Saves are MERGED over the stored prefs: a PATCH carrying only `betting`
- * must not wipe the fantasy answers (and vice versa). Keys present in the
- * payload replace the stored value wholesale — `betting` included — while
- * absent keys are left untouched.
- */
 export async function setUserPreferences(userId: number, prefs: AIPreferences): Promise<void> {
   const cleaned: AIPreferences = {};
 
@@ -148,10 +123,6 @@ export async function setUserPreferences(userId: number, prefs: AIPreferences): 
   );
 }
 
-/**
- * Renders prefs into a natural-language block we can paste into Claude system prompts.
- * Returns an empty string when prefs is empty so we don't pollute prompts with no-ops.
- */
 export function buildPreferencesPromptBlock(prefs: AIPreferences): string {
   const lines: string[] = [];
 
@@ -193,8 +164,6 @@ export function buildPreferencesPromptBlock(prefs: AIPreferences): string {
   }
 
   if (typeof prefs.league_size === 'number') {
-    // Estimate rostered-player count so the AI knows the realistic waiver pool.
-    // 13-deep roster is the most common 9-cat default.
     const rostered = prefs.league_size * 13;
     lines.push(`- League has ${prefs.league_size} teams (~${rostered} players rostered). Calibrate waiver/trade recommendations to that pool size — in a deeper league, fewer impact players are available on waivers, so suggestions should skew toward realistic streamers and lower-owned breakouts. In a shallower league, more star-adjacent players will be available.`);
   }
@@ -274,10 +243,6 @@ export function buildPreferencesPromptBlock(prefs: AIPreferences): string {
   return `\n\nUSER STRATEGY PREFERENCES (must follow):\n${lines.join('\n')}\n`;
 }
 
-/**
- * Renders betting prefs into a prompt block for the betting analyst persona.
- * Same contract as buildPreferencesPromptBlock: empty string when unset.
- */
 export function buildBettingPromptBlock(prefs: AIPreferences): string {
   const betting = prefs.betting;
   if (!betting) return '';

@@ -1,11 +1,3 @@
-/**
- * Sanitizes untrusted chat history before it's forwarded to the Anthropic API.
- *
- * The client sends prior turns so the assistant has conversational context, but
- * that payload is fully attacker-controlled. Bounding the role set, content
- * length, and turn count stops a caller from running up token cost or smuggling
- * an oversized / malformed prompt through the chat endpoint.
- */
 
 export interface ChatTurn {
   role: 'user' | 'assistant';
@@ -25,7 +17,6 @@ export function sanitizeChatHistory(history: unknown): ChatTurn[] {
     const role = (entry as { role?: unknown }).role;
     if (role !== 'user' && role !== 'assistant') continue;
 
-    // the client uses `message`; assistant echoes may use `content`.
     const rawContent =
       (entry as { message?: unknown }).message ?? (entry as { content?: unknown }).content;
     if (typeof rawContent !== 'string') continue;
@@ -36,7 +27,5 @@ export function sanitizeChatHistory(history: unknown): ChatTurn[] {
     turns.push({ role, content });
   }
 
-  // keep only the most recent turns — older context matters least, and the cap
-  // bounds prompt size no matter how much history the client sends.
   return turns.slice(-MAX_HISTORY_TURNS);
 }

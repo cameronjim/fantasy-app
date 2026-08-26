@@ -9,13 +9,7 @@ const { clearUpcomingPredictionsCache, DEFAULT_UPCOMING_LIMIT, MAX_UPCOMING_LIMI
 );
 const queryMock = vi.mocked(query);
 
-// GET /api/players/:id/predictions issues its queries in a fixed order:
-//   1. the players row (nba_id + team abbreviation), for the 404 and home/away
-//   2. the latest complete prediction run
-//   3. the run's long-format rows for that player, joined to nba_schedule
-// step 3 is skipped when there is no run.
 
-/** pg's "relation does not exist" — what an unapplied migration looks like. */
 function undefinedTable(relation: string): Error & { code: string } {
   const err = new Error(`relation "${relation}" does not exist`) as Error & { code: string };
   err.code = '42P01';
@@ -33,7 +27,6 @@ const runRow = {
   notes: 'horizon=gameday (T-6h); backtest smoke run: cutoff 2026-01-15',
 };
 
-/** pg hands DATE columns back as a local-midnight Date. */
 const day = (y: number, m: number, d: number): Date => new Date(y, m - 1, d);
 
 interface RowOverrides {
@@ -44,7 +37,6 @@ interface RowOverrides {
   game_status?: string | null;
 }
 
-/** The 14 long-format rows one player-game of run 1 actually produces. */
 function gameRows(
   stat: string,
   quantile: number | null,
@@ -104,16 +96,13 @@ beforeEach(() => {
 
 describe('GET /api/players/:id/predictions', () => {
   it('returns run metadata and one entry per predicted game, earliest first', async () => {
-    // arrange
     queryMock
       .mockResolvedValueOnce(pgResult([playerRow]))
       .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(pgResult([...AWAY_GAME, ...HOME_GAME]));
 
-    // act
     const res = await request(app).get('/api/players/373/predictions');
 
-    // assert — identity and provenance
     expect(res.status).toBe(200);
     expect(res.body.player_id).toBe(373);
     expect(res.body.nba_player_id).toBe('1629029');
@@ -126,13 +115,11 @@ describe('GET /api/players/:id/predictions', () => {
       horizon: 'gameday (T-6h)',
     });
 
-    // assert — games are date-ordered regardless of the order rows arrive in
     expect(res.body.games.map((g: { game_date: string }) => g.game_date)).toEqual([
       '2026-01-15',
       '2026-01-17',
     ]);
 
-    // assert — the home game, pivoted
     const [home, away] = res.body.games;
     expect(home.nba_game_id).toBe('0022500586');
     expect(home.opponent_abbr).toBe('CHA');
@@ -155,22 +142,18 @@ describe('GET /api/players/:id/predictions', () => {
       unconditional: 29.58,
     });
 
-    // assert — the away game keeps the opposite side as the opponent
     expect(away.opponent_abbr).toBe('POR');
     expect(away.is_home).toBe(false);
   });
 
   it('serves a stat with no quantile rows as an expected value with null bands', async () => {
-    // arrange
     queryMock
       .mockResolvedValueOnce(pgResult([playerRow]))
       .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(pgResult(HOME_GAME));
 
-    // act
     const res = await request(app).get('/api/players/373/predictions');
 
-    // assert — assists exist as a mean plus a schedule-level twin, no band
     expect(res.body.games[0].stats.ast).toEqual({
       expected: 9.1,
       p10: null,
@@ -181,7 +164,6 @@ describe('GET /api/players/:id/predictions', () => {
   });
 
   it('passes through stats the serving layer has never heard of', async () => {
-    // arrange — the emission path is being widened; nothing here is hardcoded
     queryMock
       .mockResolvedValueOnce(pgResult([playerRow]))
       .mockResolvedValueOnce(pgResult([runRow]))
@@ -193,78 +175,62 @@ describe('GET /api/players/:id/predictions', () => {
         ])
       );
 
-    // act
     const res = await request(app).get('/api/players/373/predictions');
 
-    // assert — known stats keep box-score order, unknown ones are appended
     expect(res.body.stats).toEqual(['pts', 'fga', 'dunks_per_36']);
     expect(res.body.games[0].stats.dunks_per_36.expected).toBe(1.2);
   });
 
   it('answers 200 with a null run when no run has ever completed', async () => {
-    // arrange
     queryMock.mockResolvedValueOnce(pgResult([playerRow])).mockResolvedValueOnce(pgResult([]));
 
-    // act
     const res = await request(app).get('/api/players/373/predictions');
 
-    // assert — an empty page, never a 500
     expect(res.status).toBe(200);
     expect(res.body.run).toBeNull();
     expect(res.body.games).toEqual([]);
     expect(res.body.stats).toEqual([]);
-    // the per-game query is never issued when there is no run to scope it to
     expect(queryMock).toHaveBeenCalledTimes(2);
   });
 
   it('answers 200 with the run and an empty list when the run has nothing for this player', async () => {
-    // arrange
     queryMock
       .mockResolvedValueOnce(pgResult([playerRow]))
       .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(pgResult([]));
 
-    // act
     const res = await request(app).get('/api/players/373/predictions');
 
-    // assert — "no run" and "not in the run" stay distinguishable
     expect(res.status).toBe(200);
     expect(res.body.run.model_version).toBe('bt20260115');
     expect(res.body.games).toEqual([]);
   });
 
   it('answers 200 with an empty payload when migration 014 has not been applied', async () => {
-    // arrange
     queryMock
       .mockResolvedValueOnce(pgResult([playerRow]))
       .mockRejectedValueOnce(undefinedTable('prediction_runs'));
 
-    // act
     const res = await request(app).get('/api/players/373/predictions');
 
-    // assert
     expect(res.status).toBe(200);
     expect(res.body.run).toBeNull();
     expect(res.body.games).toEqual([]);
   });
 
   it('leaves opponent and home/away unknown when the player is on neither side', async () => {
-    // arrange — a mid-run trade leaves players.team pointing somewhere else
     queryMock
       .mockResolvedValueOnce(pgResult([{ nba_id: '1629029', team: 'BOS' }]))
       .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(pgResult(HOME_GAME));
 
-    // act
     const res = await request(app).get('/api/players/373/predictions');
 
-    // assert — no coin-flip guess
     expect(res.body.games[0].opponent_abbr).toBeNull();
     expect(res.body.games[0].is_home).toBeNull();
   });
 
   it('serves a game whose schedule row is missing rather than dropping it', async () => {
-    // arrange
     queryMock
       .mockResolvedValueOnce(pgResult([playerRow]))
       .mockResolvedValueOnce(pgResult([runRow]))
@@ -278,10 +244,8 @@ describe('GET /api/players/:id/predictions', () => {
         ])
       );
 
-    // act
     const res = await request(app).get('/api/players/373/predictions');
 
-    // assert
     expect(res.body.games).toHaveLength(1);
     expect(res.body.games[0].opponent_abbr).toBeNull();
     expect(res.body.games[0].game_status).toBeNull();
@@ -289,56 +253,45 @@ describe('GET /api/players/:id/predictions', () => {
   });
 
   it('defaults to no date filter and a 14-game limit', async () => {
-    // arrange
     queryMock
       .mockResolvedValueOnce(pgResult([playerRow]))
       .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(pgResult(HOME_GAME));
 
-    // act
     await request(app).get('/api/players/373/predictions');
 
-    // assert — null `from`, because the only run on either database today is a
-    // backtest of a week in January and "today onwards" would serve nothing
     const params = queryMock.mock.calls[2][1] as unknown[];
     expect(params).toEqual([1, '1629029', null, DEFAULT_UPCOMING_LIMIT]);
   });
 
   it('binds ?from= and ?limit= into the query', async () => {
-    // arrange
     queryMock
       .mockResolvedValueOnce(pgResult([playerRow]))
       .mockResolvedValueOnce(pgResult([runRow]))
       .mockResolvedValueOnce(pgResult(HOME_GAME));
 
-    // act
     const res = await request(app).get('/api/players/373/predictions?from=2026-01-17&limit=3');
 
-    // assert
     expect(res.status).toBe(200);
     const params = queryMock.mock.calls[2][1] as unknown[];
     expect(params).toEqual([1, '1629029', '2026-01-17', 3]);
   });
 
   it('rejects a from that is not a real calendar day', async () => {
-    // arrange + act
     const res = await request(app).get('/api/players/373/predictions?from=2026-02-31');
 
-    // assert
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/YYYY-MM-DD/);
     expect(queryMock).not.toHaveBeenCalled();
   });
 
   it('rejects a limit outside the served range instead of clamping it', async () => {
-    // arrange + act
     const tooBig = await request(app).get(
       `/api/players/373/predictions?limit=${MAX_UPCOMING_LIMIT + 1}`
     );
     const zero = await request(app).get('/api/players/373/predictions?limit=0');
     const notANumber = await request(app).get('/api/players/373/predictions?limit=lots');
 
-    // assert
     for (const res of [tooBig, zero, notANumber]) {
       expect(res.status).toBe(400);
       expect(res.body.error).toMatch(/limit/);
@@ -347,33 +300,25 @@ describe('GET /api/players/:id/predictions', () => {
   });
 
   it('rejects a non-numeric player id', async () => {
-    // arrange + act
     const res = await request(app).get('/api/players/not-a-player/predictions');
 
-    // assert
     expect(res.status).toBe(400);
     expect(queryMock).not.toHaveBeenCalled();
   });
 
   it('404s an id no player row matches', async () => {
-    // arrange
     queryMock.mockResolvedValueOnce(pgResult([]));
 
-    // act
     const res = await request(app).get('/api/players/999999/predictions');
 
-    // assert
     expect(res.status).toBe(404);
   });
 
   it('answers 200 with an empty list for a player row that carries no nba_id', async () => {
-    // arrange
     queryMock.mockResolvedValueOnce(pgResult([{ nba_id: null, team: 'LAL' }]));
 
-    // act
     const res = await request(app).get('/api/players/373/predictions');
 
-    // assert — nothing to join the prediction store on
     expect(res.status).toBe(200);
     expect(res.body.nba_player_id).toBeNull();
     expect(res.body.games).toEqual([]);
@@ -381,13 +326,10 @@ describe('GET /api/players/:id/predictions', () => {
   });
 
   it('500s when the players lookup itself fails', async () => {
-    // arrange — a database that is down must not read as "no predictions"
     queryMock.mockRejectedValueOnce(new Error('connection terminated'));
 
-    // act
     const res = await request(app).get('/api/players/373/predictions');
 
-    // assert
     expect(res.status).toBe(500);
   });
 });

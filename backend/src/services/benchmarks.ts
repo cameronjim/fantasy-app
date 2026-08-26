@@ -13,8 +13,6 @@ export interface Benchmarks {
   sample_size: number;
 }
 
-// Reasonable fallback when the DB has insufficient player data (fresh deploy
-// before the first scrape completes). Matches what we hardcoded previously.
 const FALLBACK: Benchmarks = {
   PTS: 15.0, REB: 5.0, AST: 3.5, STL: 1.0, BLK: 0.7,
   'FG%': 46.0, 'FT%': 78.0, '3PM': 1.5, TO: 1.8,
@@ -33,16 +31,6 @@ function round1(v: number): number {
   return Math.round(v * 10) / 10;
 }
 
-/**
- * Per-player averages across the current "rotation player" pool — players
- * with at least 30 games played and 20+ minutes per game. This is roughly
- * the top ~150 fantasy-relevant NBA players, closely approximating the
- * rostered pool in a standard 10-team / 13-roster 9-cat league.
- *
- * Using real averages means our "strong / average / weak" ratings actually
- * reflect the current league, not a stale hardcoded heuristic. Cached for
- * an hour so we're not running the aggregate on every analysis request.
- */
 export async function getCurrentBenchmarks(): Promise<Benchmarks> {
   if (cache && Date.now() - cache.fetchedAt < TTL_MS) {
     return cache.data;
@@ -90,7 +78,6 @@ export async function getCurrentBenchmarks(): Promise<Benchmarks> {
   }
 }
 
-/** Formats benchmarks for embedding in AI system prompts. */
 export function formatBenchmarksLine(b: Benchmarks): string {
   return [
     `PTS ${b.PTS}`,

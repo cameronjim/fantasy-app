@@ -1,14 +1,5 @@
 import { profitOnWin } from './oddsMath.js';
 
-/**
- * Pure bet settlement and record math. The line convention matches the bets
- * table: a spread line is stored relative to the SELECTED side (home -6.5
- * means the home team must win by 7+; away +6.5 means the away team can lose
- * by up to 6), and a total stores the posted number. Moneyline has no line.
- *
- * Only straight bets (spread/total/moneyline) settle automatically; prop,
- * parlay, and custom entries are settled by the user.
- */
 
 export type BetMarket = 'spread' | 'total' | 'moneyline' | 'prop' | 'parlay' | 'custom';
 export type StraightMarket = 'spread' | 'total' | 'moneyline';
@@ -33,7 +24,6 @@ export function settleBet(bet: SettleableBet, homeScore: number, awayScore: numb
     const otherScore = bet.selection === 'home' ? awayScore : homeScore;
     if (selectedScore > otherScore) return 'won';
     if (selectedScore < otherScore) return 'lost';
-    // defensive: NBA games can't end tied, but never let a bad row mis-settle
     return 'push';
   }
 
@@ -46,7 +36,6 @@ export function settleBet(bet: SettleableBet, homeScore: number, awayScore: numb
     return 'push'; // only possible on integer lines
   }
 
-  // total
   const total = homeScore + awayScore;
   const line = bet.line ?? 0;
   if (total === line) return 'push';
@@ -54,12 +43,6 @@ export function settleBet(bet: SettleableBet, homeScore: number, awayScore: numb
   return (bet.selection === 'over') === overWon ? 'won' : 'lost';
 }
 
-/**
- * Net money result of a bet, when the user recorded a stake. Null while
- * pending or when no stake/odds were noted. A bonus bet ("free bet" credit
- * from the book) pays winnings only and risks no real money, so a loss
- * costs nothing.
- */
 export function betNet(
   status: BetStatus,
   wagerType: WagerType,
@@ -80,7 +63,6 @@ export interface LedgerSummary {
   pending: number;
 }
 
-/** aggregates a user's bets into the W-L-P record shown above the ledger */
 export function summarizeLedger(bets: Array<{ status: BetStatus }>): LedgerSummary {
   const summary: LedgerSummary = { wins: 0, losses: 0, pushes: 0, pending: 0 };
   for (const bet of bets) {

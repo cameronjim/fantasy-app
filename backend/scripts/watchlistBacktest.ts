@@ -1,105 +1,17 @@
-/**
- * Precision@K for the Watchlist ranking, measured against what actually
- * happened.
- *
- *   npm run backtest:watchlist -- --run 1 --dev
- *
- * READ-ONLY. Every statement this script issues is a SELECT; it writes nothing,
- * anywhere, ever. `--dev` points the pool at the dev Neon branch instead of
- * whatever `DATABASE_URL` names.
- *
- * ============================== WHAT IT MEASURES ==============================
- * For a historical prediction run whose games have since been played, it asks:
- * of the K players this ranking named for a given night, how many actually had a
- * big night? And it asks the same of two baselines, on the SAME universe, so the
- * number means something:
- *
- *   random   the base rate of big nights among eligible players. Reported as the
- *            exact expectation rather than a sampled draw — the expectation of
- *            precision@K for a uniform random pick is the base rate for every K,
- *            and quoting a sampled estimate of a quantity with a closed form
- *            would add noise and subtract nothing.
- *   points   rank by projected points, descending. This is the baseline that
- *            matters: it is what the Projections tab already does, so beating it
- *            is the whole justification for the Watchlist existing as a separate
- *            page. Losing to it would mean the deviation term is noise.
- *
- * ============================ "BIG NIGHT", DEFINED ============================
- * A player-game is a big night when BOTH hold:
- *
- *   1. PERSONAL: his actual fantasy impact is at or above the 75th percentile of
- *      his own trailing window of played games. This is the "relative to his own
- *      usual" half — the thing the ranking claims to predict.
- *
- *   2. LEAGUE: his actual fantasy impact is at or above the 75th percentile of
- *      every actual line played that night. This is the absolute floor, and it is
- *      what stops "a bench player's best game of the month" from counting. Without
- *      it the metric would reward exactly the failure mode the ranking's relevance
- *      term exists to prevent, and a harness that rewards the bug cannot detect it.
- *
- * "Actual fantasy impact" is `slate.ts::impactScores` applied to REAL box-score
- * lines instead of projections: each of the nine categories z-scored against
- * every line played that night, summed, turnovers flipped. The same machinery on
- * both sides is the point — the projected and actual numbers are then the same
- * quantity, one forecast and one observed.
- *
- * Note it is scored over all nine categories even when the run only projected
- * three. Ground truth is what a big fantasy night WAS, not what this particular
- * model was equipped to see; grading against the run's own vocabulary would let a
- * narrow run look good by being narrow.
- *
- * A player who did not play has no line, and is a MISS rather than an unknown.
- * Recommending a player who sits is a bad recommendation, and letting those
- * evaporate from the denominator would flatter every method that likes doubtful
- * players — which, since availability is priced into the relevance term, is
- * precisely a bias this harness needs to be able to see.
- *
- * ================================ ELIGIBILITY ================================
- * The universe for a date is every player the run projected who (a) has a usable
- * projection baseline, so the ranking can score him at all, and (b) has at least
- * `MIN_TRAILING_GAMES` played games in his trailing window, so "his own 75th
- * percentile" is a real number. All three methods rank the SAME universe.
- *
- * ================================== CAVEAT ==================================
- * One week of one season is a harness validation, not a verdict on the ranking.
- * With ~8 slates the K=5 numbers rest on a few dozen picks; a difference of one
- * hit moves precision@5 by 2.5 points. What this script is FOR is being run again
- * on every in-season run as they accumulate, at which point the same numbers
- * start to mean something. Treat today's output as evidence the measurement
- * works, and as a floor on how badly the ranking behaves.
- * ============================================================================
- */
 import dotenv from 'dotenv';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
-// type-only, so it is erased before runtime and does not import `db.js` ahead of
-// `selectDatabase`. Every VALUE import below is dynamic for exactly that reason.
 import type { ImpactInput } from '../src/services/slate.js';
 
-/** Games the personal comparison window covers. */
 export const TRAILING_GAMES = 15;
 
-/**
- * Below this many played games in the window, his own 75th percentile is an
- * artifact of three or four games, so the player is dropped from the evaluation
- * entirely rather than graded against a number nobody should trust.
- */
 export const MIN_TRAILING_GAMES = 8;
 
-/**
- * How far back the trailing window may reach. Bounded so a player returning from
- * a two-month absence is compared against recent form rather than against
- * October, and so the window cannot silently cross a season boundary here (the
- * PROJECTION baseline deliberately can — see `baselines.ts` — because it has to
- * work on opening night, which this harness never runs on).
- */
 export const TRAILING_LOOKBACK_DAYS = 45;
 
-/** The two halves of the big-night test. */
 export const PERSONAL_PERCENTILE = 75;
 export const LEAGUE_PERCENTILE = 75;
 
-/** Cut-offs precision is reported at. */
 export const DEFAULT_KS = [5, 10] as const;
 
 const ENV_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '../../.env');
@@ -133,13 +45,6 @@ export function parseArgs(argv: string[]): Args {
   return args;
 }
 
-/**
- * `db.ts` reads `process.env.DATABASE_URL` when it is first imported, and its own
- * `dotenv.config()` does not override an already-set variable. So assigning here,
- * BEFORE any dynamic import of the app, is what points the shared pool at the dev
- * branch — without a second pool, a `Queryable` parameter threaded through every
- * service, or any change to production code paths.
- */
 function selectDatabase(useDev: boolean): string {
   dotenv.config({ path: ENV_PATH });
   if (!useDev) return 'DATABASE_URL';
@@ -149,11 +54,6 @@ function selectDatabase(useDev: boolean): string {
   return 'DATABASE_URL_DEV';
 }
 
-/**
- * Linear-interpolated percentile of a sample, `p` in 0-100. The inverse of
- * `analytics.ts::percentRank`, which answers the other direction and so cannot be
- * reused here.
- */
 export function quantile(values: number[], p: number): number {
   if (values.length === 0) return Number.NaN;
   const sorted = [...values].sort((a, b) => a - b);
@@ -163,7 +63,6 @@ export function quantile(values: number[], p: number): number {
   return sorted[lo] + (sorted[lo + 1] - sorted[lo]) * (exact - lo);
 }
 
-/** Hits among the first `k` of an ordered list of outcomes. */
 export function precisionAt(ordered: boolean[], k: number): { hits: number; picks: number } {
   const picks = Math.min(k, ordered.length);
   let hits = 0;
@@ -172,7 +71,6 @@ export function precisionAt(ordered: boolean[], k: number): { hits: number; pick
 }
 
 interface MethodTally {
-  /** Keyed by K. */
   hits: Map<number, number>;
   picks: Map<number, number>;
 }
@@ -201,7 +99,6 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const source = selectDatabase(args.dev);
 
-  // dynamic, and after selectDatabase: importing db.js is what builds the pool.
   const { query, pool } = await import('../src/db.js');
   const { PROJECTED_STATS, impactScores, toIsoDay } = await import(
     '../src/services/slate.js'
@@ -231,7 +128,6 @@ async function main(): Promise<void> {
   console.log(`forecast cutoff   ${String(run.forecast_cutoff_at)}`);
   console.log(`scored dates      ${dates[0]} .. ${dates[dates.length - 1]} (${dates.length})`);
 
-  // ---- actual outcomes, scored the same way projections are ----
   const statColumns = PROJECTED_STATS.map((stat) => `${stat}::float AS ${stat}`).join(', ');
   const firstDate = dates[0];
   const lastDate = dates[dates.length - 1];
@@ -259,9 +155,7 @@ async function main(): Promise<void> {
     byDate.set(day, list);
   }
 
-  /** `player|date` -> his actual fantasy impact that night. */
   const actualImpact = new Map<string, number>();
-  /** date -> the league's 75th-percentile actual impact that night. */
   const leagueBar = new Map<string, number>();
   for (const [day, entries] of byDate) {
     const scores = impactScores(entries.map((entry) => entry.input));
@@ -275,7 +169,6 @@ async function main(): Promise<void> {
     if (present.length > 0) leagueBar.set(day, quantile(present, LEAGUE_PERCENTILE));
   }
 
-  /** His played dates, newest first, so a trailing window is a slice. */
   const playedDates = new Map<string, string[]>();
   for (const [key] of actualImpact) {
     const [id, day] = key.split('|');
@@ -315,7 +208,6 @@ async function main(): Promise<void> {
         const personalBar = quantile(trailing, PERSONAL_PERCENTILE);
         return {
           entry,
-          // no line means he did not play, which is a miss and not an unknown.
           big: outcome !== null && outcome >= personalBar && outcome >= bar,
         };
       })
@@ -331,10 +223,6 @@ async function main(): Promise<void> {
     bigTotal += bigCount;
     rankableTotal += universe.filter((row) => (row.entry.score ?? 0) > 0).length;
 
-    // the ranking under test. Score descending; a null or zero score means the
-    // page would not have shown the row at all, so those sort last, broken by
-    // absolute impact — which is what the page falls back to when it has nothing
-    // relative to say.
     const byWatchlist = [...universe].sort(
       (a, b) =>
         (b.entry.score ?? -1) - (a.entry.score ?? -1) ||
@@ -391,11 +279,6 @@ async function main(): Promise<void> {
   await pool.end();
 }
 
-/**
- * Only run when invoked as a script. `main` opens a database connection, so an
- * unconditional call would make importing this module for its pure helpers —
- * which `tests/unit/watchlistBacktest.test.ts` does — try to reach Neon.
- */
 const invokedDirectly =
   process.argv[1] !== undefined &&
   resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));

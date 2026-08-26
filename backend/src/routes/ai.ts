@@ -10,9 +10,6 @@ import type { AuthRequest } from '../middleware/auth.js';
 
 const router = Router();
 
-// Bump when the team-analysis or waiver-suggestions system prompt changes
-// meaningfully — old cache entries hashed without this won't collide so they
-// get re-prompted on next request.
 const PROMPT_VERSION = 'v5-fp-formula';
 
 async function getRosterHash(userId: number): Promise<string> {
@@ -43,9 +40,6 @@ router.post('/chat', async (req: Request, res: Response): Promise<void> => {
     let persona: string;
     let prefsBlock: string;
     if (context_type === 'betting') {
-      // betting chat reuses the picks context: posted markets, ratings,
-      // last-10 form, head-to-head, injuries. espn being down just means
-      // the assistant answers without game context instead of erroring.
       persona = 'You are an expert NBA betting analyst. You help users understand betting markets and find value in upcoming games. Be honest about uncertainty: lines are efficient and big edges are rare. Plain text only, no markdown headers, and never use em dashes.';
       prefsBlock = buildBettingPromptBlock(prefs);
       try {
@@ -86,8 +80,6 @@ router.get('/team-analysis', async (req: Request, res: Response): Promise<void> 
     const prefs = await getUserPreferences(userId);
     const prefsBlock = buildPreferencesPromptBlock(prefs);
     const benchmarks = await getCurrentBenchmarks();
-    // Benchmarks are part of the cache key — when the player pool shifts and
-    // averages change, prior cached analyses become stale.
     const benchmarksKey = JSON.stringify(benchmarks);
     const cacheKey = crypto
       .createHash('md5')
@@ -105,9 +97,6 @@ router.get('/team-analysis', async (req: Request, res: Response): Promise<void> 
         return;
       }
 
-      // key rotated (roster/prefs/benchmarks changed) — serve the previous
-      // analysis instantly with a stale marker instead of blocking the page
-      // on a model call; the client regenerates in the background.
       const stale = await query(
         `SELECT analysis, created_at FROM analysis_cache WHERE user_id = $1`,
         [userId]
@@ -118,8 +107,6 @@ router.get('/team-analysis', async (req: Request, res: Response): Promise<void> 
       }
     }
 
-    // Prefs block lives BEFORE the JSON schema so the "Return ONLY valid JSON"
-    // instruction is the last thing the model reads.
     const systemPrompt = `You are an expert 9-category fantasy basketball analyst.${prefsBlock}
 
 Benchmarks are the actual current per-player averages across active NBA rotation players (n=${benchmarks.sample_size}, filter: 30+ games & 20+ minutes per game):
@@ -161,9 +148,6 @@ You MUST include at least 2 entries in each of strengths, weaknesses, and sugges
     try {
       const analysis = JSON.parse(extractJSON(reply));
 
-      // Guard against degenerate responses: an empty result is almost always a
-      // model hallucination, not a real "this roster has no strengths". Surface
-      // it to the user without poisoning the cache.
       const empty =
         Object.keys(analysis.categories ?? {}).length === 0 &&
         (analysis.strengths ?? []).length === 0 &&
@@ -196,9 +180,6 @@ You MUST include at least 2 entries in each of strengths, weaknesses, and sugges
 router.get('/waiver-suggestions', async (req: Request, res: Response): Promise<void> => {
   const userId = (req as AuthRequest).userId;
   try {
-    // Short-circuit empty rosters before doing any work. Saves an AI call,
-    // a DB roundtrip, and a long spinner on first visit before the user
-    // has added any players.
     const rosterCount = await query(
       'SELECT COUNT(*)::int AS n FROM my_roster WHERE user_id = $1',
       [userId]
@@ -225,9 +206,6 @@ router.get('/waiver-suggestions', async (req: Request, res: Response): Promise<v
         return;
       }
 
-      // ttl expired or the roster/prefs changed — serve the previous
-      // suggestions instantly with a stale marker; the client regenerates
-      // in the background instead of blocking the page on a model call.
       const stale = await query(
         `SELECT suggestions, created_at FROM waiver_cache WHERE user_id = $1`,
         [userId]
@@ -287,7 +265,6 @@ Return ONLY valid JSON.`;
         summary: raw.summary ?? '',
       };
 
-      // Don't cache an empty result — let a refresh re-prompt the model.
       const empty = suggestions.trade_targets.length === 0 && suggestions.waiver_pickups.length === 0;
       if (empty) {
         res.json({ ...suggestions, _empty: true });

@@ -22,25 +22,17 @@ import {
 
 const router = Router();
 
-// bump when the betting system prompt changes meaningfully — entries cached
-// under the old version stop colliding and get re-prompted.
 const BETTING_PROMPT_VERSION = 'betting-v2';
 
-// shorter than the waiver cache's 4 hours because lines move. an odds change
-// also rotates the cache key itself (and games drop out of the snapshot the
-// moment they tip off), so this TTL is just the slow-path bound.
 const PICKS_TTL = '90 minutes';
 
 const PICKS_PER_CATEGORY = 2;
 
-// per-user daily ceiling on AI-generated picks (the one Claude-backed betting
-// endpoint), keyed by userId. bounds API spend if an account is scripted.
 const picksLimiter = rateLimit({
   scope: 'betting-picks',
   limit: 60,
   windowSeconds: 86_400,
   keyFor: (req) => String((req as AuthRequest).userId),
-  // Claude-backed, so the same spend argument as the ai scope applies.
   failClosed: true,
 });
 
@@ -83,11 +75,6 @@ interface EnrichedPick {
   confidence: 'low' | 'medium' | 'high';
 }
 
-/**
- * The market data a pick resolves to in the odds snapshot: the line relative
- * to the selected side (bets-table convention), the price, and a label.
- * Returns null when the snapshot doesn't carry that market.
- */
 function resolveSelection(
   game: BettingGame,
   market: StraightMarket,
@@ -135,12 +122,6 @@ function resolveSelection(
 const CATEGORIES: PickCategory[] = ['best_value', 'safe', 'hail_mary'];
 const CONFIDENCES = ['low', 'medium', 'high'];
 
-/**
- * Validates the model's picks against the odds snapshot and re-attaches every
- * number (line, price, implied probability) from the snapshot — a hallucinated
- * line can never reach the UI. Picks naming unknown games/markets are dropped,
- * and each category is capped at PICKS_PER_CATEGORY in model order.
- */
 function enrichPicks(rawPicks: RawPick[], gamesById: Map<string, BettingGame>): EnrichedPick[] {
   const picks: EnrichedPick[] = [];
   const perCategory: Record<PickCategory, number> = { best_value: 0, safe: 0, hail_mary: 0 };
@@ -190,7 +171,6 @@ interface ParlaySuggestion {
   ev_note: string;
 }
 
-/** Keeps only parlay legs that match surviving picks; 2-3 legs or nothing. */
 function enrichParlay(
   rawLegs: RawParlayLeg[],
   rationale: string,
@@ -203,7 +183,6 @@ function enrichParlay(
       )
     )
     .filter((p): p is EnrichedPick => p !== undefined)
-    // one leg per game — same-game correlations make combined pricing wrong
     .filter((p, i, arr) => arr.findIndex((q) => q.game_id === p.game_id) === i);
 
   if (legs.length < 2 || legs.length > 3) return null;
@@ -232,7 +211,6 @@ function sendEspnError(res: Response, err: unknown): void {
   });
 }
 
-// odds board is public — same data ESPN shows anyone. picks/bets are personal.
 router.get('/odds', async (_req: Request, res: Response): Promise<void> => {
   try {
     const games = await getUpcomingOdds();
@@ -253,8 +231,6 @@ router.get('/picks', requireAuth, picksLimiter, async (req: Request, res: Respon
       return;
     }
 
-    // games without posted lines can't be assessed — skip them entirely, and
-    // short-circuit before any AI spend when nothing is bettable.
     const bettable = games.filter((g) => Object.keys(g.markets).length > 0);
     if (bettable.length === 0) {
       res.json({ picks: [], parlay: null, summary: '', no_games: true });
@@ -286,10 +262,6 @@ router.get('/picks', requireAuth, picksLimiter, async (req: Request, res: Respon
         return;
       }
 
-      // lines moved (the odds hash rotates every time a book shifts a price)
-      // or the ttl lapsed — serve the user's previous picks instantly with a
-      // stale marker; the client regenerates in the background instead of
-      // staring at a spinner for the length of a model call.
       const stale = await query(
         `SELECT picks, created_at FROM betting_cache WHERE user_id = $1`,
         [userId]
@@ -307,8 +279,6 @@ router.get('/picks', requireAuth, picksLimiter, async (req: Request, res: Respon
 
     const context = await buildBettingContext(bettable);
 
-    // numbers are deliberately NOT requested back from the model — the server
-    // re-attaches lines/odds from the snapshot so hallucinated prices die here.
     const systemPrompt = `You are an expert NBA betting analyst. You are given upcoming games with their posted betting markets (spread, total, moneyline), each with the sportsbook's implied probability, plus team records, offensive/defensive/net ratings, recent form over the last 10 games, head-to-head results between the two teams, and injury reports.${prefsBlock}
 
 Your job is to estimate the TRUE win probability of selections and find value relative to the implied probability. Weigh recent form and head-to-head history heavily: a team's last 10 games and its history against this specific opponent are often better signals than season-long ratings. Rules:
@@ -348,7 +318,6 @@ Return ONLY valid JSON.`;
       const parlay = enrichParlay(raw.parlay?.legs ?? [], raw.parlay?.rationale ?? '', picks);
       const summary = typeof raw.summary === 'string' ? raw.summary : '';
 
-      // degenerate guard: every pick failed validation — surface without caching.
       if (picks.length === 0) {
         res.json({ picks: [], parlay: null, summary, _empty: true });
         return;
@@ -393,9 +362,6 @@ interface BetRow {
 router.get('/bets', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const userId = (req as AuthRequest).userId;
   try {
-    // lazy settlement: any pending straight bet whose game has gone Final
-    // gets graded now. prop/parlay/custom bets settle manually. no cron
-    // needed — the ledger is only stale while nobody looks at it.
     const settleable = await query(
       `SELECT b.id, b.market, b.selection, b.line::float AS line,
               g.home_score, g.away_score
@@ -433,11 +399,8 @@ router.get('/bets', requireAuth, async (req: Request, res: Response): Promise<vo
     const bets = (result.rows as BetRow[]).map((b) => ({
       ...b,
       net: betNet(b.status, b.wager_type, b.stake, b.american_odds),
-      // what the bet pays (excluding returned stake) if it hits — the UI
-      // shows this on pending rows.
       to_win: b.stake != null && b.american_odds != null ? profitOnWin(b.stake, b.american_odds) : null,
     }));
-    // total money result across bets that recorded a stake and have settled.
     const net = Math.round(bets.reduce((sum, b) => sum + (b.net ?? 0), 0) * 100) / 100;
     res.json({ bets, summary: { ...summarizeLedger(bets), net } });
   } catch {
@@ -459,21 +422,16 @@ router.post('/bets', requireAuth, async (req: Request, res: Response): Promise<v
       return;
     }
 
-    // odds are required on every bet — projected winnings and the net math
-    // both depend on the price.
     if (!Number.isInteger(american_odds) || Math.abs(american_odds) < 100 || Math.abs(american_odds) > 10000) {
       res.status(400).json({ error: 'american_odds must be an integer like -110 or +150' });
       return;
     }
 
-    // the wager kind covers the promos books like bet365 hand out: a normal
-    // cash bet, a bonus (free) bet, or an odds boost.
     const wagerType: WagerType = wager_type ?? 'cash';
     if (!WAGER_TYPES.includes(wagerType)) {
       res.status(400).json({ error: 'wager_type must be cash, bonus_bet, or odds_boost' });
       return;
     }
-    // stake is mandatory — the ledger's net math depends on it.
     if (typeof stake !== 'number' || stake <= 0 || stake > 100000) {
       res.status(400).json({ error: 'stake must be between 0 and 100000' });
       return;
@@ -489,7 +447,6 @@ router.post('/bets', requireAuth, async (req: Request, res: Response): Promise<v
           return { home_team: game.home_team, away_team: game.away_team, game_date: game.game_date };
         }
       } catch {
-        // ESPN being down shouldn't block logging a bet on a known game.
       }
       const dbGame = await query(
         `SELECT home_team, away_team, game_date FROM games WHERE nba_game_id = $1`,
@@ -545,7 +502,6 @@ router.post('/bets', requireAuth, async (req: Request, res: Response): Promise<v
         res.status(400).json({ error: 'selection and line only apply to spread/total/moneyline bets' });
         return;
       }
-      // a prop can optionally be tied to a game so it shows the matchup.
       if (typeof nba_game_id === 'string' && nba_game_id.length > 0 && nba_game_id.length <= 20) {
         resolvedGame = await resolveGame();
       }
@@ -585,8 +541,6 @@ router.post('/bets', requireAuth, async (req: Request, res: Response): Promise<v
   }
 });
 
-// manual settlement for prop/parlay/custom bets (and corrections on straight
-// bets). 'pending' is allowed so a mis-click can be undone.
 router.patch('/bets/:id', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const userId = (req as AuthRequest).userId;
   try {
@@ -600,8 +554,6 @@ router.patch('/bets/:id', requireAuth, async (req: Request, res: Response): Prom
       res.status(400).json({ error: 'status must be pending, won, lost, or push' });
       return;
     }
-    // settled_at is computed here rather than with a SQL CASE — reusing one
-    // parameter in two type contexts makes the prepared statement fragile.
     const settledAt = status === 'pending' ? null : new Date();
     const result = await query(
       `UPDATE bets
