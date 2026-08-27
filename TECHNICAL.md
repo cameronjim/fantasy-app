@@ -264,6 +264,47 @@ Projections and Watchlist tabs. It is a separate package with its own README
 and living spec: see [`ml/README.md`](ml/README.md) and
 [`ml/MODEL.md`](ml/MODEL.md).
 
+## MCP server
+
+`backend/src/mcp/` is a stdio MCP server that exposes read-only slices of the
+app's data to MCP clients such as Claude Desktop and Claude Code. It imports
+the same service modules the REST API uses and talks to Postgres through the
+same `query()` helper; it starts no HTTP listener and is not deployed to
+Lambda.
+
+Tools: `get_slate`, `get_watchlist`, `get_player_projections`,
+`get_player_analytics`, `search_players`, `get_stat_leaders`. All are
+read-only; there are no mutation tools.
+
+Build it once, then point your client at the compiled entry:
+
+    cd backend
+    npm install
+    npm run build
+
+`DATABASE_URL` is read from the repo-root `.env` (the same file the backend
+uses). To harden further, create a read-only Postgres role and pass its
+connection string via the client's `env` block instead.
+
+Claude Desktop (`%APPDATA%\Claude\claude_desktop_config.json`):
+
+    {
+      "mcpServers": {
+        "nba-iq": {
+          "command": "node",
+          "args": ["C:\\Users\\CJ\\code\\fantasy-app\\backend\\dist\\mcp\\index.js"]
+        }
+      }
+    }
+
+Claude Code:
+
+    claude mcp add nba-iq -- node C:\Users\CJ\code\fantasy-app\backend\dist\mcp\index.js
+
+Re-run `npm run build` after changing anything under `backend/src/`; the
+clients run the compiled `dist/` output. `npm run mcp:dev` runs the server
+from source with tsx for local debugging.
+
 ## Deployment
 
 Deployment is fully automated by GitHub Actions. **There is nothing to run by
@@ -357,6 +398,7 @@ nba-iq/
 │   │   ├── app.ts                # Express app: middleware + router mounting
 │   │   ├── db.ts                 # pg pool + parameterized query() helper
 │   │   ├── middleware/           # auth, admin, rateLimit
+│   │   ├── mcp/                  # stdio MCP server (read-only tools over the same services)
 │   │   ├── routes/               # one file per resource
 │   │   └── services/             # business logic
 │   └── tests/                    # Vitest unit + Supertest API tests
