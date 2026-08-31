@@ -11,6 +11,7 @@ venv/
 backend/.serverless/
 .pytest_cache/
 ml-spike/
+AGENTS.md
 
 frontend/test-results/
 frontend/playwright-report/
