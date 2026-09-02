@@ -20,7 +20,7 @@ const injuryAlertClass = (status: string): string => {
 };
 
 const BackLink = (): JSX.Element => (
-  <Link to="/" className="btn btn-ghost btn-xs gap-1 -ml-2 mb-2">
+  <Link to="/stats" className="btn btn-ghost btn-xs gap-1 -ml-2 mb-2">
     <ArrowLeft size={14} />
     Back to stats
   </Link>
