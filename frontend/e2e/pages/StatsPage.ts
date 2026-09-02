@@ -14,7 +14,7 @@ export class StatsPage {
   }
 
   async goto(): Promise<void> {
-    await this.page.goto('/');
+    await this.page.goto('/stats');
   }
 
   searchInput(): Locator {

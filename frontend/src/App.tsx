@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { Navbar } from './components/Navbar';
+import { HomePage } from './pages/HomePage';
 import { StatsPage } from './pages/StatsPage';
 import { HistoryPage } from './pages/HistoryPage';
 import { PlayerPage } from './pages/PlayerPage';
@@ -56,7 +57,8 @@ export const App = (): JSX.Element => {
           <Navbar isLoggedIn={isLoggedIn} onLogout={handleLogout} />
           <main>
             <Routes>
-              <Route path="/" element={<StatsPage />} />
+              <Route path="/" element={<HomePage isLoggedIn={isLoggedIn} />} />
+              <Route path="/stats" element={<StatsPage />} />
               <Route path="/player/:id" element={<PlayerPage />} />
               <Route path="/projections" element={<SlatePage />} />
               <Route path="/watchlist" element={<WatchlistPage />} />
